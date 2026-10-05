@@ -5,6 +5,7 @@ import { projectCommand } from './commands/project.js';
 import { targetCommand } from './commands/target.js';
 import { testCommand } from './commands/test.js';
 import { scanCommand } from './commands/scan.js';
+import { loadCommand } from './commands/load.js';
 import pc from 'picocolors';
 
 const program = new Command();
@@ -18,12 +19,14 @@ program
   .option('--format <format>', 'Output format (table, json, yaml, junit)', 'table')
   .option('--verbose', 'Enable verbose logging output', false);
 
-// Registered and implemented commands: version, project, target, test, scan
+// Registered and implemented commands: version, project, target, test, scan, load, resilience
 program.addCommand(versionCommand);
 program.addCommand(projectCommand);
 program.addCommand(targetCommand);
 program.addCommand(testCommand);
 program.addCommand(scanCommand);
+program.addCommand(loadCommand);
+program.addCommand(new Command('resilience').description('Alias for Class C resilience & load testing').addCommand(loadCommand.commands[0]!).addCommand(loadCommand.commands[1]!));
 
 program
   .command('report')

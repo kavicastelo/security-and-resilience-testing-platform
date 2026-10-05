@@ -14,6 +14,7 @@ import {
   Box,
   Cpu,
   ShieldCheck,
+  Gauge,
 } from 'lucide-react';
 
 interface Target {
@@ -86,12 +87,141 @@ tests:
         message: X-Content-Type-Options must be set to nosniff
 `;
 
+interface MetricItem {
+  id: string;
+  name: string;
+  value: number;
+  unit: string;
+}
+
+const RunMetricsDetails: React.FC<{ runId: string; apiUrl: string }> = ({ runId, apiUrl }) => {
+  const { data: metrics = [], isLoading } = useQuery<MetricItem[]>({
+    queryKey: ['test-run-metrics', runId],
+    queryFn: async () => {
+      const res = await fetch(`${apiUrl}/api/v1/test-runs/${runId}/metrics`);
+      const json = await res.json();
+      return json.data || [];
+    },
+  });
+
+  if (isLoading) {
+    return <div className="text-xs text-muted-foreground animate-pulse py-2">Loading performance metrics...</div>;
+  }
+
+  if (metrics.length === 0) return null;
+
+  const metricMap: Record<string, number> = {};
+  for (const m of metrics) {
+    metricMap[m.name] = m.value;
+  }
+
+  const p95 = metricMap['http_req_duration_p95'];
+  const p99 = metricMap['http_req_duration_p99'];
+  const med = metricMap['http_req_duration_med'];
+  const avg = metricMap['http_req_duration_avg'];
+  const max = metricMap['http_req_duration_max'];
+  const rps = metricMap['http_rps'];
+  const totalReqs = metricMap['http_reqs_total'];
+  const failedRatio = metricMap['http_req_failed_ratio'];
+  const rateLimitEnforced = metricMap['rate_limiting_enforced'];
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border/50">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+          <Gauge className="w-3.5 h-3.5 text-blue-400" />
+          Quantitative Resilience & Latency SLA Metrics
+        </span>
+        {p95 !== undefined && (
+          <span
+            className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
+              p95 > 500
+                ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+            }`}
+          >
+            {p95 > 500 ? 'SLA Breached (>500ms)' : 'SLA Met (≤500ms)'}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs font-mono">
+        {p95 !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">P95 Latency</span>
+            <span className={`text-sm font-bold ${p95 > 500 ? 'text-rose-400' : 'text-emerald-400'}`}>
+              {p95} ms
+            </span>
+          </div>
+        )}
+        {p99 !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">P99 Latency</span>
+            <span className="text-sm font-bold text-foreground">{p99} ms</span>
+          </div>
+        )}
+        {med !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">Median (P50)</span>
+            <span className="text-sm font-bold text-foreground">{med} ms</span>
+          </div>
+        )}
+        {avg !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">Average</span>
+            <span className="text-sm font-bold text-foreground">{avg} ms</span>
+          </div>
+        )}
+        {max !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">Max Latency</span>
+            <span className="text-sm font-bold text-foreground">{max} ms</span>
+          </div>
+        )}
+        {rps !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">Throughput</span>
+            <span className="text-sm font-bold text-blue-400">{rps} req/s</span>
+          </div>
+        )}
+        {totalReqs !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">Total Requests</span>
+            <span className="text-sm font-bold text-foreground">{totalReqs}</span>
+          </div>
+        )}
+        {failedRatio !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">Error Rate</span>
+            <span className={`text-sm font-bold ${failedRatio > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+              {failedRatio}%
+            </span>
+          </div>
+        )}
+        {rateLimitEnforced !== undefined && (
+          <div className="p-2 rounded bg-card/60 border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase block font-sans">Rate Limiting</span>
+            <span className={`text-sm font-bold ${rateLimitEnforced === 1 ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {rateLimitEnforced === 1 ? 'Enforced (429)' : 'None Detected'}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const RunsView: React.FC = () => {
   const queryClient = useQueryClient();
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
-  const [executionMode, setExecutionMode] = useState<'class_a' | 'class_b' | 'declarative'>('class_a');
+  const [executionMode, setExecutionMode] = useState<'class_a' | 'class_b' | 'class_c' | 'declarative'>('class_a');
+  const [loadVus, setLoadVus] = useState<number>(5);
+  const [loadDurationSec, setLoadDurationSec] = useState<number>(3);
+  const [loadMaxP95Ms, setLoadMaxP95Ms] = useState<number>(500);
+  const [includeK6, setIncludeK6] = useState<boolean>(true);
+  const [includeRateLimit, setIncludeRateLimit] = useState<boolean>(true);
   const [selectedEngines, setSelectedEngines] = useState<string[]>([
     'engine-native-headers',
     'engine-native-cors',
@@ -144,6 +274,12 @@ export const RunsView: React.FC = () => {
       } else if (executionMode === 'class_b') {
         profileId = 'class-b-scanners';
         engineIds = selectedClassBEngines;
+      } else if (executionMode === 'class_c') {
+        profileId = 'class-c-resilience';
+        engineIds = [];
+        if (includeK6) engineIds.push('engine-worker-k6');
+        if (includeRateLimit) engineIds.push('engine-native-resilience');
+        if (engineIds.length === 0) engineIds = ['engine-worker-k6'];
       }
 
       // Create Run
@@ -158,6 +294,9 @@ export const RunsView: React.FC = () => {
             definitionYaml: executionMode === 'declarative' ? declarativeYaml : undefined,
             activeScan: executionMode === 'class_b' ? enableActiveScan : false,
             simulated: executionMode === 'class_b' ? isSimulated : false,
+            vus: executionMode === 'class_c' ? loadVus : undefined,
+            durationSec: executionMode === 'class_c' ? loadDurationSec : undefined,
+            maxP95Ms: executionMode === 'class_c' ? loadMaxP95Ms : undefined,
           },
         }),
       });
@@ -176,6 +315,9 @@ export const RunsView: React.FC = () => {
           options: {
             activeScan: enableActiveScan,
             simulated: isSimulated,
+            vus: loadVus,
+            durationSec: loadDurationSec,
+            maxP95Ms: loadMaxP95Ms,
           },
         }),
       });
@@ -286,7 +428,7 @@ export const RunsView: React.FC = () => {
           {/* Execution Mode */}
           <div>
             <label className="block text-xs font-medium text-foreground mb-1.5">Test Suite Mode</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
               <button
                 type="button"
                 onClick={() => setExecutionMode('class_a')}
@@ -311,6 +453,19 @@ export const RunsView: React.FC = () => {
               >
                 <Box className="w-3.5 h-3.5" />
                 <span>Class B Scanners</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setExecutionMode('class_c')}
+                className={`px-2.5 py-2 rounded-lg text-xs font-medium border text-center transition-colors flex items-center justify-center gap-1.5 ${
+                  executionMode === 'class_c'
+                    ? 'bg-blue-500/15 border-blue-500/40 text-blue-400'
+                    : 'bg-background border-border text-muted-foreground hover:bg-accent'
+                }`}
+              >
+                <Gauge className="w-3.5 h-3.5" />
+                <span>Class C Resilience</span>
               </button>
 
               <button
@@ -449,6 +604,79 @@ export const RunsView: React.FC = () => {
                   </div>
                 </label>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Class C Resilience & Load Testing Configuration */}
+        {executionMode === 'class_c' && (
+          <div className="space-y-4">
+            <span className="text-xs font-medium text-foreground block">
+              Workload Profile & Latency SLA Configuration:
+            </span>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="p-3 rounded-lg border border-border bg-background/50 space-y-1.5">
+                <label className="text-xs text-muted-foreground block">Virtual Users (VUs Concurrency)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={loadVus}
+                  onChange={(e) => setLoadVus(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  className="w-full px-2.5 py-1.5 bg-background border border-border rounded text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <span className="text-[10px] text-muted-foreground block">Clamped by target scope limit</span>
+              </div>
+
+              <div className="p-3 rounded-lg border border-border bg-background/50 space-y-1.5">
+                <label className="text-xs text-muted-foreground block">Duration (Seconds)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={loadDurationSec}
+                  onChange={(e) => setLoadDurationSec(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  className="w-full px-2.5 py-1.5 bg-background border border-border rounded text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <span className="text-[10px] text-muted-foreground block">Concurrent workload window</span>
+              </div>
+
+              <div className="p-3 rounded-lg border border-border bg-background/50 space-y-1.5">
+                <label className="text-xs text-muted-foreground block">P95 SLA Target Threshold (ms)</label>
+                <input
+                  type="number"
+                  min={50}
+                  max={5000}
+                  step={50}
+                  value={loadMaxP95Ms}
+                  onChange={(e) => setLoadMaxP95Ms(Math.max(50, parseInt(e.target.value, 10) || 500))}
+                  className="w-full px-2.5 py-1.5 bg-background border border-border rounded text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <span className="text-[10px] text-muted-foreground block">Finding generated if breached</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4 text-xs pt-1">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeK6}
+                  onChange={(e) => setIncludeK6(e.target.checked)}
+                  className="rounded border-border text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-foreground font-medium">Grafana k6 Concurrency SLA Worker</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeRateLimit}
+                  onChange={(e) => setIncludeRateLimit(e.target.checked)}
+                  className="rounded border-border text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-foreground font-medium">Burst Rate Limiting & Throttling Audit</span>
+              </label>
             </div>
           </div>
         )}
@@ -608,6 +836,9 @@ export const RunsView: React.FC = () => {
                           </span>
                         </div>
                       </div>
+
+                      {/* Quantitative Latency & SLA Metrics */}
+                      <RunMetricsDetails runId={run.id} apiUrl={apiUrl} />
 
                       <div className="flex justify-end pt-2">
                         <button

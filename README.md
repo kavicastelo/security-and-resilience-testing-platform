@@ -243,6 +243,8 @@ docker compose down
 | **Architecture Blueprints** | **IMPLEMENTED** | 6 architecture specifications and 4 Architecture Decision Records |
 | **Class A Native Engines** | **IMPLEMENTED** | OWASP Headers, CORS, TLS, and Declarative YAML Assertion Runners |
 | **Class B Container Scanners** | **IMPLEMENTED** | Ephemeral Docker runner, OWASP ZAP & Aqua Trivy normalizers and engines |
+| **Class C Heavy Workers** | **IMPLEMENTED** | Grafana k6 latency SLA audit (p50/p95/p99) & Rate Limiting resilience engine |
+| **Quantitative Telemetry** | **IMPLEMENTED** | PostgreSQL metrics persistence and API endpoints for latency SLA distributions |
 
 ---
 
@@ -259,9 +261,15 @@ docker compose down
   * Ephemeral Docker runner orchestrator for OWASP ZAP and Aqua Trivy with sandboxing.
   * Finding ingestion and normalization pipeline into unified `Finding` and immutable `Evidence` records.
   * CLI `security-lab scan` command and Dashboard Class B scanner launcher.
-* [ ] **Phase 4: Resilience & Load Testing (Class C)**
-  * Integration with Grafana k6 for automated latency SLA and concurrency soak testing.
+* [x] **Phase 4: Resilience & Load Testing (Class C)**
+  * Implementation of Class C heavy workers (`K6ResilienceEngine` / `engine-worker-k6`) for latency SLA audits (p50/p95/p99) and concurrency testing.
+  * Rate limiting and throttling resilience engine (`RateLimitResilienceEngine` / `engine-native-resilience`) evaluating burst tolerance and HTTP 429 defenses.
+  * Target Scope boundary gating enforcing `target.scope.testing.loadTesting === true` and concurrency clamping (`maxConcurrency`, `maxRps`).
+  * Quantitative performance telemetry persistence in PostgreSQL `metrics` table and controller endpoints (`GET /api/v1/test-runs/:id/metrics`).
+  * CLI `security-lab load` / `resilience` commands with latency distribution summaries and pass/fail SLA release gating.
+  * Web Dashboard Class C launcher and quantitative latency SLA card visualizations.
 * [ ] **Phase 5: Release Gating & Enterprise Reporting**
   * Automated JUnit, SARIF, and PDF/HTML report generators.
   * CI/CD GitHub Actions / GitLab CI release gating integrations.
+
 

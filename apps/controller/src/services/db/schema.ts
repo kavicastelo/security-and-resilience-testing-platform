@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, jsonb, integer } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, jsonb, integer, doublePrecision } from 'drizzle-orm/pg-core';
 import { TargetScope, FindingSeverity, FindingConfidence, FindingStatus } from '@security-lab/domain';
 
 export const projects = pgTable('projects', {
@@ -127,3 +127,20 @@ export const findings = pgTable('findings', {
   fixedAt: timestamp('fixed_at', { withTimezone: true }),
   metadata: jsonb('metadata').notNull().default({}),
 });
+
+export const metrics = pgTable('metrics', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  testRunId: uuid('test_run_id')
+    .notNull()
+    .references(() => testRuns.id, { onDelete: 'cascade' }),
+  executionId: uuid('execution_id')
+    .notNull()
+    .references(() => testExecutions.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 100 }).notNull(),
+  value: doublePrecision('value').notNull(),
+  unit: varchar('unit', { length: 20 }).notNull().default('ms'),
+  tags: jsonb('tags').notNull().default({}),
+  threshold: jsonb('threshold'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+

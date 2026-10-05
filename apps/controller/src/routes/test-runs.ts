@@ -4,6 +4,7 @@ import { testRunsService } from '../services/test-runs.service.js';
 import { testRunnerService, ExecuteRunOptions } from '../services/runner.service.js';
 import { findingsService } from '../services/findings.service.js';
 import { evidenceService } from '../services/evidence.service.js';
+import { metricsService } from '../services/metrics.service.js';
 
 export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. Create & Queue TestRun
@@ -107,6 +108,15 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     return reply.send({
       success: true,
       data: evidenceList,
+    });
+  });
+
+  // 7. Get TestRun Quantitative Metrics
+  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/metrics', async (request, reply) => {
+    const metricsList = await metricsService.listMetricsByTestRunId(request.params.id);
+    return reply.send({
+      success: true,
+      data: metricsList,
     });
   });
 };
