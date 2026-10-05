@@ -11,6 +11,9 @@ import {
   CheckCircle2,
   XCircle,
   Activity,
+  Box,
+  Cpu,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface Target {
@@ -88,12 +91,18 @@ export const RunsView: React.FC = () => {
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
-  const [executionMode, setExecutionMode] = useState<'class_a' | 'declarative'>('class_a');
+  const [executionMode, setExecutionMode] = useState<'class_a' | 'class_b' | 'declarative'>('class_a');
   const [selectedEngines, setSelectedEngines] = useState<string[]>([
     'engine-native-headers',
     'engine-native-cors',
     'engine-native-tls',
   ]);
+  const [selectedClassBEngines, setSelectedClassBEngines] = useState<string[]>([
+    'engine-container-zap',
+    'engine-container-trivy',
+  ]);
+  const [enableActiveScan, setEnableActiveScan] = useState<boolean>(false);
+  const [isSimulated, setIsSimulated] = useState<boolean>(true);
   const [declarativeYaml, setDeclarativeYaml] = useState(DEFAULT_DECLARATIVE_YAML);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
@@ -126,6 +135,17 @@ export const RunsView: React.FC = () => {
       const target = targets.find((t) => t.id === selectedTargetId);
       if (!target) throw new Error('Target not found');
 
+      let profileId = 'native-class-a';
+      let engineIds = selectedEngines;
+
+      if (executionMode === 'declarative') {
+        profileId = 'declarative';
+        engineIds = ['engine-native-declarative'];
+      } else if (executionMode === 'class_b') {
+        profileId = 'class-b-scanners';
+        engineIds = selectedClassBEngines;
+      }
+
       // Create Run
       const createRes = await fetch(`${apiUrl}/api/v1/test-runs`, {
         method: 'POST',
@@ -133,9 +153,11 @@ export const RunsView: React.FC = () => {
         body: JSON.stringify({
           projectId: target.projectId || target.id,
           targetId: target.id,
-          profileId: executionMode === 'declarative' ? 'declarative' : 'native-class-a',
+          profileId,
           metadata: {
             definitionYaml: executionMode === 'declarative' ? declarativeYaml : undefined,
+            activeScan: executionMode === 'class_b' ? enableActiveScan : false,
+            simulated: executionMode === 'class_b' ? isSimulated : false,
           },
         }),
       });
@@ -149,8 +171,12 @@ export const RunsView: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          engineIds: executionMode === 'class_a' ? selectedEngines : undefined,
+          engineIds,
           definitionYaml: executionMode === 'declarative' ? declarativeYaml : undefined,
+          options: {
+            activeScan: enableActiveScan,
+            simulated: isSimulated,
+          },
         }),
       });
       const execJson = await execRes.json();
@@ -169,6 +195,12 @@ export const RunsView: React.FC = () => {
 
   const toggleEngine = (engineId: string) => {
     setSelectedEngines((prev) =>
+      prev.includes(engineId) ? prev.filter((id) => id !== engineId) : [...prev, engineId],
+    );
+  };
+
+  const toggleClassBEngine = (engineId: string) => {
+    setSelectedClassBEngines((prev) =>
       prev.includes(engineId) ? prev.filter((id) => id !== engineId) : [...prev, engineId],
     );
   };
@@ -209,7 +241,7 @@ export const RunsView: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold tracking-tight text-foreground">Test Executions & Runner</h2>
           <p className="text-sm text-muted-foreground">
-            Execute in-process Class A security engines and declarative assertion test definitions.
+            Execute in-process Class A security engines, Class B containerized scanners (ZAP / Trivy), and declarative YAML runners.
           </p>
         </div>
         <button
@@ -228,7 +260,7 @@ export const RunsView: React.FC = () => {
             <Play className="w-4 h-4 text-blue-400" />
             <span className="font-semibold text-sm text-foreground">Launch Security Test Run</span>
           </div>
-          <span className="text-xs font-mono text-muted-foreground">In-Process SDK Dispatcher</span>
+          <span className="text-xs font-mono text-muted-foreground">Unified TestEngine Dispatcher</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -254,28 +286,44 @@ export const RunsView: React.FC = () => {
           {/* Execution Mode */}
           <div>
             <label className="block text-xs font-medium text-foreground mb-1.5">Test Suite Mode</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setExecutionMode('class_a')}
-                className={`px-3 py-2 rounded-lg text-xs font-medium border text-center transition-colors ${
+                className={`px-2.5 py-2 rounded-lg text-xs font-medium border text-center transition-colors flex items-center justify-center gap-1.5 ${
                   executionMode === 'class_a'
                     ? 'bg-blue-500/15 border-blue-500/40 text-blue-400'
                     : 'bg-background border-border text-muted-foreground hover:bg-accent'
                 }`}
               >
-                Class A Native Engines
+                <Cpu className="w-3.5 h-3.5" />
+                <span>Class A Native</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setExecutionMode('class_b')}
+                className={`px-2.5 py-2 rounded-lg text-xs font-medium border text-center transition-colors flex items-center justify-center gap-1.5 ${
+                  executionMode === 'class_b'
+                    ? 'bg-blue-500/15 border-blue-500/40 text-blue-400'
+                    : 'bg-background border-border text-muted-foreground hover:bg-accent'
+                }`}
+              >
+                <Box className="w-3.5 h-3.5" />
+                <span>Class B Scanners</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setExecutionMode('declarative')}
-                className={`px-3 py-2 rounded-lg text-xs font-medium border text-center transition-colors ${
+                className={`px-2.5 py-2 rounded-lg text-xs font-medium border text-center transition-colors flex items-center justify-center gap-1.5 ${
                   executionMode === 'declarative'
                     ? 'bg-blue-500/15 border-blue-500/40 text-blue-400'
                     : 'bg-background border-border text-muted-foreground hover:bg-accent'
                 }`}
               >
-                Declarative YAML Runner
+                <Code className="w-3.5 h-3.5" />
+                <span>Declarative YAML</span>
               </button>
             </div>
           </div>
@@ -327,6 +375,84 @@ export const RunsView: React.FC = () => {
           </div>
         )}
 
+        {/* Engine Checklist for Class B (Container Scanners) */}
+        {executionMode === 'class_b' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-foreground block">
+                Select Isolated Container Scanners:
+              </span>
+              <div className="flex items-center gap-4 text-xs">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableActiveScan}
+                    onChange={(e) => setEnableActiveScan(e.target.checked)}
+                    className="rounded border-border text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-muted-foreground">
+                    Enable Active Scanning (Requires Scope Opt-In)
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isSimulated}
+                    onChange={(e) => setIsSimulated(e.target.checked)}
+                    className="rounded border-border text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-blue-400 font-mono text-[11px]">
+                    Fast Lab Mode (Simulated Containers)
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[
+                {
+                  id: 'engine-container-zap',
+                  name: 'OWASP ZAP Scanner Container',
+                  image: 'ghcr.io/zaproxy/zaproxy:stable',
+                  desc: 'Automated baseline web vulnerability scanning, XSS, injection vectors, and defensive header audits.',
+                },
+                {
+                  id: 'engine-container-trivy',
+                  name: 'Aqua Trivy Security Container',
+                  image: 'aquasec/trivy:latest',
+                  desc: 'Software composition analysis (SCA), CVE identification in dependencies, and IaC/container misconfigurations.',
+                },
+              ].map((engine) => (
+                <label
+                  key={engine.id}
+                  className={`flex items-start gap-3 p-3.5 rounded-lg border cursor-pointer transition-colors ${
+                    selectedClassBEngines.includes(engine.id)
+                      ? 'bg-accent/40 border-blue-500/40'
+                      : 'bg-background/40 border-border opacity-60'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedClassBEngines.includes(engine.id)}
+                    onChange={() => toggleClassBEngine(engine.id)}
+                    className="mt-1 rounded border-border text-blue-600 focus:ring-blue-500"
+                  />
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-foreground">{engine.name}</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-accent text-muted-foreground">
+                        Class B
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-blue-400/80">{engine.image}</div>
+                    <div className="text-[11px] text-muted-foreground leading-snug">{engine.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Declarative YAML Editor */}
         {executionMode === 'declarative' && (
           <div className="space-y-2">
@@ -354,7 +480,8 @@ export const RunsView: React.FC = () => {
               <span>{(triggerMutation.error as Error)?.message || 'Execution error'}</span>
             </div>
           ) : (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
               Scope boundary validation will be strictly verified before dispatch.
             </span>
           )}

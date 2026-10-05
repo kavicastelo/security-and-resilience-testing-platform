@@ -21,6 +21,8 @@ import {
   CorsSecurityEngine,
   TlsSecurityEngine,
   DeclarativeTestEngine,
+  ZapScannerEngine,
+  TrivyScannerEngine,
   TestEngine,
   ExecutionContext,
 } from '@security-lab/test-sdk';
@@ -122,11 +124,23 @@ export class TestRunnerService {
       options?.definitionYaml ||
       (testRun.metadata?.definitionYaml as string | undefined);
 
+    const allKnown: TestEngine[] = [
+      ...this.defaultEngines,
+      new ZapScannerEngine(),
+      new TrivyScannerEngine(),
+      new DeclarativeTestEngine(),
+    ];
+
     if (definitionYaml || testRun.profileId === 'declarative') {
       enginesToRun = [new DeclarativeTestEngine()];
+    } else if (testRun.profileId === 'class-b-scanners' || testRun.profileId === 'container-scanners') {
+      enginesToRun = [new ZapScannerEngine(), new TrivyScannerEngine()];
+    } else if (testRun.profileId === 'zap') {
+      enginesToRun = [new ZapScannerEngine()];
+    } else if (testRun.profileId === 'trivy') {
+      enginesToRun = [new TrivyScannerEngine()];
     } else if (options?.engineIds && options.engineIds.length > 0) {
       const requested = new Set(options.engineIds);
-      const allKnown = [...this.defaultEngines, new DeclarativeTestEngine()];
       enginesToRun = allKnown.filter((e) => requested.has(e.id));
       if (enginesToRun.length === 0) {
         enginesToRun = this.defaultEngines;
@@ -151,12 +165,16 @@ export class TestRunnerService {
     for (const engine of enginesToRun) {
       runLogger.info(`Dispatching engine [${engine.id}]...`);
 
+      const executionClass = ['engine-container-zap', 'engine-container-trivy'].includes(engine.id)
+        ? 'class_b_container'
+        : 'class_a_native';
+
       const [executionRow] = await db
         .insert(testExecutions)
         .values({
           testRunId,
           engineId: engine.id,
-          executionClass: 'class_a_native',
+          executionClass,
           status: 'running',
           startedAt: new Date(),
         })
@@ -188,6 +206,7 @@ export class TestRunnerService {
         targetUrl: target.baseUrl,
         customHeaders: options?.customHeaders,
         options: {
+          ...(testRun.metadata as Record<string, unknown> | undefined),
           ...options?.options,
           yaml: definitionYaml,
         },

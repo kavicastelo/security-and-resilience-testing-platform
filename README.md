@@ -237,28 +237,31 @@ docker compose down
 | **Evidence Immutability** | **IMPLEMENTED** | SHA-256 cryptographic hashing and tamper freeze (`@security-lab/evidence`) |
 | **Configuration & Logging** | **IMPLEMENTED** | Zod-validated config, structured correlation logging |
 | **PostgreSQL Foundation** | **IMPLEMENTED** | Forward-only migration schema (`0000_initial_schema.sql`) and seeds |
-| **Controller Application** | **IMPLEMENTED** | Fastify service with `/health`, `/api/v1/health`, graceful shutdown |
-| **Web Dashboard** | **IMPLEMENTED** | React/Vite shell with dark theme, health polling, architecture views |
-| **CLI Skeleton** | **IMPLEMENTED** | Commander CLI with `version`, `--help`, and future command stubs |
-| **Architecture Blueprints** | **IMPLEMENTED** | 5 detailed architecture docs and 4 Architecture Decision Records |
-| **Real Attack / Scanner Logic** | **NOT IMPLEMENTED** | Intentionally deferred to subsequent implementation phases |
+| **Controller Application** | **IMPLEMENTED** | Fastify service with projects, targets, test-runs, findings, and evidence APIs |
+| **Web Dashboard** | **IMPLEMENTED** | React/Vite application with Target Scopes, Test Executions, and Findings Views |
+| **CLI Application** | **IMPLEMENTED** | Commander CLI with `version`, `project`, `target`, `test`, and `scan` commands |
+| **Architecture Blueprints** | **IMPLEMENTED** | 6 architecture specifications and 4 Architecture Decision Records |
+| **Class A Native Engines** | **IMPLEMENTED** | OWASP Headers, CORS, TLS, and Declarative YAML Assertion Runners |
+| **Class B Container Scanners** | **IMPLEMENTED** | Ephemeral Docker runner, OWASP ZAP & Aqua Trivy normalizers and engines |
 
 ---
 
-## 13. Future Roadmap
+## 13. Project Roadmap
 
-* **Phase 1: Target Management & Security Boundary Enforcement**
+* [x] **Phase 1: Target Management & Security Boundary Enforcement**
   * CRUD APIs and CLI for projects, environments, and targets.
-  * Target Scope Validator with DNS rebinding and subnet protection.
+  * Target Scope Validator with DNS rebinding and cloud metadata protection.
   * TestRun state machine and persistence in PostgreSQL via Drizzle.
-* **Phase 2: Native Test Engines (Class A)**
-  * Implementation of `headers`, `tls`, `cors`, and `http-security` native engines.
-  * Execution of platform-native declarative YAML test definitions.
-* **Phase 3: Containerized Scanner Integrations (Class B)**
-  * Ephemeral Docker runner orchestrator for OWASP ZAP and Trivy.
-  * Finding ingestion and normalization pipeline.
-* **Phase 4: Resilience & Load Testing (Class C)**
+* [x] **Phase 2: Native Test Engines (Class A) & Declarative Runner**
+  * Implementation of `headers`, `cors`, and `tls` native testing engines.
+  * Execution of platform-native declarative YAML test definitions with rich assertions.
+* [x] **Phase 3: Containerized Scanner Integrations (Class B)**
+  * Ephemeral Docker runner orchestrator for OWASP ZAP and Aqua Trivy with sandboxing.
+  * Finding ingestion and normalization pipeline into unified `Finding` and immutable `Evidence` records.
+  * CLI `security-lab scan` command and Dashboard Class B scanner launcher.
+* [ ] **Phase 4: Resilience & Load Testing (Class C)**
   * Integration with Grafana k6 for automated latency SLA and concurrency soak testing.
-* **Phase 5: Release Gating & Enterprise Reporting**
+* [ ] **Phase 5: Release Gating & Enterprise Reporting**
   * Automated JUnit, SARIF, and PDF/HTML report generators.
   * CI/CD GitHub Actions / GitLab CI release gating integrations.
+

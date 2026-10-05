@@ -4,6 +4,7 @@ import { versionCommand } from './commands/version.js';
 import { projectCommand } from './commands/project.js';
 import { targetCommand } from './commands/target.js';
 import { testCommand } from './commands/test.js';
+import { scanCommand } from './commands/scan.js';
 import pc from 'picocolors';
 
 const program = new Command();
@@ -17,19 +18,12 @@ program
   .option('--format <format>', 'Output format (table, json, yaml, junit)', 'table')
   .option('--verbose', 'Enable verbose logging output', false);
 
-// Registered and implemented commands: version, project, target, test
+// Registered and implemented commands: version, project, target, test, scan
 program.addCommand(versionCommand);
 program.addCommand(projectCommand);
 program.addCommand(targetCommand);
 program.addCommand(testCommand);
-
-program
-  .command('scan')
-  .description('[PLANNED: Phase 2] Launch containerized scanners (Class B/C runners) against authorized targets')
-  .action(() => {
-    // eslint-disable-next-line no-console
-    console.log(pc.yellow('ℹ Command "scan" is planned for Phase 2 (Isolated Container Test Runners).'));
-  });
+program.addCommand(scanCommand);
 
 program
   .command('report')

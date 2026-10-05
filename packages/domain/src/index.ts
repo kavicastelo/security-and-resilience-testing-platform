@@ -10,3 +10,4 @@ export * from './metric/index.js';
 export * from './policy/index.js';
 export * from './security-contract/index.js';
 export * from './release/index.js';
+export * from './normalizers/index.js';
