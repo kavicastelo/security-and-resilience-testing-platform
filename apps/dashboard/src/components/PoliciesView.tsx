@@ -13,6 +13,8 @@ import {
   Sliders,
   X,
   Loader2,
+  Trash2,
+  Pencil,
 } from 'lucide-react';
 import { EvaluateReleaseModal } from './EvaluateReleaseModal.js';
 
@@ -66,8 +68,9 @@ export const PoliciesView: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<'policies' | 'audits'>('policies');
   const [isEvaluateModalOpen, setIsEvaluateModalOpen] = useState(false);
   const [isCreatePolicyOpen, setIsCreatePolicyOpen] = useState(false);
+  const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null);
 
-  // New Policy Form State
+  // Policy Form State
   const [newPolicyName, setNewPolicyName] = useState('');
   const [newPolicyDesc, setNewPolicyDesc] = useState('');
   const [maxCritical, setMaxCritical] = useState<number>(0);
@@ -75,6 +78,36 @@ export const PoliciesView: React.FC = () => {
   const [maxMedium, setMaxMedium] = useState<number>(5);
   const [maxP95LatencyMs, setMaxP95LatencyMs] = useState<number>(500);
   const [maxErrorRatePercent, setMaxErrorRatePercent] = useState<number>(1.0);
+
+  const handleOpenCreatePolicy = () => {
+    setEditingPolicy(null);
+    setNewPolicyName('');
+    setNewPolicyDesc('');
+    setMaxCritical(0);
+    setMaxHigh(0);
+    setMaxMedium(5);
+    setMaxP95LatencyMs(500);
+    setMaxErrorRatePercent(1.0);
+    setIsCreatePolicyOpen(true);
+  };
+
+  const handleOpenEditPolicy = (policy: Policy) => {
+    setEditingPolicy(policy);
+    setNewPolicyName(policy.name);
+    setNewPolicyDesc(policy.description || '');
+    const sevRule = policy.rules?.find((r) => r.condition?.maxCountBySeverity);
+    if (sevRule?.condition?.maxCountBySeverity) {
+      setMaxCritical(sevRule.condition.maxCountBySeverity.critical ?? 0);
+      setMaxHigh(sevRule.condition.maxCountBySeverity.high ?? 0);
+      setMaxMedium(sevRule.condition.maxCountBySeverity.medium ?? 5);
+    }
+    const perfRule = policy.rules?.find((r) => r.condition?.maxP95LatencyMs);
+    if (perfRule?.condition) {
+      setMaxP95LatencyMs(perfRule.condition.maxP95LatencyMs ?? 500);
+      setMaxErrorRatePercent(perfRule.condition.maxErrorRatePercent ?? 1.0);
+    }
+    setIsCreatePolicyOpen(true);
+  };
 
   // Fetch Policies
   const { data: policies = [], isLoading: isLoadingPolicies } = useQuery<Policy[]>({
@@ -150,6 +183,92 @@ export const PoliciesView: React.FC = () => {
     },
   });
 
+  // Update Policy Mutation
+  const updatePolicyMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingPolicy) return;
+      const rules: PolicyRule[] = [
+        {
+          id: `rule-severity-${Date.now()}`,
+          name: 'Vulnerability Severity Thresholds',
+          description: `Zero critical findings and maximum ${maxHigh} high findings allowed`,
+          condition: {
+            maxCountBySeverity: {
+              critical: maxCritical,
+              high: maxHigh,
+              medium: maxMedium,
+            },
+          },
+          action: 'block_release',
+        },
+        {
+          id: `rule-latency-sla-${Date.now()}`,
+          name: 'P95 Latency SLA Gating',
+          description: `P95 response latency under load must not exceed ${maxP95LatencyMs}ms`,
+          condition: {
+            maxP95LatencyMs,
+            maxErrorRatePercent,
+          },
+          action: 'block_release',
+        },
+      ];
+
+      const res = await fetch(`${apiUrl}/api/v1/policies/${editingPolicy.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newPolicyName.trim(),
+          description: newPolicyDesc.trim() || undefined,
+          rules,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorJson = await res.json();
+        throw new Error(errorJson.error?.message || 'Failed to update policy');
+      }
+
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['policies'] });
+      setIsCreatePolicyOpen(false);
+      setEditingPolicy(null);
+      setNewPolicyName('');
+      setNewPolicyDesc('');
+    },
+  });
+
+  // Delete Policy Mutation
+  const deletePolicyMutation = useMutation({
+    mutationFn: async (policyId: string) => {
+      const res = await fetch(`${apiUrl}/api/v1/policies/${policyId}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to delete policy');
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['policies'] });
+    },
+  });
+
+  // Delete Release Audit Mutation
+  const deleteReleaseMutation = useMutation({
+    mutationFn: async (releaseId: string) => {
+      const res = await fetch(`${apiUrl}/api/v1/releases/${releaseId}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to delete release audit');
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['releases'] });
+    },
+  });
+
   const getDecisionBadge = (decision: string) => {
     switch (decision) {
       case 'allow':
@@ -197,7 +316,7 @@ export const PoliciesView: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
-            onClick={() => setIsCreatePolicyOpen(true)}
+            onClick={handleOpenCreatePolicy}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-accent hover:bg-accent/80 text-foreground text-xs font-medium border border-border transition-colors"
           >
             <Plus className="w-3.5 h-3.5 text-blue-400" />
@@ -323,8 +442,33 @@ export const PoliciesView: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="pt-2 text-[11px] font-mono text-muted-foreground flex items-center justify-between">
-                      <span>ID: {policy.id.slice(0, 8)}...</span>
+                    <div className="pt-2 text-[11px] font-mono text-muted-foreground flex items-center justify-between border-t border-border/40">
+                      <div className="flex items-center gap-2">
+                        <span>ID: {policy.id.slice(0, 8)}...</span>
+                        {!isBaseline && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleOpenEditPolicy(policy)}
+                              className="p-1 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-950/40 transition-colors"
+                              title="Edit Policy"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Are you sure you want to delete custom policy "${policy.name}"?`)) {
+                                  deletePolicyMutation.mutate(policy.id);
+                                }
+                              }}
+                              disabled={deletePolicyMutation.isPending}
+                              className="p-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 transition-colors disabled:opacity-50"
+                              title="Delete Policy"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={() => setIsEvaluateModalOpen(true)}
                         className="text-blue-400 hover:text-blue-300 text-xs font-sans font-medium flex items-center gap-1"
@@ -403,6 +547,18 @@ export const PoliciesView: React.FC = () => {
                         <span>Executive Report</span>
                       </a>
                     )}
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Delete release audit record for "${rel.name} (${rel.version})"?`)) {
+                          deleteReleaseMutation.mutate(rel.id);
+                        }
+                      }}
+                      disabled={deleteReleaseMutation.isPending}
+                      title="Delete Release Audit"
+                      className="p-1.5 rounded-lg bg-rose-950/30 hover:bg-rose-950/50 border border-rose-800/40 text-rose-400 hover:text-rose-300 transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -418,14 +574,16 @@ export const PoliciesView: React.FC = () => {
         apiUrl={apiUrl}
       />
 
-      {/* Modal 2: Create Custom Policy */}
+      {/* Modal 2: Create / Edit Custom Policy */}
       {isCreatePolicyOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-card border border-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col">
             <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-card/60">
               <div className="flex items-center gap-2.5">
                 <Sliders className="w-5 h-5 text-blue-400" />
-                <h3 className="text-base font-bold text-foreground">Create Release Gate Policy</h3>
+                <h3 className="text-base font-bold text-foreground">
+                  {editingPolicy ? 'Edit Release Gate Policy' : 'Create Release Gate Policy'}
+                </h3>
               </div>
               <button
                 onClick={() => setIsCreatePolicyOpen(false)}
@@ -529,9 +687,9 @@ export const PoliciesView: React.FC = () => {
                 </div>
               </div>
 
-              {createPolicyMutation.isError && (
+              {(createPolicyMutation.isError || updatePolicyMutation.isError) && (
                 <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
-                  {(createPolicyMutation.error as Error).message}
+                  {((createPolicyMutation.error || updatePolicyMutation.error) as Error).message}
                 </div>
               )}
             </div>
@@ -544,17 +702,23 @@ export const PoliciesView: React.FC = () => {
                 Cancel
               </button>
               <button
-                onClick={() => createPolicyMutation.mutate()}
-                disabled={!newPolicyName.trim() || createPolicyMutation.isPending}
+                onClick={() => {
+                  if (editingPolicy) {
+                    updatePolicyMutation.mutate();
+                  } else {
+                    createPolicyMutation.mutate();
+                  }
+                }}
+                disabled={!newPolicyName.trim() || createPolicyMutation.isPending || updatePolicyMutation.isPending}
                 className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium transition-colors shadow-lg shadow-blue-500/10"
               >
-                {createPolicyMutation.isPending ? (
+                {(createPolicyMutation.isPending || updatePolicyMutation.isPending) ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span>Saving Policy...</span>
                   </>
                 ) : (
-                  <span>Create Policy</span>
+                  <span>{editingPolicy ? 'Save Changes' : 'Create Policy'}</span>
                 )}
               </button>
             </div>

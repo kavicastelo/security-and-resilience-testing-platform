@@ -153,6 +153,68 @@ export class FindingsService {
       metadata: (row.metadata as Record<string, unknown>) || {},
     }));
   }
+
+  async updateFindingStatus(
+    id: string,
+    status: FindingStatus,
+    notes?: string,
+  ): Promise<Finding | null> {
+    const { db } = getDatabase();
+    const existing = await this.getFindingById(id);
+    if (!existing) return null;
+
+    const metadata = {
+      ...existing.metadata,
+      statusUpdatedNotes: notes,
+      statusUpdatedAt: new Date().toISOString(),
+    };
+
+    const updateValues: Record<string, unknown> = {
+      status,
+      metadata,
+    };
+
+    if (status === 'resolved') {
+      updateValues.fixedAt = new Date();
+    }
+
+    const [updated] = await db
+      .update(findings)
+      .set(updateValues)
+      .where(eq(findings.id, id))
+      .returning();
+
+    if (!updated) return null;
+
+    return {
+      id: updated.id,
+      fingerprint: updated.fingerprint,
+      title: updated.title,
+      category: updated.category,
+      severity: updated.severity,
+      confidence: updated.confidence,
+      status: updated.status,
+      description: updated.description,
+      risk: updated.risk ?? undefined,
+      recommendation: updated.recommendation ?? undefined,
+      testDefinitionId: updated.testDefinitionId,
+      testRunId: updated.testRunId,
+      executionId: updated.executionId,
+      targetId: updated.targetId,
+      releaseId: updated.releaseId ?? undefined,
+      evidenceId: updated.evidenceId ?? undefined,
+      firstDetectedAt: updated.firstDetectedAt,
+      lastDetectedAt: updated.lastDetectedAt,
+      fixedAt: updated.fixedAt ?? undefined,
+      metadata: (updated.metadata as Record<string, unknown>) || {},
+    };
+  }
+
+  async deleteFinding(id: string): Promise<boolean> {
+    const { db } = getDatabase();
+    const deleted = await db.delete(findings).where(eq(findings.id, id)).returning();
+    return deleted.length > 0;
+  }
 }
 
 export const findingsService = new FindingsService();

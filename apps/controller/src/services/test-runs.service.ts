@@ -160,6 +160,12 @@ export class TestRunsService {
       updatedAt: updated.updatedAt,
     };
   }
+
+  async deleteTestRun(id: string): Promise<boolean> {
+    const { db } = getDatabase();
+    const deleted = await db.delete(testRuns).where(eq(testRuns.id, id)).returning();
+    return deleted.length > 0;
+  }
 }
 
 export const testRunsService = new TestRunsService();

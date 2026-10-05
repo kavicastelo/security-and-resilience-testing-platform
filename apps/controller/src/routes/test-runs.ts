@@ -119,4 +119,24 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       data: metricsList,
     });
   });
+
+  // 8. Delete TestRun
+  fastify.delete<{ Params: { id: string } }>('/api/v1/test-runs/:id', async (request, reply) => {
+    const { id } = request.params;
+    const deleted = await testRunsService.deleteTestRun(id);
+    if (!deleted) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${id}" not found`,
+        },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: { id, deleted: true },
+    });
+  });
 };

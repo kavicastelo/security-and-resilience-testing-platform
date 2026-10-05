@@ -8,6 +8,9 @@ import {
   Lock,
   Globe,
   Radio,
+  Pencil,
+  Trash2,
+  X,
 } from 'lucide-react';
 
 interface TargetScope {
@@ -72,6 +75,31 @@ export const TargetsView: React.FC = () => {
   const [activeScanningOpt, setActiveScanningOpt] = useState(false);
   const [loadTestingOpt, setLoadTestingOpt] = useState(false);
   const [creationError, setCreationError] = useState<string | null>(null);
+
+  // Edit target modal state
+  const [editingTarget, setEditingTarget] = useState<Target | null>(null);
+  const [editTargetName, setEditTargetName] = useState('');
+  const [editTargetUrl, setEditTargetUrl] = useState('');
+  const [editTargetHosts, setEditTargetHosts] = useState('');
+  const [editTargetPorts, setEditTargetPorts] = useState('80, 443');
+  const [editActiveScanning, setEditActiveScanning] = useState(false);
+  const [editLoadTesting, setEditLoadTesting] = useState(false);
+  const [editMaxRps, setEditMaxRps] = useState(50);
+  const [editMaxConcurrency, setEditMaxConcurrency] = useState(10);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const handleOpenEdit = (target: Target) => {
+    setEditingTarget(target);
+    setEditTargetName(target.name);
+    setEditTargetUrl(target.baseUrl);
+    setEditTargetHosts(target.scope?.allowedHosts?.join(', ') || '');
+    setEditTargetPorts(target.scope?.allowedPorts?.join(', ') || '80, 443');
+    setEditActiveScanning(Boolean(target.scope?.testing?.activeScanning));
+    setEditLoadTesting(Boolean(target.scope?.testing?.loadTesting));
+    setEditMaxRps(target.scope?.limits?.maxRps ?? 50);
+    setEditMaxConcurrency(target.scope?.limits?.maxConcurrency ?? 10);
+    setEditError(null);
+  };
 
   // Scope validation mutation
   const validateMutation = useMutation({
@@ -162,6 +190,81 @@ export const TargetsView: React.FC = () => {
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       setCreationError(msg);
+    },
+  });
+
+  // Target update mutation
+  const updateTargetMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingTarget) return;
+      setEditError(null);
+
+      const hosts = editTargetHosts
+        .split(',')
+        .map((h) => h.trim())
+        .filter(Boolean);
+
+      const parsedPorts = editTargetPorts
+        .split(',')
+        .map((p) => parseInt(p.trim(), 10))
+        .filter((p) => !isNaN(p) && p > 0 && p <= 65535);
+
+      const ports = parsedPorts.length > 0 ? parsedPorts : [80, 443];
+
+      const res = await fetch(`${apiUrl}/api/v1/targets/${editingTarget.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editTargetName.trim(),
+          baseUrl: editTargetUrl.trim(),
+          scope: {
+            allowedHosts: hosts,
+            allowedPorts: ports,
+            testing: {
+              activeScanning: editActiveScanning,
+              loadTesting: editLoadTesting,
+              chaosTesting: false,
+            },
+            limits: {
+              maxRps: editMaxRps,
+              maxConcurrency: editMaxConcurrency,
+              maxDuration: editingTarget.scope?.limits?.maxDuration || '1h',
+            },
+          },
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to update target');
+      return json.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['targets'] });
+      setEditingTarget(null);
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      setEditError(msg);
+    },
+  });
+
+  // Target delete mutation
+  const deleteTargetMutation = useMutation({
+    mutationFn: async (targetId: string) => {
+      const res = await fetch(`${apiUrl}/api/v1/targets/${targetId}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to delete target');
+      return json;
+    },
+    onSuccess: (_, deletedId) => {
+      queryClient.invalidateQueries({ queryKey: ['targets'] });
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
+      queryClient.invalidateQueries({ queryKey: ['findings'] });
+      if (selectedTargetId === deletedId) {
+        setSelectedTargetId('');
+      }
     },
   });
 
@@ -287,6 +390,130 @@ export const TargetsView: React.FC = () => {
         </div>
       )}
 
+      {/* Target Edit Form Modal */}
+      {editingTarget && (
+        <div className="p-6 rounded-xl border border-amber-500/30 bg-card/95 space-y-4 shadow-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Pencil className="w-4 h-4 text-amber-400" />
+              <h3 className="text-sm font-semibold text-foreground">
+                Edit Target Scope: {editingTarget.name}
+              </h3>
+            </div>
+            <button
+              onClick={() => setEditingTarget(null)}
+              className="text-xs text-muted-foreground hover:text-foreground p-1"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {editError && (
+            <div className="p-3 text-xs bg-red-950/40 border border-red-800/40 text-red-400 rounded-lg">
+              {editError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div>
+              <label className="block text-muted-foreground mb-1">Target Name</label>
+              <input
+                type="text"
+                value={editTargetName}
+                onChange={(e) => setEditTargetName(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-muted-foreground mb-1">Base URL</label>
+              <input
+                type="text"
+                value={editTargetUrl}
+                onChange={(e) => setEditTargetUrl(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-muted-foreground mb-1">Allowed Hosts (comma-separated)</label>
+              <input
+                type="text"
+                value={editTargetHosts}
+                onChange={(e) => setEditTargetHosts(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-muted-foreground mb-1">Allowed Ports</label>
+              <input
+                type="text"
+                value={editTargetPorts}
+                onChange={(e) => setEditTargetPorts(e.target.value)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-muted-foreground mb-1">Max RPS Rate Limit</label>
+              <input
+                type="number"
+                min={1}
+                max={1000}
+                value={editMaxRps}
+                onChange={(e) => setEditMaxRps(parseInt(e.target.value, 10) || 50)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-muted-foreground mb-1">Max Concurrency</label>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={editMaxConcurrency}
+                onChange={(e) => setEditMaxConcurrency(parseInt(e.target.value, 10) || 10)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-6 pt-2 text-xs">
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={editActiveScanning}
+                onChange={(e) => setEditActiveScanning(e.target.checked)}
+                className="rounded border-border text-amber-500"
+              />
+              <span className="text-foreground">Authorize Active Scanning</span>
+            </label>
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={editLoadTesting}
+                onChange={(e) => setEditLoadTesting(e.target.checked)}
+                className="rounded border-border text-amber-500"
+              />
+              <span className="text-foreground">Authorize Load/Resilience Testing</span>
+            </label>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-2">
+            <button
+              onClick={() => setEditingTarget(null)}
+              className="px-3 py-1.5 rounded text-xs text-muted-foreground hover:bg-accent"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => updateTargetMutation.mutate()}
+              disabled={updateTargetMutation.isPending || !editTargetName || !editTargetUrl || !editTargetHosts}
+              className="px-4 py-1.5 rounded text-xs bg-amber-600 text-white font-medium hover:bg-amber-500 disabled:opacity-50"
+            >
+              {updateTargetMutation.isPending ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Target Scope Cards */}
       <div className="space-y-4">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
@@ -320,15 +547,36 @@ export const TargetsView: React.FC = () => {
                       <span>{target.baseUrl}</span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      setSelectedTargetId(target.id);
-                      setTestUrl(`${target.baseUrl}/api/v1/health`);
-                    }}
-                    className="text-[11px] font-medium text-blue-400 hover:text-blue-300 bg-blue-950/30 border border-blue-800/40 px-2.5 py-1 rounded-md"
-                  >
-                    Test Scope
-                  </button>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => {
+                        setSelectedTargetId(target.id);
+                        setTestUrl(`${target.baseUrl}/api/v1/health`);
+                      }}
+                      className="text-[11px] font-medium text-blue-400 hover:text-blue-300 bg-blue-950/30 border border-blue-800/40 px-2.5 py-1 rounded-md"
+                    >
+                      Test Scope
+                    </button>
+                    <button
+                      onClick={() => handleOpenEdit(target)}
+                      title="Edit Target"
+                      className="text-[11px] font-medium text-amber-400 hover:text-amber-300 bg-amber-950/30 border border-amber-800/40 p-1.5 rounded-md hover:bg-amber-950/50 transition-colors"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Are you sure you want to delete target "${target.name}"? This will also remove all associated test runs and findings.`)) {
+                          deleteTargetMutation.mutate(target.id);
+                        }
+                      }}
+                      disabled={deleteTargetMutation.isPending}
+                      title="Delete Target"
+                      className="text-[11px] font-medium text-rose-400 hover:text-rose-300 bg-rose-950/30 border border-rose-800/40 p-1.5 rounded-md hover:bg-rose-950/50 transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Boundaries */}

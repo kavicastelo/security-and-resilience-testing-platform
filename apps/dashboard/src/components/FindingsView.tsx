@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ShieldAlert,
   Search,
@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   Info,
+  Trash2,
+  Tag,
 } from 'lucide-react';
 
 interface Finding {
@@ -54,6 +56,7 @@ interface Evidence {
 }
 
 export const FindingsView: React.FC = () => {
+  const queryClient = useQueryClient();
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
   const [selectedSeverity, setSelectedSeverity] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -69,6 +72,38 @@ export const FindingsView: React.FC = () => {
         (a: Finding, b: Finding) =>
           new Date(b.firstDetectedAt).getTime() - new Date(a.firstDetectedAt).getTime(),
       );
+    },
+  });
+
+  // Triage update mutation
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ findingId, status }: { findingId: string; status: string }) => {
+      const res = await fetch(`${apiUrl}/api/v1/findings/${findingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to update finding status');
+      return json.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['findings'] });
+    },
+  });
+
+  // Delete finding mutation
+  const deleteFindingMutation = useMutation({
+    mutationFn: async (findingId: string) => {
+      const res = await fetch(`${apiUrl}/api/v1/findings/${findingId}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to delete finding');
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['findings'] });
     },
   });
 
@@ -137,6 +172,41 @@ export const FindingsView: React.FC = () => {
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
             <Info className="w-3 h-3" /> Info
+          </span>
+        );
+    }
+  };
+
+  const getStatusBadge = (status?: string) => {
+    switch (status) {
+      case 'resolved':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            Resolved
+          </span>
+        );
+      case 'false_positive':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
+            False Positive
+          </span>
+        );
+      case 'risk_accepted':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/30">
+            Risk Accepted
+          </span>
+        );
+      case 'suppressed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-500/15 text-slate-400 border border-slate-500/30">
+            Suppressed
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+            Open
           </span>
         );
     }
@@ -298,6 +368,7 @@ export const FindingsView: React.FC = () => {
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         {getSeverityBadge(finding.severity)}
+                        {getStatusBadge(finding.status)}
                         <span className="font-semibold text-sm text-foreground">{finding.title}</span>
                         <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent text-muted-foreground">
                           {finding.category}
@@ -320,6 +391,43 @@ export const FindingsView: React.FC = () => {
                 {/* Expanded Details & Forensics */}
                 {isExpanded && (
                   <div className="p-5 border-t border-border bg-background/50 space-y-4">
+                    {/* Triage & Management Actions */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg bg-accent/40 border border-border/70 text-xs">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-muted-foreground font-medium flex items-center gap-1.5">
+                          <Tag className="w-3.5 h-3.5 text-blue-400" /> Triage Finding Status:
+                        </span>
+                        <select
+                          value={finding.status || 'open'}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            updateStatusMutation.mutate({ findingId: finding.id, status: e.target.value });
+                          }}
+                          disabled={updateStatusMutation.isPending}
+                          className="px-2.5 py-1 rounded bg-background border border-border text-foreground font-mono text-xs focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                        >
+                          <option value="open">Open</option>
+                          <option value="resolved">Resolved / Fixed</option>
+                          <option value="false_positive">False Positive</option>
+                          <option value="risk_accepted">Risk Accepted</option>
+                          <option value="suppressed">Suppressed</option>
+                        </select>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`Are you sure you want to delete finding "${finding.title}"?`)) {
+                            deleteFindingMutation.mutate(finding.id);
+                          }
+                        }}
+                        disabled={deleteFindingMutation.isPending}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-950/30 hover:bg-rose-950/50 border border-rose-800/40 text-rose-400 hover:text-rose-300 transition-colors text-xs disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Finding</span>
+                      </button>
+                    </div>
+
                     {/* Recommendation Card */}
                     {finding.recommendation && (
                       <div className="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs space-y-1">

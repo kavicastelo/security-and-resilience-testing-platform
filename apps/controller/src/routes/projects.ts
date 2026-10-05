@@ -62,4 +62,63 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       data: project,
     });
   });
+
+  // 4. Update Project (PUT / PATCH)
+  const handleUpdateProject = async (
+    request: { params: { id: string }; body: unknown },
+    reply: { status: (code: number) => { send: (payload: unknown) => unknown }; send: (payload: unknown) => unknown },
+  ) => {
+    const { id } = request.params;
+    const body = (request.body as { name?: string; description?: string }) || {};
+
+    try {
+      const updated = await projectsService.updateProject(id, body);
+      if (!updated) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'PROJECT_NOT_FOUND',
+            message: `Project with ID "${id}" not found`,
+          },
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: updated,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update project';
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'PROJECT_UPDATE_FAILED',
+          message,
+        },
+      });
+    }
+  };
+
+  fastify.put<{ Params: { id: string } }>('/api/v1/projects/:id', handleUpdateProject);
+  fastify.patch<{ Params: { id: string } }>('/api/v1/projects/:id', handleUpdateProject);
+
+  // 5. Delete Project
+  fastify.delete<{ Params: { id: string } }>('/api/v1/projects/:id', async (request, reply) => {
+    const { id } = request.params;
+    const deleted = await projectsService.deleteProject(id);
+    if (!deleted) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'PROJECT_NOT_FOUND',
+          message: `Project with ID "${id}" not found`,
+        },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: { id, deleted: true },
+    });
+  });
 };

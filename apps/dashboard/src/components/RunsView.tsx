@@ -19,6 +19,7 @@ import {
   ExternalLink,
   Download,
   Scale,
+  Trash2,
 } from 'lucide-react';
 import { EvaluateReleaseModal } from './EvaluateReleaseModal.js';
 
@@ -241,6 +242,23 @@ export const RunsView: React.FC = () => {
   const [isSimulated, setIsSimulated] = useState<boolean>(true);
   const [declarativeYaml, setDeclarativeYaml] = useState(DEFAULT_DECLARATIVE_YAML);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+
+  // Delete Test Run mutation
+  const deleteRunMutation = useMutation({
+    mutationFn: async (runId: string) => {
+      const res = await fetch(`${apiUrl}/api/v1/test-runs/${runId}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to delete test run');
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
+      queryClient.invalidateQueries({ queryKey: ['findings'] });
+      setExpandedRunId(null);
+    },
+  });
 
   // 1. Fetch Targets
   const { data: targets = [] } = useQuery<Target[]>({
@@ -884,6 +902,19 @@ export const RunsView: React.FC = () => {
                             className="px-2.5 py-1 rounded bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-blue-400 transition-colors font-mono text-[11px] flex items-center gap-1"
                           >
                             <Scale className="w-3 h-3 text-blue-400" /> Evaluate Gate
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`Are you sure you want to delete test run ${run.id}? This will also delete associated test findings and metrics.`)) {
+                                deleteRunMutation.mutate(run.id);
+                              }
+                            }}
+                            disabled={deleteRunMutation.isPending}
+                            title="Delete Test Run"
+                            className="px-2.5 py-1 rounded bg-rose-950/30 hover:bg-rose-950/50 border border-rose-800/40 text-rose-400 hover:text-rose-300 transition-colors font-mono text-[11px] flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3 h-3" /> Delete Run
                           </button>
                         </div>
 

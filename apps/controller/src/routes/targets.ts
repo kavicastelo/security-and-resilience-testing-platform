@@ -139,4 +139,72 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       });
     },
   );
+
+  // 6. Update Target (PUT / PATCH)
+  const handleUpdateTarget = async (
+    request: { params: { id: string }; body: unknown },
+    reply: { status: (code: number) => { send: (payload: unknown) => unknown }; send: (payload: unknown) => unknown },
+  ) => {
+    const { id } = request.params;
+    const body = (request.body as {
+      name?: string;
+      baseUrl?: string;
+      allowedHosts?: string[];
+      allowedPorts?: number[];
+      excludedPaths?: string[];
+      testing?: Record<string, boolean>;
+      limits?: Record<string, unknown>;
+      scope?: Record<string, unknown>;
+    }) || {};
+
+    try {
+      const updated = await targetsService.updateTarget(id, body);
+      if (!updated) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'TARGET_NOT_FOUND',
+            message: `Target with ID "${id}" not found`,
+          },
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: updated,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update target';
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'TARGET_UPDATE_FAILED',
+          message,
+        },
+      });
+    }
+  };
+
+  fastify.put<{ Params: { id: string } }>('/api/v1/targets/:id', handleUpdateTarget);
+  fastify.patch<{ Params: { id: string } }>('/api/v1/targets/:id', handleUpdateTarget);
+
+  // 7. Delete Target
+  fastify.delete<{ Params: { id: string } }>('/api/v1/targets/:id', async (request, reply) => {
+    const { id } = request.params;
+    const deleted = await targetsService.deleteTarget(id);
+    if (!deleted) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TARGET_NOT_FOUND',
+          message: `Target with ID "${id}" not found`,
+        },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: { id, deleted: true },
+    });
+  });
 };
