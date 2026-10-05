@@ -3,7 +3,9 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { config } from '../config/index.js';
 import { logger } from '@security-lab/logger';
 
-export type DatabaseClient = ReturnType<typeof drizzle>;
+import * as schema from './db/schema.js';
+
+export type DatabaseClient = ReturnType<typeof drizzle<typeof schema>>;
 
 let sqlClient: ReturnType<typeof postgres> | null = null;
 let dbInstance: DatabaseClient | null = null;
@@ -16,7 +18,7 @@ export function getDatabase(): { db: DatabaseClient; sql: ReturnType<typeof post
       connect_timeout: 5,
       onnotice: () => {}, // Suppress notices
     });
-    dbInstance = drizzle(sqlClient);
+    dbInstance = drizzle(sqlClient, { schema });
   }
   return { db: dbInstance!, sql: sqlClient! };
 }

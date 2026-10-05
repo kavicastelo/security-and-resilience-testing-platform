@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
 import { Overview } from './components/Overview.js';
+import { TargetsView } from './components/TargetsView.js';
 import { useAppStore } from './store/useAppStore.js';
 
 const queryClient = new QueryClient({
@@ -24,7 +25,8 @@ export const AppContent: React.FC = () => {
         <Sidebar />
         <main className="flex-1 p-8 overflow-y-auto">
           {activeTab === 'overview' && <Overview />}
-          {activeTab !== 'overview' && (
+          {activeTab === 'targets' && <TargetsView />}
+          {activeTab !== 'overview' && activeTab !== 'targets' && (
             <div className="p-8 border border-dashed border-border rounded-xl text-center space-y-3">
               <h3 className="text-base font-semibold capitalize text-foreground">
                 {activeTab} Management
