@@ -5,6 +5,10 @@ import { config } from '../config/index.js';
 import { correlationMiddleware } from '../middleware/correlation.js';
 import { requestLoggerPlugin } from '../plugins/logger.js';
 import { healthRoutes } from '../routes/health.js';
+import { projectsRoutes } from '../routes/projects.js';
+import { environmentsRoutes } from '../routes/environments.js';
+import { targetsRoutes } from '../routes/targets.js';
+import { testRunsRoutes } from '../routes/test-runs.js';
 import { logger } from '@security-lab/logger';
 
 export interface BuildAppOptions {
@@ -60,6 +64,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   // Register Routes
   app.register(healthRoutes);
+  app.register(projectsRoutes);
+  app.register(environmentsRoutes);
+  app.register(targetsRoutes);
+  app.register(testRunsRoutes);
 
   return app;
 }

@@ -50,3 +50,5 @@ export const CreateTargetInputSchema = z.object({
 });
 
 export type CreateTargetInput = z.infer<typeof CreateTargetInputSchema>;
+
+export * from './scope-validator.js';
