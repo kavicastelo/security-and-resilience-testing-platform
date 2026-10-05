@@ -18,7 +18,9 @@ import {
   FileText,
   ExternalLink,
   Download,
+  Scale,
 } from 'lucide-react';
+import { EvaluateReleaseModal } from './EvaluateReleaseModal.js';
 
 interface Target {
   id: string;
@@ -219,6 +221,7 @@ export const RunsView: React.FC = () => {
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
+  const [evaluatingRunId, setEvaluatingRunId] = useState<string | null>(null);
   const [executionMode, setExecutionMode] = useState<'class_a' | 'class_b' | 'class_c' | 'declarative'>('class_a');
   const [loadVus, setLoadVus] = useState<number>(5);
   const [loadDurationSec, setLoadDurationSec] = useState<number>(3);
@@ -873,6 +876,15 @@ export const RunsView: React.FC = () => {
                           >
                             <Download className="w-3 h-3 text-purple-400" /> SARIF v2.1
                           </a>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEvaluatingRunId(run.id);
+                            }}
+                            className="px-2.5 py-1 rounded bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-blue-400 transition-colors font-mono text-[11px] flex items-center gap-1"
+                          >
+                            <Scale className="w-3 h-3 text-blue-400" /> Evaluate Gate
+                          </button>
                         </div>
 
                         <button
@@ -894,6 +906,14 @@ export const RunsView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Evaluate Release Gate Modal */}
+      <EvaluateReleaseModal
+        isOpen={evaluatingRunId !== null}
+        onClose={() => setEvaluatingRunId(null)}
+        preselectedRunId={evaluatingRunId || undefined}
+        apiUrl={apiUrl}
+      />
     </div>
   );
 };
