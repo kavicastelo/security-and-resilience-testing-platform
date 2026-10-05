@@ -10,6 +10,9 @@ import { environmentsRoutes } from '../routes/environments.js';
 import { targetsRoutes } from '../routes/targets.js';
 import { testRunsRoutes } from '../routes/test-runs.js';
 import { findingsRoutes } from '../routes/findings.js';
+import { reportsRoutes } from '../routes/reports.js';
+import { releasesRoutes } from '../routes/releases.js';
+import { policiesRoutes } from '../routes/policies.js';
 import { logger } from '@security-lab/logger';
 
 export interface BuildAppOptions {
@@ -70,6 +73,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(targetsRoutes);
   app.register(testRunsRoutes);
   app.register(findingsRoutes);
+  app.register(reportsRoutes);
+  app.register(releasesRoutes);
+  app.register(policiesRoutes);
 
   return app;
 }

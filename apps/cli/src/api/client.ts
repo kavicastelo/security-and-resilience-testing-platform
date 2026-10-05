@@ -35,6 +35,19 @@ export class ApiClient {
     }
     return json.data as T;
   }
+
+  async getText(path: string): Promise<string> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: {
+        Accept: '*/*',
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    return res.text();
+  }
 }
 
 export const apiClient = new ApiClient();

@@ -76,6 +76,32 @@ export function evaluatePolicy(
         }
       }
     }
+
+    // Check maximum allowable P95 latency SLA
+    if (condition.maxP95LatencyMs !== undefined && _metrics.length > 0) {
+      const p95Metric = _metrics.find((m) => m.name === 'http_req_duration_p95');
+      if (p95Metric && p95Metric.value > condition.maxP95LatencyMs) {
+        violations.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          action,
+          reason: `P95 latency of ${Math.round(p95Metric.value)}ms exceeds maximum allowed policy threshold of ${condition.maxP95LatencyMs}ms`,
+        });
+      }
+    }
+
+    // Check maximum allowable error rate percentage
+    if (condition.maxErrorRatePercent !== undefined && _metrics.length > 0) {
+      const errorMetric = _metrics.find((m) => m.name === 'http_req_failed_ratio');
+      if (errorMetric && errorMetric.value > condition.maxErrorRatePercent) {
+        violations.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          action,
+          reason: `Request failure rate of ${errorMetric.value}% exceeds maximum allowed policy threshold of ${condition.maxErrorRatePercent}%`,
+        });
+      }
+    }
   }
 
   const hasBlocking = violations.some((v) => v.action === 'block_release');

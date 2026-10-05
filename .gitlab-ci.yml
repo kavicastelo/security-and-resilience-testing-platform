@@ -1,0 +1,53 @@
+# ==============================================================================
+# Security Lab: GitLab CI/CD Release Gating & Security Telemetry Pipeline
+# ==============================================================================
+
+stages:
+  - test
+  - security-gate
+
+default:
+  image: node:22-alpine
+
+variables:
+  POSTGRES_DB: security_lab
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/security_lab
+  PORT: 4000
+
+security-qa-gate:
+  stage: security-gate
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  before_script:
+    - apk add --no-cache curl postgresql-client
+    - corepack enable
+    - corepack prepare pnpm@12.9.1 --activate
+    - pnpm install --frozen-lockfile || pnpm install
+    - pnpm run build
+  script:
+    # 1. Run Migrations
+    - for f in infrastructure/postgres/migrations/*.sql; do psql -h postgres -U postgres -d security_lab -f "$f"; done
+    # 2. Start Controller Service
+    - node apps/controller/dist/server.js &
+    - sleep 3
+    # 3. Create Target & Execute Suite
+    - |
+      PROJ_ID=$(curl -s -X POST http://localhost:4000/api/v1/projects -H "Content-Type: application/json" -d '{"name":"GitLab-Project"}' | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
+      TARGET_ID=$(curl -s -X POST http://localhost:4000/api/v1/projects/$PROJ_ID/targets -H "Content-Type: application/json" -d '{"name":"Target","baseUrl":"http://localhost:4000","allowedHosts":["localhost"],"allowedPorts":[4000],"testing":{"activeScanning":true,"loadTesting":true,"chaosTesting":false}}' | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
+      RUN_ID=$(curl -s -X POST http://localhost:4000/api/v1/test-runs -H "Content-Type: application/json" -d "{\"projectId\":\"$PROJ_ID\",\"targetId\":\"$TARGET_ID\",\"profileId\":\"native-class-a\"}" | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
+      curl -s -X POST http://localhost:4000/api/v1/test-runs/$RUN_ID/execute
+    # 4. Generate Machine-Readable Reports
+    - mkdir -p reports
+    - node apps/cli/dist/index.js report generate -r $RUN_ID -f junit -o reports/junit.xml
+    - node apps/cli/dist/index.js report generate -r $RUN_ID -f html -o reports/executive-report.html
+    # 5. Enforce Security Release Gate Policy
+    - node apps/cli/dist/index.js gate evaluate -r $RUN_ID --fail-on failed
+  artifacts:
+    when: always
+    reports:
+      junit: reports/junit.xml
+    paths:
+      - reports/

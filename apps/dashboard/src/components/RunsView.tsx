@@ -15,6 +15,9 @@ import {
   Cpu,
   ShieldCheck,
   Gauge,
+  FileText,
+  ExternalLink,
+  Download,
 } from 'lucide-react';
 
 interface Target {
@@ -840,7 +843,38 @@ export const RunsView: React.FC = () => {
                       {/* Quantitative Latency & SLA Metrics */}
                       <RunMetricsDetails runId={run.id} apiUrl={apiUrl} />
 
-                      <div className="flex justify-end pt-2">
+                      {/* Export Reports & Release Gating Toolbar */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-border/50 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground font-medium flex items-center gap-1.5">
+                            <FileText className="w-3.5 h-3.5 text-blue-400" /> Export Reports:
+                          </span>
+                          <a
+                            href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=html`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1 rounded bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
+                          >
+                            <ExternalLink className="w-3 h-3 text-blue-400" /> HTML Report
+                          </a>
+                          <a
+                            href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=junit`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1 rounded bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
+                          >
+                            <Download className="w-3 h-3 text-emerald-400" /> JUnit XML
+                          </a>
+                          <a
+                            href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=sarif`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1 rounded bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
+                          >
+                            <Download className="w-3 h-3 text-purple-400" /> SARIF v2.1
+                          </a>
+                        </div>
+
                         <button
                           onClick={() => {
                             // Switch tab to findings

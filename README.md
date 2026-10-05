@@ -239,12 +239,14 @@ docker compose down
 | **PostgreSQL Foundation** | **IMPLEMENTED** | Forward-only migration schema (`0000_initial_schema.sql`) and seeds |
 | **Controller Application** | **IMPLEMENTED** | Fastify service with projects, targets, test-runs, findings, and evidence APIs |
 | **Web Dashboard** | **IMPLEMENTED** | React/Vite application with Target Scopes, Test Executions, and Findings Views |
-| **CLI Application** | **IMPLEMENTED** | Commander CLI with `version`, `project`, `target`, `test`, and `scan` commands |
+| **CLI Application** | **IMPLEMENTED** | Commander CLI with `version`, `project`, `target`, `test`, `scan`, `load`, `report`, and `gate` commands |
 | **Architecture Blueprints** | **IMPLEMENTED** | 6 architecture specifications and 4 Architecture Decision Records |
 | **Class A Native Engines** | **IMPLEMENTED** | OWASP Headers, CORS, TLS, and Declarative YAML Assertion Runners |
 | **Class B Container Scanners** | **IMPLEMENTED** | Ephemeral Docker runner, OWASP ZAP & Aqua Trivy normalizers and engines |
 | **Class C Heavy Workers** | **IMPLEMENTED** | Grafana k6 latency SLA audit (p50/p95/p99) & Rate Limiting resilience engine |
 | **Quantitative Telemetry** | **IMPLEMENTED** | PostgreSQL metrics persistence and API endpoints for latency SLA distributions |
+| **Release Gating & Policies** | **IMPLEMENTED** | Automated CI/CD release gates enforcing zero-critical policies & latency SLAs |
+| **Enterprise Reporting** | **IMPLEMENTED** | JUnit XML, SARIF v2.1.0, HTML executive reports, and REST export endpoints |
 
 ---
 
@@ -268,8 +270,13 @@ docker compose down
   * Quantitative performance telemetry persistence in PostgreSQL `metrics` table and controller endpoints (`GET /api/v1/test-runs/:id/metrics`).
   * CLI `security-lab load` / `resilience` commands with latency distribution summaries and pass/fail SLA release gating.
   * Web Dashboard Class C launcher and quantitative latency SLA card visualizations.
-* [ ] **Phase 5: Release Gating & Enterprise Reporting**
-  * Automated JUnit, SARIF, and PDF/HTML report generators.
-  * CI/CD GitHub Actions / GitLab CI release gating integrations.
+* [x] **Phase 5: Release Gating & Enterprise Reporting**
+  * Automated JUnit XML, SARIF v2.1.0, and self-contained executive HTML report generation.
+  * Policy engine evaluation with severity thresholds, category bans, and latency SLA gate enforcement.
+  * Database persistence in PostgreSQL `policies` and `releases` tables with full audit trail.
+  * CLI `security-lab report` and `security-lab gate` commands for CI/CD pipeline automation.
+  * Web Dashboard report export toolbar (HTML, JUnit XML, SARIF) and release status indicators.
+  * Ready-to-use GitHub Actions (`.github/workflows/security-gate.yml`) and GitLab CI (`.gitlab-ci.yml`) workflows.
+
 
 
