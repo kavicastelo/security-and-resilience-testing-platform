@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: security-lab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-security_lab}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-security_lab}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - security-lab-net
+
+  controller:
+    build:
+      context: .
+      dockerfile: apps/controller/Dockerfile
+    container_name: security-lab-controller
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-security_lab}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATA_DIR: /app/data
+    ports:
+      - "4000:4000"
+    volumes:
+      - controller-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:4000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - security-lab-net
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    container_name: security-lab-dashboard
+    restart: unless-stopped
+    depends_on:
+      controller:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    networks:
+      - security-lab-net
+
+volumes:
+  postgres-data:
+    driver: local
+  controller-data:
+    driver: local
+
+networks:
+  security-lab-net:
+    driver: bridge

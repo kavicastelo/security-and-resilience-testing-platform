@@ -1,0 +1,33 @@
+# Example: Staging Target Scope Definition
+# Establishes explicit security and testing boundaries for authorized testing.
+
+target:
+  name: staging-web-api
+  description: Staging environment for core customer API
+  baseUrl: https://staging.example.com
+
+  # Security Scope Boundary: Only requests to allowed hosts & ports are dispatched
+  allowedHosts:
+    - staging.example.com
+    - api-staging.example.com
+
+  allowedPorts:
+    - 443
+    - 8443
+
+  # Explicit exclusions to protect sensitive paths even within scope
+  excludedPaths:
+    - /api/v1/billing/charge
+    - /admin/maintenance/database-reset
+
+  # Explicit testing capability authorizations
+  testing:
+    activeScanning: true
+    loadTesting: true
+    chaosTesting: false
+
+  # Safety rate limits and duration caps
+  limits:
+    maxRps: 100
+    maxConcurrency: 20
+    maxDuration: 10m

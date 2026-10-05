@@ -1,0 +1,38 @@
+# Example: Default CI/CD Release Gate Policy
+# Deterministic pass/fail rule evaluation for staging and production deployments.
+
+id: policy-default-release-gate
+name: Standard Enterprise Release Gate
+description: Blocks promotion to production if unresolved high or critical vulnerabilities exist.
+
+rules:
+  - id: rule-zero-critical
+    name: Zero Critical Vulnerabilities
+    description: Absolutely no critical security findings are tolerated in release builds.
+    condition:
+      maxCountBySeverity:
+        critical: 0
+    action: block_release
+
+  - id: rule-max-high-findings
+    name: High Severity Threshold
+    description: No unmitigated high-severity findings permitted without explicit security sign-off.
+    condition:
+      maxCountBySeverity:
+        high: 0
+    action: block_release
+
+  - id: rule-disallow-cleartext-auth
+    name: Disallow Cleartext Auth or Protocol Downgrade
+    condition:
+      disallowCategories:
+        - cleartext_transmission
+        - ssl_v2_v3_enabled
+    action: block_release
+
+  - id: rule-latency-sla
+    name: Performance Degradation Warning
+    condition:
+      maxP95LatencyMs: 1200
+      maxErrorRatePercent: 1.5
+    action: warn

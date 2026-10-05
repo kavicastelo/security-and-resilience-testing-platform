@@ -1,0 +1,32 @@
+{
+  "name": "@security-lab/controller",
+  "version": "0.1.0",
+  "description": "Orchestration controller for Security Lab platform",
+  "type": "module",
+  "main": "./dist/server.js",
+  "types": "./dist/server.d.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@fastify/sensible": "^6.0.3",
+    "@security-lab/config": "workspace:*",
+    "@security-lab/contracts": "workspace:*",
+    "@security-lab/domain": "workspace:*",
+    "@security-lab/logger": "workspace:*",
+    "drizzle-orm": "^0.39.3",
+    "fastify": "^5.2.1",
+    "postgres": "^3.4.5",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}

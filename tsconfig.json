@@ -1,0 +1,16 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/domain" },
+    { "path": "./packages/contracts" },
+    { "path": "./packages/config" },
+    { "path": "./packages/logger" },
+    { "path": "./packages/evidence" },
+    { "path": "./packages/scoring" },
+    { "path": "./packages/policy-engine" },
+    { "path": "./packages/test-sdk" },
+    { "path": "./apps/controller" },
+    { "path": "./apps/cli" },
+    { "path": "./apps/dashboard" }
+  ]
+}

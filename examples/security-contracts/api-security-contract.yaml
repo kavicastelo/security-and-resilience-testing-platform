@@ -1,0 +1,28 @@
+# Example: Enterprise API Security Contract
+# Establishes binding operational expectations between engineering and security teams.
+
+id: sec-contract-api-v1
+name: Core API Security Contract
+version: 1.0.0
+targetPattern: https://api.example.com/*
+
+requiredHeaders:
+  - name: X-Content-Type-Options
+    requiredValue: nosniff
+  - name: Strict-Transport-Security
+    pattern: max-age=\d+
+  - name: Cache-Control
+    requiredValue: no-store
+
+forbiddenHeaders:
+  - X-Powered-By
+  - Server
+
+enforceTlsVersion: TLSv1.3
+
+requireAuthenticationForPaths:
+  - /api/v1/users/*
+  - /api/v1/orders/*
+  - /api/v1/admin/*
+
+maxSeverityAllowed: low

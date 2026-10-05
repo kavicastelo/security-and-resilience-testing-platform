@@ -1,0 +1,64 @@
+# Example: Security Headers Baseline Test Definition
+# Pure compliance and defense-in-depth header verification. Non-invasive, safe for all environments.
+
+id: test-def-sec-headers-001
+name: Baseline Security Headers Verification
+version: 1.0.0
+category: headers
+description: Validates that fundamental defensive HTTP response headers are present with secure configurations.
+
+target:
+  endpoint: /
+  requiredCapabilities:
+    - passive_analysis
+
+inputs:
+  enforceHsts: true
+  minHstsMaxAge: 31536000
+
+authentication:
+  type: none
+
+tests:
+  - id: check-hsts
+    name: HTTP Strict Transport Security (HSTS)
+    description: Verifies presence of Strict-Transport-Security header
+    path: /
+    method: GET
+    assertions:
+      - field: headers.strict-transport-security
+        operator: exists
+        severity: medium
+        message: HSTS header is missing; transport is vulnerable to downgrade attacks.
+
+  - id: check-content-type-options
+    name: X-Content-Type-Options Protection
+    description: Enforces nosniff to prevent MIME type sniffing
+    path: /
+    method: GET
+    assertions:
+      - field: headers.x-content-type-options
+        operator: equals
+        value: nosniff
+        severity: low
+        message: X-Content-Type-Options should be set to nosniff.
+
+  - id: check-frame-options
+    name: Clickjacking Protection
+    description: Verifies X-Frame-Options or frame-ancestors CSP
+    path: /
+    method: GET
+    assertions:
+      - field: headers.x-frame-options
+        operator: contains
+        value: DENY
+        severity: medium
+        message: X-Frame-Options should be configured to prevent iframe clickjacking.
+
+thresholds:
+  maxAllowedFindings:
+    critical: 0
+    high: 0
+    medium: 1
+    low: 3
+    info: 10
