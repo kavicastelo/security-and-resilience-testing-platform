@@ -87,3 +87,6 @@ export const TestDefinitionSchema = z.object({
 });
 
 export type TestDefinition = z.infer<typeof TestDefinitionSchema>;
+
+export * from './parser.js';
+export * from './evaluator.js';

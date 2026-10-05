@@ -1,6 +1,9 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { CreateTestRunInputSchema } from '@security-lab/domain';
 import { testRunsService } from '../services/test-runs.service.js';
+import { testRunnerService, ExecuteRunOptions } from '../services/runner.service.js';
+import { findingsService } from '../services/findings.service.js';
+import { evidenceService } from '../services/evidence.service.js';
 
 export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. Create & Queue TestRun
@@ -63,6 +66,47 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     return reply.send({
       success: true,
       data: run,
+    });
+  });
+
+  // 4. Execute TestRun
+  fastify.post<{
+    Params: { id: string };
+    Body?: ExecuteRunOptions;
+  }>('/api/v1/test-runs/:id/execute', async (request, reply) => {
+    try {
+      const result = await testRunnerService.executeTestRun(request.params.id, request.body);
+      return reply.send({
+        success: true,
+        data: result,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Test run execution failed';
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_EXECUTION_FAILED',
+          message,
+        },
+      });
+    }
+  });
+
+  // 5. Get TestRun Findings
+  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/findings', async (request, reply) => {
+    const findingsList = await findingsService.listFindings({ testRunId: request.params.id });
+    return reply.send({
+      success: true,
+      data: findingsList,
+    });
+  });
+
+  // 6. Get TestRun Forensic Evidence Records
+  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/evidence', async (request, reply) => {
+    const evidenceList = await evidenceService.listEvidenceByTestRunId(request.params.id);
+    return reply.send({
+      success: true,
+      data: evidenceList,
     });
   });
 };
