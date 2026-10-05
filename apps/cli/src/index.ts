@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { versionCommand } from './commands/version.js';
 import { projectCommand } from './commands/project.js';
 import { targetCommand } from './commands/target.js';
+import { testCommand } from './commands/test.js';
 import pc from 'picocolors';
 
 const program = new Command();
@@ -16,18 +17,11 @@ program
   .option('--format <format>', 'Output format (table, json, yaml, junit)', 'table')
   .option('--verbose', 'Enable verbose logging output', false);
 
-// 1. Registered and implemented commands: version, project, target
+// Registered and implemented commands: version, project, target, test
 program.addCommand(versionCommand);
 program.addCommand(projectCommand);
 program.addCommand(targetCommand);
-
-program
-  .command('test')
-  .description('[PLANNED: Phase 2] Execute native security and resilience test definitions')
-  .action(() => {
-    // eslint-disable-next-line no-console
-    console.log(pc.yellow('ℹ Command "test" is planned for Phase 2 (Native Test Engine Execution).'));
-  });
+program.addCommand(testCommand);
 
 program
   .command('scan')

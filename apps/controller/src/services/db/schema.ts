@@ -1,5 +1,5 @@
-import { pgTable, uuid, varchar, text, timestamp, jsonb } from 'drizzle-orm/pg-core';
-import { TargetScope } from '@security-lab/domain';
+import { pgTable, uuid, varchar, text, timestamp, jsonb, integer } from 'drizzle-orm/pg-core';
+import { TargetScope, FindingSeverity, FindingConfidence, FindingStatus } from '@security-lab/domain';
 
 export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -58,4 +58,72 @@ export const testRuns = pgTable('test_runs', {
   metadata: jsonb('metadata').notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const testExecutions = pgTable('test_executions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  testRunId: uuid('test_run_id')
+    .notNull()
+    .references(() => testRuns.id, { onDelete: 'cascade' }),
+  engineId: varchar('engine_id', { length: 100 }).notNull(),
+  executionClass: varchar('execution_class', { length: 50 }).notNull().default('class_a_native'),
+  status: varchar('status', { length: 30 }).notNull().default('pending'),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  durationMs: integer('duration_ms'),
+  exitCode: integer('exit_code'),
+  errorMessage: text('error_message'),
+  rawResult: jsonb('raw_result'),
+  metadata: jsonb('metadata').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const evidenceRecords = pgTable('evidence_records', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  testRunId: uuid('test_run_id')
+    .notNull()
+    .references(() => testRuns.id, { onDelete: 'cascade' }),
+  executionId: uuid('execution_id')
+    .notNull()
+    .references(() => testExecutions.id, { onDelete: 'cascade' }),
+  request: jsonb('request'),
+  response: jsonb('response'),
+  expected: jsonb('expected'),
+  actual: jsonb('actual'),
+  metadata: jsonb('metadata').notNull().default({}),
+  timestamp: timestamp('timestamp', { withTimezone: true }).notNull().defaultNow(),
+  environment: varchar('environment', { length: 100 }).notNull().default('default'),
+  applicationVersion: varchar('application_version', { length: 100 }),
+  gitCommit: varchar('git_commit', { length: 100 }),
+  immutableHash: varchar('immutable_hash', { length: 64 }).notNull(),
+});
+
+export const findings = pgTable('findings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  fingerprint: varchar('fingerprint', { length: 128 }).notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  category: varchar('category', { length: 100 }).notNull(),
+  severity: varchar('severity', { length: 20 }).$type<FindingSeverity>().notNull(),
+  confidence: varchar('confidence', { length: 20 }).$type<FindingConfidence>().notNull().default('firm'),
+  status: varchar('status', { length: 30 }).$type<FindingStatus>().notNull().default('open'),
+  description: text('description').notNull(),
+  risk: text('risk'),
+  recommendation: text('recommendation'),
+  testDefinitionId: varchar('test_definition_id', { length: 100 }).notNull(),
+  testRunId: uuid('test_run_id')
+    .notNull()
+    .references(() => testRuns.id, { onDelete: 'cascade' }),
+  executionId: uuid('execution_id')
+    .notNull()
+    .references(() => testExecutions.id, { onDelete: 'cascade' }),
+  targetId: uuid('target_id')
+    .notNull()
+    .references(() => targets.id, { onDelete: 'cascade' }),
+  releaseId: uuid('release_id'),
+  evidenceId: uuid('evidence_id').references(() => evidenceRecords.id, { onDelete: 'set null' }),
+  firstDetectedAt: timestamp('first_detected_at', { withTimezone: true }).notNull().defaultNow(),
+  lastDetectedAt: timestamp('last_detected_at', { withTimezone: true }).notNull().defaultNow(),
+  fixedAt: timestamp('fixed_at', { withTimezone: true }),
+  metadata: jsonb('metadata').notNull().default({}),
 });

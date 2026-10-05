@@ -9,6 +9,7 @@ import { projectsRoutes } from '../routes/projects.js';
 import { environmentsRoutes } from '../routes/environments.js';
 import { targetsRoutes } from '../routes/targets.js';
 import { testRunsRoutes } from '../routes/test-runs.js';
+import { findingsRoutes } from '../routes/findings.js';
 import { logger } from '@security-lab/logger';
 
 export interface BuildAppOptions {
@@ -68,6 +69,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(environmentsRoutes);
   app.register(targetsRoutes);
   app.register(testRunsRoutes);
+  app.register(findingsRoutes);
 
   return app;
 }
