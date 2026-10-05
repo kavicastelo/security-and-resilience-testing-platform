@@ -4,7 +4,10 @@ import { versionCommand } from './commands/version.js';
 import { projectCommand } from './commands/project.js';
 import { targetCommand } from './commands/target.js';
 import { testCommand } from './commands/test.js';
-import pc from 'picocolors';
+import { scanCommand } from './commands/scan.js';
+import { loadCommand } from './commands/load.js';
+import { reportCommand } from './commands/report.js';
+import { gateCommand } from './commands/gate.js';
 
 const program = new Command();
 
@@ -17,26 +20,21 @@ program
   .option('--format <format>', 'Output format (table, json, yaml, junit)', 'table')
   .option('--verbose', 'Enable verbose logging output', false);
 
-// Registered and implemented commands: version, project, target, test
+// Registered and implemented commands: version, project, target, test, scan, load, resilience, report, gate
 program.addCommand(versionCommand);
 program.addCommand(projectCommand);
 program.addCommand(targetCommand);
 program.addCommand(testCommand);
-
-program
-  .command('scan')
-  .description('[PLANNED: Phase 2] Launch containerized scanners (Class B/C runners) against authorized targets')
-  .action(() => {
-    // eslint-disable-next-line no-console
-    console.log(pc.yellow('ℹ Command "scan" is planned for Phase 2 (Isolated Container Test Runners).'));
-  });
-
-program
-  .command('report')
-  .description('[PLANNED: Phase 3] Generate machine-readable findings and release gate reports')
-  .action(() => {
-    // eslint-disable-next-line no-console
-    console.log(pc.yellow('ℹ Command "report" is planned for Phase 3 (Evidence & Policy Gate Reporting).'));
-  });
+program.addCommand(scanCommand);
+program.addCommand(loadCommand);
+program.addCommand(
+  new Command('resilience')
+    .description('Alias for Class C resilience & load testing')
+    .addCommand(loadCommand.commands[0]!)
+    .addCommand(loadCommand.commands[1]!),
+);
+program.addCommand(reportCommand);
+program.addCommand(gateCommand);
 
 program.parse(process.argv);
+

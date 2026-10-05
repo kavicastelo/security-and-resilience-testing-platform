@@ -55,10 +55,10 @@ export const Overview: React.FC = () => {
             </div>
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            External tooling such as OWASP ZAP and Trivy containerized with scoped authorization parameters.
+            OWASP ZAP baseline/active and Aqua Trivy SCA/IaC with normalized forensic findings.
           </p>
-          <div className="text-[10px] font-mono text-amber-400 bg-amber-950/30 px-2 py-1 rounded border border-amber-800/30">
-            Planned for Phase 2
+          <div className="text-[10px] font-mono text-emerald-400 bg-emerald-950/30 px-2 py-1 rounded border border-emerald-800/30">
+            Engine Workers: ZAP & Trivy (Operational)
           </div>
         </div>
 
@@ -73,10 +73,10 @@ export const Overview: React.FC = () => {
             </div>
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Load generation and resilience soak runs (k6, headless browser validation, chaos simulations).
+            Grafana k6 load resilience soak testing, rate-limit stress audits, and latency percentile SLAs.
           </p>
-          <div className="text-[10px] font-mono text-amber-400 bg-amber-950/30 px-2 py-1 rounded border border-amber-800/30">
-            Planned for Phase 2
+          <div className="text-[10px] font-mono text-emerald-400 bg-emerald-950/30 px-2 py-1 rounded border border-emerald-800/30">
+            Engine Worker: k6 & Resilience (Operational)
           </div>
         </div>
       </div>

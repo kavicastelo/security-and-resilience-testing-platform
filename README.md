@@ -237,28 +237,46 @@ docker compose down
 | **Evidence Immutability** | **IMPLEMENTED** | SHA-256 cryptographic hashing and tamper freeze (`@security-lab/evidence`) |
 | **Configuration & Logging** | **IMPLEMENTED** | Zod-validated config, structured correlation logging |
 | **PostgreSQL Foundation** | **IMPLEMENTED** | Forward-only migration schema (`0000_initial_schema.sql`) and seeds |
-| **Controller Application** | **IMPLEMENTED** | Fastify service with `/health`, `/api/v1/health`, graceful shutdown |
-| **Web Dashboard** | **IMPLEMENTED** | React/Vite shell with dark theme, health polling, architecture views |
-| **CLI Skeleton** | **IMPLEMENTED** | Commander CLI with `version`, `--help`, and future command stubs |
-| **Architecture Blueprints** | **IMPLEMENTED** | 5 detailed architecture docs and 4 Architecture Decision Records |
-| **Real Attack / Scanner Logic** | **NOT IMPLEMENTED** | Intentionally deferred to subsequent implementation phases |
+| **Controller Application** | **IMPLEMENTED** | Fastify service with projects, targets, test-runs, findings, and evidence APIs |
+| **Web Dashboard** | **IMPLEMENTED** | React/Vite application with Target Scopes, Test Executions, and Findings Views |
+| **CLI Application** | **IMPLEMENTED** | Commander CLI with `version`, `project`, `target`, `test`, `scan`, `load`, `report`, and `gate` commands |
+| **Architecture Blueprints** | **IMPLEMENTED** | 6 architecture specifications and 4 Architecture Decision Records |
+| **Class A Native Engines** | **IMPLEMENTED** | OWASP Headers, CORS, TLS, and Declarative YAML Assertion Runners |
+| **Class B Container Scanners** | **IMPLEMENTED** | Ephemeral Docker runner, OWASP ZAP & Aqua Trivy normalizers and engines |
+| **Class C Heavy Workers** | **IMPLEMENTED** | Grafana k6 latency SLA audit (p50/p95/p99) & Rate Limiting resilience engine |
+| **Quantitative Telemetry** | **IMPLEMENTED** | PostgreSQL metrics persistence and API endpoints for latency SLA distributions |
+| **Release Gating & Policies** | **IMPLEMENTED** | Automated CI/CD release gates enforcing zero-critical policies & latency SLAs |
+| **Enterprise Reporting** | **IMPLEMENTED** | JUnit XML, SARIF v2.1.0, HTML executive reports, and REST export endpoints |
 
 ---
 
-## 13. Future Roadmap
+## 13. Project Roadmap
 
-* **Phase 1: Target Management & Security Boundary Enforcement**
+* [x] **Phase 1: Target Management & Security Boundary Enforcement**
   * CRUD APIs and CLI for projects, environments, and targets.
-  * Target Scope Validator with DNS rebinding and subnet protection.
+  * Target Scope Validator with DNS rebinding and cloud metadata protection.
   * TestRun state machine and persistence in PostgreSQL via Drizzle.
-* **Phase 2: Native Test Engines (Class A)**
-  * Implementation of `headers`, `tls`, `cors`, and `http-security` native engines.
-  * Execution of platform-native declarative YAML test definitions.
-* **Phase 3: Containerized Scanner Integrations (Class B)**
-  * Ephemeral Docker runner orchestrator for OWASP ZAP and Trivy.
-  * Finding ingestion and normalization pipeline.
-* **Phase 4: Resilience & Load Testing (Class C)**
-  * Integration with Grafana k6 for automated latency SLA and concurrency soak testing.
-* **Phase 5: Release Gating & Enterprise Reporting**
-  * Automated JUnit, SARIF, and PDF/HTML report generators.
-  * CI/CD GitHub Actions / GitLab CI release gating integrations.
+* [x] **Phase 2: Native Test Engines (Class A) & Declarative Runner**
+  * Implementation of `headers`, `cors`, and `tls` native testing engines.
+  * Execution of platform-native declarative YAML test definitions with rich assertions.
+* [x] **Phase 3: Containerized Scanner Integrations (Class B)**
+  * Ephemeral Docker runner orchestrator for OWASP ZAP and Aqua Trivy with sandboxing.
+  * Finding ingestion and normalization pipeline into unified `Finding` and immutable `Evidence` records.
+  * CLI `security-lab scan` command and Dashboard Class B scanner launcher.
+* [x] **Phase 4: Resilience & Load Testing (Class C)**
+  * Implementation of Class C heavy workers (`K6ResilienceEngine` / `engine-worker-k6`) for latency SLA audits (p50/p95/p99) and concurrency testing.
+  * Rate limiting and throttling resilience engine (`RateLimitResilienceEngine` / `engine-native-resilience`) evaluating burst tolerance and HTTP 429 defenses.
+  * Target Scope boundary gating enforcing `target.scope.testing.loadTesting === true` and concurrency clamping (`maxConcurrency`, `maxRps`).
+  * Quantitative performance telemetry persistence in PostgreSQL `metrics` table and controller endpoints (`GET /api/v1/test-runs/:id/metrics`).
+  * CLI `security-lab load` / `resilience` commands with latency distribution summaries and pass/fail SLA release gating.
+  * Web Dashboard Class C launcher and quantitative latency SLA card visualizations.
+* [x] **Phase 5: Release Gating & Enterprise Reporting**
+  * Automated JUnit XML, SARIF v2.1.0, and self-contained executive HTML report generation.
+  * Policy engine evaluation with severity thresholds, category bans, and latency SLA gate enforcement.
+  * Database persistence in PostgreSQL `policies` and `releases` tables with full audit trail.
+  * CLI `security-lab report` and `security-lab gate` commands for CI/CD pipeline automation.
+  * Web Dashboard report export toolbar (HTML, JUnit XML, SARIF) and release status indicators.
+  * Ready-to-use GitHub Actions (`.github/workflows/security-gate.yml`) and GitLab CI (`.gitlab-ci.yml`) workflows.
+
+
+

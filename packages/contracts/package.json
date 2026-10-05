@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@security-lab/domain": "workspace:*",
+    "@security-lab/policy-engine": "workspace:*",
+    "@security-lab/scoring": "workspace:*",
     "zod": "^3.24.2"
   },
   "devDependencies": {

@@ -6,6 +6,7 @@ import { testRunsService } from './test-runs.service.js';
 import { targetsService } from './targets.service.js';
 import { findingsService } from './findings.service.js';
 import { evidenceService } from './evidence.service.js';
+import { metricsService } from './metrics.service.js';
 import {
   validateUrlAgainstScope,
   Finding,
@@ -21,6 +22,10 @@ import {
   CorsSecurityEngine,
   TlsSecurityEngine,
   DeclarativeTestEngine,
+  ZapScannerEngine,
+  TrivyScannerEngine,
+  K6ResilienceEngine,
+  RateLimitResilienceEngine,
   TestEngine,
   ExecutionContext,
 } from '@security-lab/test-sdk';
@@ -122,11 +127,31 @@ export class TestRunnerService {
       options?.definitionYaml ||
       (testRun.metadata?.definitionYaml as string | undefined);
 
+    const allKnown: TestEngine[] = [
+      ...this.defaultEngines,
+      new ZapScannerEngine(),
+      new TrivyScannerEngine(),
+      new DeclarativeTestEngine(),
+      new K6ResilienceEngine(),
+      new RateLimitResilienceEngine(),
+    ];
+
     if (definitionYaml || testRun.profileId === 'declarative') {
       enginesToRun = [new DeclarativeTestEngine()];
+    } else if (testRun.profileId === 'class-b-scanners' || testRun.profileId === 'container-scanners') {
+      enginesToRun = [new ZapScannerEngine(), new TrivyScannerEngine()];
+    } else if (testRun.profileId === 'zap') {
+      enginesToRun = [new ZapScannerEngine()];
+    } else if (testRun.profileId === 'trivy') {
+      enginesToRun = [new TrivyScannerEngine()];
+    } else if (testRun.profileId === 'class-c-resilience' || testRun.profileId === 'resilience') {
+      enginesToRun = [new K6ResilienceEngine(), new RateLimitResilienceEngine()];
+    } else if (testRun.profileId === 'k6' || testRun.profileId === 'load-sla') {
+      enginesToRun = [new K6ResilienceEngine()];
+    } else if (testRun.profileId === 'rate-limit') {
+      enginesToRun = [new RateLimitResilienceEngine()];
     } else if (options?.engineIds && options.engineIds.length > 0) {
       const requested = new Set(options.engineIds);
-      const allKnown = [...this.defaultEngines, new DeclarativeTestEngine()];
       enginesToRun = allKnown.filter((e) => requested.has(e.id));
       if (enginesToRun.length === 0) {
         enginesToRun = this.defaultEngines;
@@ -151,12 +176,19 @@ export class TestRunnerService {
     for (const engine of enginesToRun) {
       runLogger.info(`Dispatching engine [${engine.id}]...`);
 
+      let executionClass: 'class_a_native' | 'class_b_container' | 'class_c_worker' = 'class_a_native';
+      if (engine.id === 'engine-worker-k6') {
+        executionClass = 'class_c_worker';
+      } else if (['engine-container-zap', 'engine-container-trivy'].includes(engine.id)) {
+        executionClass = 'class_b_container';
+      }
+
       const [executionRow] = await db
         .insert(testExecutions)
         .values({
           testRunId,
           engineId: engine.id,
-          executionClass: 'class_a_native',
+          executionClass,
           status: 'running',
           startedAt: new Date(),
         })
@@ -188,6 +220,7 @@ export class TestRunnerService {
         targetUrl: target.baseUrl,
         customHeaders: options?.customHeaders,
         options: {
+          ...(testRun.metadata as Record<string, unknown> | undefined),
           ...options?.options,
           yaml: definitionYaml,
         },
@@ -261,6 +294,20 @@ export class TestRunnerService {
           });
 
           allFindings.push(savedFinding);
+        }
+
+        // Process quantitative metrics (e.g. Latency SLA, P95, P99, RPS)
+        if (result.metrics && result.metrics.length > 0) {
+          for (const m of result.metrics) {
+            await metricsService.saveMetric({
+              testRunId,
+              executionId: executionRow.id,
+              name: m.name,
+              value: m.value,
+              unit: m.unit,
+              tags: m.tags,
+            });
+          }
         }
 
         const isSuccess = result.success && result.findings.filter((f) => f.severity === 'critical' || f.severity === 'high').length === 0;

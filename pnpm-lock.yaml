@@ -233,6 +233,12 @@ importers:
       '@security-lab/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@security-lab/policy-engine':
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
+      '@security-lab/scoring':
+        specifier: workspace:*
+        version: link:../../packages/scoring
       '@security-lab/test-sdk':
         specifier: workspace:*
         version: link:../../packages/test-sdk
@@ -326,6 +332,12 @@ importers:
       '@security-lab/domain':
         specifier: workspace:*
         version: link:../domain
+      '@security-lab/policy-engine':
+        specifier: workspace:*
+        version: link:../policy-engine
+      '@security-lab/scoring':
+        specifier: workspace:*
+        version: link:../scoring
       zod:
         specifier: ^3.24.2
         version: 3.25.76

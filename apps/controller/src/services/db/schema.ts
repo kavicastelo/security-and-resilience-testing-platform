@@ -1,5 +1,5 @@
-import { pgTable, uuid, varchar, text, timestamp, jsonb, integer } from 'drizzle-orm/pg-core';
-import { TargetScope, FindingSeverity, FindingConfidence, FindingStatus } from '@security-lab/domain';
+import { pgTable, uuid, varchar, text, timestamp, jsonb, integer, doublePrecision, boolean } from 'drizzle-orm/pg-core';
+import { TargetScope, FindingSeverity, FindingConfidence, FindingStatus, ReleaseGateDecision } from '@security-lab/domain';
 
 export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -127,3 +127,49 @@ export const findings = pgTable('findings', {
   fixedAt: timestamp('fixed_at', { withTimezone: true }),
   metadata: jsonb('metadata').notNull().default({}),
 });
+
+export const metrics = pgTable('metrics', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  testRunId: uuid('test_run_id')
+    .notNull()
+    .references(() => testRuns.id, { onDelete: 'cascade' }),
+  executionId: uuid('execution_id')
+    .notNull()
+    .references(() => testExecutions.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 100 }).notNull(),
+  value: doublePrecision('value').notNull(),
+  unit: varchar('unit', { length: 20 }).notNull().default('ms'),
+  tags: jsonb('tags').notNull().default({}),
+  threshold: jsonb('threshold'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const policies = pgTable('policies', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull(),
+  description: text('description'),
+  rules: jsonb('rules').notNull().default([]),
+  isDefault: boolean('is_default').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const releases = pgTable('releases', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 100 }).notNull(),
+  version: varchar('version', { length: 100 }).notNull(),
+  gitCommit: varchar('git_commit', { length: 100 }),
+  gitBranch: varchar('git_branch', { length: 100 }),
+  testRunId: uuid('test_run_id').references(() => testRuns.id, { onDelete: 'set null' }),
+  policyId: uuid('policy_id').references(() => policies.id, { onDelete: 'set null' }),
+  decision: varchar('decision', { length: 30 }).$type<ReleaseGateDecision>().notNull().default('warning'),
+  reason: text('reason'),
+  evaluatedAt: timestamp('evaluated_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+

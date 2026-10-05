@@ -1,0 +1,113 @@
+name: Security & Resilience Release Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security-gate:
+    name: Security QA & Compliance Gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: security_lab
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build Platform Services & CLI
+        run: pnpm run build
+
+      - name: Run Database Migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5433/security_lab
+        run: |
+          for f in infrastructure/postgres/migrations/*.sql; do
+            echo "Applying $f..."
+            PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d security_lab -f "$f" || true
+          done
+
+      - name: Start Security Lab Controller
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5433/security_lab
+          PORT: 4000
+          NODE_ENV: test
+        run: |
+          node apps/controller/dist/server.js &
+          sleep 3
+          curl -f http://localhost:4000/api/v1/health || exit 1
+
+      - name: Execute Security & Resilience Pipeline
+        id: run_tests
+        run: |
+          # 1. Create Project & Target
+          PROJ_RES=$(curl -s -X POST http://localhost:4000/api/v1/projects -H "Content-Type: application/json" -d '{"name":"CI-Gate-Project"}')
+          PROJ_ID=$(echo $PROJ_RES | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
+          
+          TARGET_RES=$(curl -s -X POST http://localhost:4000/api/v1/projects/$PROJ_ID/targets -H "Content-Type: application/json" -d '{"name":"CI-Target","baseUrl":"http://localhost:4000","allowedHosts":["localhost"],"allowedPorts":[4000],"testing":{"activeScanning":true,"loadTesting":true,"chaosTesting":false}}')
+          TARGET_ID=$(echo $TARGET_RES | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
+          
+          # 2. Launch Test Run
+          RUN_RES=$(curl -s -X POST http://localhost:4000/api/v1/test-runs -H "Content-Type: application/json" -d "{\"projectId\":\"$PROJ_ID\",\"targetId\":\"$TARGET_ID\",\"profileId\":\"native-class-a\"}")
+          RUN_ID=$(echo $RUN_RES | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
+          echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
+          
+          # 3. Execute Run
+          curl -s -X POST http://localhost:4000/api/v1/test-runs/$RUN_ID/execute
+
+      - name: Generate Reports (JUnit, SARIF, HTML)
+        run: |
+          mkdir -p reports
+          node apps/cli/dist/index.js report generate -r ${{ env.RUN_ID }} -f junit -o reports/junit.xml
+          node apps/cli/dist/index.js report generate -r ${{ env.RUN_ID }} -f sarif -o reports/security-lab.sarif
+          node apps/cli/dist/index.js report generate -r ${{ env.RUN_ID }} -f html -o reports/executive-report.html
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: reports/security-lab.sarif
+          category: security-lab
+
+      - name: Upload Executive HTML & JUnit Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-lab-reports
+          path: reports/
+
+      - name: Enforce Release Gate Policy
+        run: |
+          node apps/cli/dist/index.js gate evaluate -r ${{ env.RUN_ID }} --fail-on failed
