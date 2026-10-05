@@ -120,8 +120,17 @@ export const TargetsView: React.FC = () => {
         projectId = createdProjJson.data.id;
       }
 
-      const hosts = newTargetHosts.split(',').map((h) => h.trim());
-      const ports = newTargetPorts.split(',').map((p) => parseInt(p.trim(), 10));
+      const hosts = newTargetHosts
+        .split(',')
+        .map((h) => h.trim())
+        .filter(Boolean);
+
+      const parsedPorts = newTargetPorts
+        .split(',')
+        .map((p) => parseInt(p.trim(), 10))
+        .filter((p) => !isNaN(p) && p > 0 && p <= 65535);
+
+      const ports = parsedPorts.length > 0 ? parsedPorts : [80, 443];
 
       const res = await fetch(`${apiUrl}/api/v1/projects/${projectId}/targets`, {
         method: 'POST',
