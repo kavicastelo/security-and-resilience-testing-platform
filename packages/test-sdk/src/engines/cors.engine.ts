@@ -2,10 +2,12 @@ import { TestEngine } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding } from '../result.js';
+import { safeFetch } from '../http/index.js';
 
 export class CorsSecurityEngine implements TestEngine {
   readonly id = 'engine-native-cors';
   readonly version = '1.0.0';
+  readonly executionClass = 'class_a_native' as const;
 
   capabilities(): TestCapability[] {
     return [
@@ -40,7 +42,7 @@ export class CorsSecurityEngine implements TestEngine {
 
     let res: Response;
     try {
-      res = await fetch(input.targetUrl, {
+      res = await safeFetch(input.targetUrl, {
         method: 'OPTIONS',
         headers: {
           Origin: untrustedOrigin,
@@ -48,6 +50,7 @@ export class CorsSecurityEngine implements TestEngine {
           'Access-Control-Request-Headers': 'Authorization,Content-Type',
         },
         signal: context.abortSignal,
+        scope: context.target?.scope,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -4,3 +4,8 @@ export * from './result.js';
 export * from './engine.js';
 export * from './engines/index.js';
 export * from './runners/docker.runner.js';
+export * from './runners/docker-policy.js';
+export * from './runners/scratch-dir.js';
+export * from './runners/scratch.js';
+export * from './http/index.js';
+export * from './registry.js';

@@ -77,8 +77,8 @@ testCommand
       // eslint-disable-next-line no-console
       console.log(`TestRun created [ID: ${pc.dim(run.id)}] - Executing test engines in-process...`);
 
-      // 2. Execute TestRun
-      const result = await apiClient.post<TestRunExecutionResponse>(`/api/v1/test-runs/${run.id}/execute`, {
+      // 2. Execute TestRun (synchronous wait mode)
+      const result = await apiClient.post<TestRunExecutionResponse>(`/api/v1/test-runs/${run.id}/execute?wait=true`, {
         engineIds: options.engine,
         definitionYaml,
       });
@@ -302,6 +302,27 @@ testCommand
     }
   });
 
+// Subcommand: cancel
+testCommand
+  .command('cancel <id>')
+  .description('Cancel an in-flight or queued test run')
+  .action(async (id: string) => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log(`Cancelling test run [ID: ${pc.dim(id)}]...`);
+      const result = await apiClient.post<{ status: string; testRunId: string }>(
+        `/api/v1/test-runs/${id}/cancel`,
+        {},
+      );
+      // eslint-disable-next-line no-console
+      console.log(pc.green(`✔ Test run ${id} successfully cancelled (status: ${result.status}).`));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(pc.red(`✖ Failed to cancel test run "${id}": ${msg}`));
+      process.exit(1);
+    }
+  });
+
 // Subcommand: delete
 testCommand
   .command('delete <id>')
@@ -317,4 +338,6 @@ testCommand
       process.exit(1);
     }
   });
+
+
 

@@ -1,9 +1,12 @@
-import { TestEngine } from '../engine.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { TestEngine, TestEngineError } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding } from '../result.js';
 import { normalizeZapAlerts } from '@security-lab/domain';
 import { dockerRunner, DockerRunner } from '../runners/docker.runner.js';
+import { createScratchDirectory } from '../runners/scratch-dir.js';
 
 export const SAMPLE_ZAP_BASELINE_REPORT = {
   '@programName': 'OWASP ZAP',
@@ -61,6 +64,7 @@ export const SAMPLE_ZAP_BASELINE_REPORT = {
 export class ZapScannerEngine implements TestEngine {
   readonly id = 'engine-container-zap';
   readonly version = '1.0.0';
+  readonly executionClass = 'class_b_container' as const;
 
   constructor(private readonly runner: DockerRunner = dockerRunner) {}
 
@@ -114,26 +118,67 @@ export class ZapScannerEngine implements TestEngine {
 
     const image = (input.options?.dockerImage as string) || process.env.ZAP_IMAGE || 'ghcr.io/zaproxy/zaproxy:stable';
     const mockReport = input.options?.mockReport || SAMPLE_ZAP_BASELINE_REPORT;
+    const isSimulated = input.options?.simulated === true || process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true';
+
+    context.reportProgress(20, 'Provisioning ephemeral host scratch directory for ZAP report transport...');
+
+    // 2. Provision isolated host scratch directory under os.tmpdir()
+    const scratch = await createScratchDirectory('zap');
+    const reportFilePath = path.join(scratch.path, 'report.json');
 
     context.reportProgress(30, 'Dispatching container runner for OWASP ZAP scan...');
 
     let rawJson: unknown;
     try {
+      if (isSimulated) {
+        // In simulation mode, write the mock report into the scratch directory
+        await fs.promises.writeFile(reportFilePath, JSON.stringify(mockReport), 'utf-8');
+      }
+
       const runResult = await this.runner.execute({
         image,
         args: ['zap-baseline.py', '-t', input.targetUrl, '-J', 'report.json'],
+        volumes: [
+          {
+            hostPath: scratch.path,
+            containerPath: '/zap/wrk',
+            mode: 'rw',
+          },
+        ],
         timeoutMs: input.timeoutMs || 60000,
         abortSignal: context.abortSignal,
-        simulated: input.options?.simulated as boolean | undefined,
+        simulated: isSimulated,
         mockStdout: JSON.stringify(mockReport),
       });
 
-      try {
-        rawJson = JSON.parse(runResult.stdout);
-      } catch {
-        rawJson = mockReport;
+      // 3. Artifact transport: Read report.json directly from host scratch directory
+      if (fs.existsSync(reportFilePath)) {
+        try {
+          const reportRaw = await fs.promises.readFile(reportFilePath, 'utf-8');
+          rawJson = JSON.parse(reportRaw);
+        } catch (parseErr: unknown) {
+          if (runResult.simulated) {
+            rawJson = mockReport;
+          } else {
+            const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+            throw new TestEngineError(`Failed to parse OWASP ZAP report.json: ${parseMsg}`, this.id, parseErr);
+          }
+        }
+      } else {
+        if (runResult.simulated) {
+          rawJson = mockReport;
+        } else {
+          // Fail fast: do NOT silently substitute mock data when real execution fails
+          throw new TestEngineError(
+            `OWASP ZAP container finished (exit code ${runResult.exitCode}) but failed to produce report.json at /zap/wrk/report.json. Output: ${runResult.stderr || runResult.stdout || 'None'}`,
+            this.id,
+          );
+        }
       }
     } catch (err: unknown) {
+      if (input.options?.throwOnError) {
+        throw err;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       return {
         engineId: this.id,
@@ -143,6 +188,9 @@ export class ZapScannerEngine implements TestEngine {
         metrics: [],
         error: `OWASP ZAP container run failed: ${msg}`,
       };
+    } finally {
+      // 4. Always destroy ephemeral scratch directory
+      await scratch.destroy();
     }
 
     context.reportProgress(75, 'Normalizing ZAP alerts into platform findings schema...');

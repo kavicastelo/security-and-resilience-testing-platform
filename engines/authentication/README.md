@@ -16,5 +16,7 @@ In-process native engine for verifying authentication mechanisms, JWT handling, 
 * **Class A (Native In-Process)**: Fast non-invasive assertions on token payloads and session responses.
 
 ### Implementation Status:
-* **Status**: SCAFFOLDED (Interface boundary defined in `@security-lab/test-sdk`)
-* **Planned Phase**: Phase 2 (Native Test Engines & Scanners)
+* **Status**: `SCAFFOLDED`
+* **Current Behavior**: Static Authorization/API Key header injection supported in DeclarativeTestEngine. Dedicated JWT tampering, cookie security flags, and session audits are pending implementation.
+* **Planned Hardening Phase**: [Phase 07 — Authentication Testing Framework](../../prompts/phase-07-authentication-testing-framework.md)
+

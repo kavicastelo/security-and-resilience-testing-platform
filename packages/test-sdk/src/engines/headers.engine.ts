@@ -2,10 +2,12 @@ import { TestEngine } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding } from '../result.js';
+import { safeFetch } from '../http/index.js';
 
 export class HeadersSecurityEngine implements TestEngine {
   readonly id = 'engine-native-headers';
   readonly version = '1.0.0';
+  readonly executionClass = 'class_a_native' as const;
 
   capabilities(): TestCapability[] {
     return [
@@ -37,7 +39,7 @@ export class HeadersSecurityEngine implements TestEngine {
 
     let res: Response;
     try {
-      res = await fetch(input.targetUrl, {
+      res = await safeFetch(input.targetUrl, {
         method: 'GET',
         headers: {
           'User-Agent': 'SecurityLab-QA/1.0',
@@ -45,6 +47,7 @@ export class HeadersSecurityEngine implements TestEngine {
           ...input.customHeaders,
         },
         signal: context.abortSignal,
+        scope: context.target?.scope,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

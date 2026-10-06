@@ -1,9 +1,14 @@
-import { TestEngine } from '../engine.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { TestEngine, TestEngineError } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding } from '../result.js';
 import { normalizeTrivyResults } from '@security-lab/domain';
 import { dockerRunner, DockerRunner } from '../runners/docker.runner.js';
+import { createScratchDirectory, EphemeralScratchDirectory } from '../runners/scratch-dir.js';
+import { VolumeMount } from '../runners/docker-policy.js';
 
 export const SAMPLE_TRIVY_REPORT = {
   SchemaVersion: 2,
@@ -60,6 +65,7 @@ export const SAMPLE_TRIVY_REPORT = {
 export class TrivyScannerEngine implements TestEngine {
   readonly id = 'engine-container-trivy';
   readonly version = '1.0.0';
+  readonly executionClass = 'class_b_container' as const;
 
   constructor(private readonly runner: DockerRunner = dockerRunner) {}
 
@@ -83,10 +89,10 @@ export class TrivyScannerEngine implements TestEngine {
   }
 
   validate(input: TestInput): ValidationResult {
-    if (!input.targetUrl) {
+    if (!input.targetUrl && !input.options?.targetPath && !input.options?.targetImage) {
       return {
         valid: false,
-        errors: [{ path: 'targetUrl', message: 'Target URL or artifact identifier is required' }],
+        errors: [{ path: 'targetUrl', message: 'Target URL, targetPath, or targetImage is required' }],
       };
     }
     return { valid: true };
@@ -98,26 +104,132 @@ export class TrivyScannerEngine implements TestEngine {
 
     const image = (input.options?.dockerImage as string) || process.env.TRIVY_IMAGE || 'aquasec/trivy:latest';
     const mockReport = input.options?.mockReport || SAMPLE_TRIVY_REPORT;
+    const isSimulated = input.options?.simulated === true || process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true';
 
-    context.reportProgress(30, 'Dispatching container runner for Aqua Trivy scan...');
+    // 1. Provision ephemeral scratch output directory for report transport
+    const outScratch = await createScratchDirectory('trivy-out');
+    const reportFilePath = path.join(outScratch.path, 'report.json');
+    let inScratch: EphemeralScratchDirectory | undefined;
+
+    context.reportProgress(20, 'Resolving scan target and volume configuration...');
+
+    // 2. Resolve target type: Container Image vs Filesystem Directory
+    const rawTarget = (input.targetUrl || '').trim();
+    const explicitImage = input.options?.targetImage as string | undefined;
+    const explicitPath = input.options?.targetPath as string | undefined;
+    const scanType = input.options?.scanType as string | undefined;
+
+    const isImageScan =
+      scanType === 'image' ||
+      Boolean(explicitImage) ||
+      rawTarget.startsWith('image://') ||
+      rawTarget.startsWith('docker://') ||
+      (!rawTarget.startsWith('http://') &&
+        !rawTarget.startsWith('https://') &&
+        !rawTarget.startsWith('file://') &&
+        !explicitPath &&
+        rawTarget.includes(':'));
+
+    const volumes: VolumeMount[] = [
+      {
+        hostPath: outScratch.path,
+        containerPath: '/trivy-out',
+        mode: 'rw',
+      },
+    ];
+
+    let trivyArgs: string[];
+
+    if (isImageScan) {
+      const targetImage =
+        explicitImage || rawTarget.replace(/^(image|docker):\/\//, '') || 'target-service-image:latest';
+      trivyArgs = ['image', '--format', 'json', '--output', '/trivy-out/report.json', targetImage];
+      context.reportProgress(30, `Configured Aqua Trivy for container image scan: ${targetImage}`);
+    } else {
+      // Filesystem or Repository Scan
+      let hostTargetDir: string | undefined = explicitPath;
+      if (!hostTargetDir && rawTarget.startsWith('file://')) {
+        hostTargetDir = rawTarget.replace(/^file:\/\//, '');
+      }
+
+      // Ensure target volume resides inside system temp dir to comply with CIS volume sandbox policy
+      const tempDir = path.resolve(os.tmpdir()).toLowerCase().replace(/\\/g, '/');
+      let safeMountDir: string;
+
+      if (hostTargetDir && path.resolve(hostTargetDir).toLowerCase().replace(/\\/g, '/').startsWith(tempDir)) {
+        safeMountDir = path.resolve(hostTargetDir);
+      } else {
+        inScratch = await createScratchDirectory('trivy-src');
+        safeMountDir = inScratch.path;
+
+        if (hostTargetDir && fs.existsSync(hostTargetDir)) {
+          try {
+            await fs.promises.cp(hostTargetDir, inScratch.path, {
+              recursive: true,
+              filter: (src) => !src.includes('node_modules') && !src.includes('.git'),
+            });
+          } catch {
+            // Non-fatal if copy cannot read some files
+          }
+        }
+      }
+
+      volumes.push({
+        hostPath: safeMountDir,
+        containerPath: '/target-src',
+        mode: 'ro',
+      });
+
+      trivyArgs = ['fs', '--format', 'json', '--output', '/trivy-out/report.json', '/target-src'];
+      context.reportProgress(30, 'Configured Aqua Trivy for filesystem scan with read-only target mount');
+    }
 
     let rawJson: unknown;
+
     try {
+      if (isSimulated) {
+        // In simulation mode, write the mock report into the scratch output directory
+        await fs.promises.writeFile(reportFilePath, JSON.stringify(mockReport), 'utf-8');
+      }
+
       const runResult = await this.runner.execute({
         image,
-        args: ['fs', '--format', 'json', '.'],
+        args: trivyArgs,
+        volumes,
         timeoutMs: input.timeoutMs || 60000,
         abortSignal: context.abortSignal,
-        simulated: input.options?.simulated as boolean | undefined,
+        simulated: isSimulated,
         mockStdout: JSON.stringify(mockReport),
       });
 
-      try {
-        rawJson = JSON.parse(runResult.stdout);
-      } catch {
-        rawJson = mockReport;
+      // 3. Artifact transport: Read report.json directly from host scratch directory
+      if (fs.existsSync(reportFilePath)) {
+        try {
+          const reportRaw = await fs.promises.readFile(reportFilePath, 'utf-8');
+          rawJson = JSON.parse(reportRaw);
+        } catch (parseErr: unknown) {
+          if (runResult.simulated) {
+            rawJson = mockReport;
+          } else {
+            const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+            throw new TestEngineError(`Failed to parse Aqua Trivy report.json: ${parseMsg}`, this.id, parseErr);
+          }
+        }
+      } else {
+        if (runResult.simulated) {
+          rawJson = mockReport;
+        } else {
+          // Fail fast: do NOT silently substitute mock data when real execution fails
+          throw new TestEngineError(
+            `Aqua Trivy container finished (exit code ${runResult.exitCode}) but failed to produce report.json at /trivy-out/report.json. Output: ${runResult.stderr || runResult.stdout || 'None'}`,
+            this.id,
+          );
+        }
       }
     } catch (err: unknown) {
+      if (input.options?.throwOnError) {
+        throw err;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       return {
         engineId: this.id,
@@ -127,6 +239,12 @@ export class TrivyScannerEngine implements TestEngine {
         metrics: [],
         error: `Aqua Trivy container run failed: ${msg}`,
       };
+    } finally {
+      // 4. Always destroy ephemeral scratch directories post-run
+      await outScratch.destroy();
+      if (inScratch) {
+        await inScratch.destroy();
+      }
     }
 
     context.reportProgress(75, 'Normalizing Trivy CVEs and misconfigurations into platform findings...');

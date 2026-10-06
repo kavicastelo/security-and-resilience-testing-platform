@@ -1,4 +1,5 @@
 import tls from 'node:tls';
+import { validateUrlAgainstScope } from '@security-lab/domain';
 import { TestEngine } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
@@ -7,6 +8,7 @@ import { TestInput, TestResult, ValidationResult, RawEngineFinding } from '../re
 export class TlsSecurityEngine implements TestEngine {
   readonly id = 'engine-native-tls';
   readonly version = '1.0.0';
+  readonly executionClass = 'class_a_native' as const;
 
   capabilities(): TestCapability[] {
     return [
@@ -34,6 +36,22 @@ export class TlsSecurityEngine implements TestEngine {
 
   async execute(input: TestInput, context: ExecutionContext): Promise<TestResult> {
     const startTime = Date.now();
+
+    // Enforce security scope boundary before opening TLS socket
+    if (context.target?.scope) {
+      const scopeValidation = validateUrlAgainstScope(input.targetUrl, context.target.scope);
+      if (!scopeValidation.valid) {
+        return {
+          engineId: this.id,
+          durationMs: Date.now() - startTime,
+          success: false,
+          findings: [],
+          metrics: [],
+          error: `Target URL violates security boundary: ${scopeValidation.violations.join('; ')}`,
+        };
+      }
+    }
+
     const url = new URL(input.targetUrl);
     const findings: RawEngineFinding[] = [];
 

@@ -16,5 +16,7 @@ In-process native engine for evaluating object-level and function-level access c
 * **Class A (Native In-Process)**: Orchestrated via dual-context HTTP client calls.
 
 ### Implementation Status:
-* **Status**: SCAFFOLDED (Interface boundary defined in `@security-lab/test-sdk`)
-* **Planned Phase**: Phase 3 (Advanced Authorization & BOLA Verification)
+* **Status**: `NOT_IMPLEMENTED`
+* **Current Behavior**: Architectural specification only. Zero code, domain entities, or permission matrices currently exist in the repository.
+* **Planned Hardening Phase**: [Phase 08 — Authorization & BOLA/IDOR Testing Framework](../../prompts/phase-08-authorization-bola-testing-framework.md)
+

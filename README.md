@@ -226,57 +226,54 @@ docker compose down
 
 ---
 
-## 12. Current Status (Phase 0 Initialization)
+## 12. Current Implementation Status (Audited Baseline)
 
-| Subsystem / Area | Status | Description |
-| :--- | :--- | :--- |
-| **Monorepo Foundation** | **IMPLEMENTED** | pnpm workspaces, strict TypeScript references, ESLint, Prettier |
-| **Domain Models & Schemas** | **IMPLEMENTED** | Pure domain entities with strict Zod validation (`@security-lab/domain`) |
-| **Cross-Boundary Contracts** | **IMPLEMENTED** | API DTOs, execution messages, CLI options (`@security-lab/contracts`) |
-| **TestEngine SDK** | **IMPLEMENTED** | Standardized `TestEngine` interface boundary (`@security-lab/test-sdk`) |
-| **Evidence Immutability** | **IMPLEMENTED** | SHA-256 cryptographic hashing and tamper freeze (`@security-lab/evidence`) |
-| **Configuration & Logging** | **IMPLEMENTED** | Zod-validated config, structured correlation logging |
-| **PostgreSQL Foundation** | **IMPLEMENTED** | Forward-only migration schema (`0000_initial_schema.sql`) and seeds |
-| **Controller Application** | **IMPLEMENTED** | Fastify service with projects, targets, test-runs, findings, and evidence APIs |
-| **Web Dashboard** | **IMPLEMENTED** | React/Vite application with Target Scopes, Test Executions, and Findings Views |
-| **CLI Application** | **IMPLEMENTED** | Commander CLI with `version`, `project`, `target`, `test`, `scan`, `load`, `report`, and `gate` commands |
-| **Architecture Blueprints** | **IMPLEMENTED** | 6 architecture specifications and 4 Architecture Decision Records |
-| **Class A Native Engines** | **IMPLEMENTED** | OWASP Headers, CORS, TLS, and Declarative YAML Assertion Runners |
-| **Class B Container Scanners** | **IMPLEMENTED** | Ephemeral Docker runner, OWASP ZAP & Aqua Trivy normalizers and engines |
-| **Class C Heavy Workers** | **IMPLEMENTED** | Grafana k6 latency SLA audit (p50/p95/p99) & Rate Limiting resilience engine |
-| **Quantitative Telemetry** | **IMPLEMENTED** | PostgreSQL metrics persistence and API endpoints for latency SLA distributions |
-| **Release Gating & Policies** | **IMPLEMENTED** | Automated CI/CD release gates enforcing zero-critical policies & latency SLAs |
-| **Enterprise Reporting** | **IMPLEMENTED** | JUnit XML, SARIF v2.1.0, HTML executive reports, and REST export endpoints |
+> [!WARNING]
+> **Engineering Baseline Notice (October 2026 Audit)**:
+> The codebase has completed foundational scaffolding and prototype workflows. However, an in-depth architectural audit identified that several subsystems currently use simulated fallbacks, in-process stubs, or string-based scope validations.
+> The platform is actively undergoing an **agentic 16-phase hardening program** specified in [`docs/architecture/product-roadmap.md`](docs/architecture/product-roadmap.md) and [`prompts/`](prompts/README.md).
+>
+> **Safety Warning**: Native engines currently follow HTTP redirects by default. Until **Phase 01** is implemented, only run tests against strictly controlled and isolated test targets.
+
+| Subsystem / Area | Verified Status | Evidence & Reality | Next Action |
+| :--- | :---: | :--- | :--- |
+| **Monorepo Foundation** | `VERIFIED` | `pnpm` workspaces, strict TypeScript references, clean typecheck and linting. | Maintain boundaries |
+| **Domain Models & Schemas** | `VERIFIED` | Pure domain entities with strict Zod validation (`@security-lab/domain`). | Add Identity & DSL v2 models |
+| **Cross-Boundary Contracts** | `VERIFIED` | API DTOs, execution messages, CLI options (`@security-lab/contracts`). | Maintain contracts |
+| **Enterprise Reporting** | `VERIFIED` | JUnit XML, SARIF v2.1.0, HTML executive reports, and REST export endpoints. | Add persistent artifact storage |
+| **Console CLI** | `VERIFIED` | Commander CLI with `target`, `test`, `scan`, `load`, `report`, and `gate` commands. | Add offline local execution |
+| **Web Dashboard** | `VERIFIED` | React/Vite application with Target Scopes, Test Executions, and Findings Views. | Add real-time SSE stream |
+| **Class A Native Engines** | `IMPLEMENTED_BUT_UNSAFE` | OWASP Headers, CORS, TLS, and baseline rate-limiting run in-process; follow redirects without re-checking scope. | Phase 01: Redirect interception |
+| **Target Scope Validator** | `IMPLEMENTED_BUT_UNSAFE` | Validates host string and port; lacks DNS resolution, socket pinning, and IP normalization. | Phase 01: DNS & IP hardening |
+| **Docker Runner Sandbox** | `IMPLEMENTED_BUT_UNSAFE` | Spawns containers with CPU/RAM caps; missing capability dropping, non-root user, and socket path restrictions. | Phase 02: Container hardening |
+| **Controller Orchestration** | `PARTIALLY_IMPLEMENTED` | Fastify REST API; contains hardcoded engine array, sequential blocking loop, unexposed cancellation. | Phase 03: EngineRegistry & queue |
+| **Class B Container Scanners** | `IMPLEMENTED_BUT_INCOMPLETE` | ZAP container report transport broken; Trivy scans own image; both fall back silently to mock JSON. | Phase 04: Real volume transport |
+| **Class C Resilience Workers** | `IMPLEMENTED_BUT_INCOMPLETE` | Labeled as Grafana k6, but actually runs an in-process JavaScript `fetch()` loop in Node.js. | Phase 05: Real k6 container runner |
+| **Declarative Test DSL** | `IMPLEMENTED_BUT_INCOMPLETE` | Evaluates single HTTP assertions; lacks request bodies, path parameters, and request chaining. | Phase 06: Declarative DSL v2 |
+| **Authentication Testing** | `SCAFFOLDED` | Header injection only; JWT audits, cookie flags, and session testing are stubs in README. | Phase 07: Auth testing engine |
+| **Authorization / BOLA** | `NOT_IMPLEMENTED` | Documentation specifications only (`engines/authorization/README.md`); zero code in repository. | Phase 08: BOLA testing engine |
+| **PostgreSQL & Findings** | `PARTIALLY_IMPLEMENTED` | 8 tables; missing definitions, reports, artifacts; fingerprint collisions; lacks lifecycle state machine. | Phase 10: Database hardening |
+| **Policy Engine & Gate** | `IMPLEMENTED` | Deterministic evaluation of severity, categories, and latency; lacks required profile gating & waivers. | Phase 11: Policy Engine v2 |
 
 ---
 
-## 13. Project Roadmap
+## 13. Phased Implementation Roadmap
 
-* [x] **Phase 1: Target Management & Security Boundary Enforcement**
-  * CRUD APIs and CLI for projects, environments, and targets.
-  * Target Scope Validator with DNS rebinding and cloud metadata protection.
-  * TestRun state machine and persistence in PostgreSQL via Drizzle.
-* [x] **Phase 2: Native Test Engines (Class A) & Declarative Runner**
-  * Implementation of `headers`, `cors`, and `tls` native testing engines.
-  * Execution of platform-native declarative YAML test definitions with rich assertions.
-* [x] **Phase 3: Containerized Scanner Integrations (Class B)**
-  * Ephemeral Docker runner orchestrator for OWASP ZAP and Aqua Trivy with sandboxing.
-  * Finding ingestion and normalization pipeline into unified `Finding` and immutable `Evidence` records.
-  * CLI `security-lab scan` command and Dashboard Class B scanner launcher.
-* [x] **Phase 4: Resilience & Load Testing (Class C)**
-  * Implementation of Class C heavy workers (`K6ResilienceEngine` / `engine-worker-k6`) for latency SLA audits (p50/p95/p99) and concurrency testing.
-  * Rate limiting and throttling resilience engine (`RateLimitResilienceEngine` / `engine-native-resilience`) evaluating burst tolerance and HTTP 429 defenses.
-  * Target Scope boundary gating enforcing `target.scope.testing.loadTesting === true` and concurrency clamping (`maxConcurrency`, `maxRps`).
-  * Quantitative performance telemetry persistence in PostgreSQL `metrics` table and controller endpoints (`GET /api/v1/test-runs/:id/metrics`).
-  * CLI `security-lab load` / `resilience` commands with latency distribution summaries and pass/fail SLA release gating.
-  * Web Dashboard Class C launcher and quantitative latency SLA card visualizations.
-* [x] **Phase 5: Release Gating & Enterprise Reporting**
-  * Automated JUnit XML, SARIF v2.1.0, and self-contained executive HTML report generation.
-  * Policy engine evaluation with severity thresholds, category bans, and latency SLA gate enforcement.
-  * Database persistence in PostgreSQL `policies` and `releases` tables with full audit trail.
-  * CLI `security-lab report` and `security-lab gate` commands for CI/CD pipeline automation.
-  * Web Dashboard report export toolbar (HTML, JUnit XML, SARIF) and release status indicators.
-  * Ready-to-use GitHub Actions (`.github/workflows/security-gate.yml`) and GitLab CI (`.gitlab-ci.yml`) workflows.
+The project is governed by a **16-phase sequential implementation roadmap**. Each phase is backed by an independent, executable agent prompt under [`prompts/`](prompts/README.md).
+
+For the complete architectural blueprint and dependency order, see:
+* **Current State Architecture**: [`docs/architecture/current-state.md`](docs/architecture/current-state.md)
+* **Execution Lifecycle Audit**: [`docs/architecture/current-execution-audit.md`](docs/architecture/current-execution-audit.md)
+* **Gap Analysis & Inventory**: [`docs/architecture/gap-analysis.md`](docs/architecture/gap-analysis.md)
+* **Product Roadmap Master Plan**: [`docs/architecture/product-roadmap.md`](docs/architecture/product-roadmap.md)
+* **Prompt Library & Status**: [`prompts/README.md`](prompts/README.md)
+
+### Implementation Horizons:
+* **Horizon 1: Local MVP (Phases 00–05)**: Truthful baseline, SSRF & scope boundary hardening, container sandboxing, asynchronous engine registry, and real container scanner runners (ZAP, Trivy, k6).
+* **Horizon 2: Team V1 (Phases 06–08)**: Declarative DSL v2 with request bodies & chaining, dedicated Authentication Testing Framework, and native Authorization & BOLA/IDOR Testing Engine.
+* **Horizon 3: Enterprise V2 (Phases 09–14)**: Security Contracts & OpenAPI discovery, database hardening & finding regression intelligence, Policy Engine v2 with waivers, artifact persistence, offline CLI, and real-time dashboard telemetry.
+* **Horizon 4: SaaS & Hybrid Cloud (Phase 15)**: Distributed private execution agents (`apps/agent`) and multi-tenant SaaS control plane.
+
 
 
 

@@ -4,15 +4,18 @@ import {
   parseTestDefinitionYaml,
   evaluateAssertion,
   extractFieldValue,
+  validateUrlAgainstScope,
 } from '@security-lab/domain';
 import { TestEngine } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding, RawEngineMetric } from '../result.js';
+import { safeFetch } from '../http/index.js';
 
 export class DeclarativeTestEngine implements TestEngine {
   readonly id = 'engine-native-declarative';
   readonly version = '1.0.0';
+  readonly executionClass = 'class_a_native' as const;
 
   capabilities(): TestCapability[] {
     return [
@@ -123,9 +126,30 @@ export class DeclarativeTestEngine implements TestEngine {
       const progressPercent = Math.round(((i + 1) / totalTests) * 100);
       context.reportProgress(progressPercent, `Executing test [${testSpec.id}]: ${testSpec.name}`);
 
-      const fullUrl = testSpec.path.startsWith('http://') || testSpec.path.startsWith('https://')
+      const isAbsolute = testSpec.path.startsWith('http://') || testSpec.path.startsWith('https://');
+      const fullUrl = isAbsolute
         ? testSpec.path
         : `${baseUrl}${testSpec.path.startsWith('/') ? '' : '/'}${testSpec.path}`;
+
+      // Enforce strict security boundary: absolute URLs must be authorized by target scope
+      if (isAbsolute && context.target?.scope) {
+        const scopeValidation = validateUrlAgainstScope(fullUrl, context.target.scope);
+        if (!scopeValidation.valid) {
+          findings.push({
+            title: `Security Boundary Violation: [${testSpec.name}]`,
+            category: definition.category,
+            severity: 'critical',
+            description: `Test definition specified out-of-scope absolute URL "${fullUrl}": ${scopeValidation.violations.join('; ')}`,
+            recommendation: 'Ensure all test definition paths target authorized in-scope resources.',
+            evidence: {
+              request: { method: testSpec.method, url: fullUrl, headers: {} },
+              actual: `Scope boundary violation: ${scopeValidation.violations.join('; ')}`,
+            },
+          });
+          assertionsFailedCount++;
+          continue;
+        }
+      }
 
       const requestHeaders: Record<string, string> = {
         'User-Agent': 'SecurityLab-QA/1.0',
@@ -141,10 +165,11 @@ export class DeclarativeTestEngine implements TestEngine {
       let parsedJson: unknown = null;
 
       try {
-        res = await fetch(fullUrl, {
+        res = await safeFetch(fullUrl, {
           method: testSpec.method,
           headers: requestHeaders,
           signal: context.abortSignal,
+          scope: context.target?.scope,
         });
 
         responseBodyText = await res.text();

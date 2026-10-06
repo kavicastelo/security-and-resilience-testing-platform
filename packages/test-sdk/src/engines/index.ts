@@ -5,4 +5,5 @@ export * from './declarative.engine.js';
 export * from './zap.engine.js';
 export * from './trivy.engine.js';
 export * from './k6.engine.js';
+export * from './k6-script-builder.js';
 export * from './rate-limit.engine.js';

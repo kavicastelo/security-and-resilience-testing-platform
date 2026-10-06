@@ -62,8 +62,8 @@ async function executeScan(options: {
     // eslint-disable-next-line no-console
     console.log(`TestRun created [ID: ${pc.dim(run.id)}] - Spawning ephemeral container runner...`);
 
-    // 2. Execute TestRun
-    const result = await apiClient.post<TestRunExecutionResponse>(`/api/v1/test-runs/${run.id}/execute`, {
+    // 2. Execute TestRun (synchronous wait mode)
+    const result = await apiClient.post<TestRunExecutionResponse>(`/api/v1/test-runs/${run.id}/execute?wait=true`, {
       engineIds: [options.engineId],
       options: {
         activeScan: options.activeScan,
