@@ -1,11 +1,19 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildApp } from '../../apps/controller/src/app/index.js';
 import { closeDatabase, checkDatabaseHealth } from '../../apps/controller/src/services/db.js';
 import {
   ZapScannerEngine,
   TrivyScannerEngine,
+  DockerRunner,
+  ContainerSecurityError,
+  createScratchDirectory,
+  isApprovedImage,
+  validateVolumePath,
   ExecutionContext,
+  TestEngineError,
 } from '@security-lab/test-sdk';
 import { logger } from '@security-lab/logger';
 import { FastifyInstance } from 'fastify';
@@ -204,7 +212,7 @@ describe('Class B Container Scanners Pipeline (OWASP ZAP & Aqua Trivy)', () => {
     it('dispatches Class B execution and records class_b_container in test_executions', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-runs/${testRunId}/execute`,
+        url: `/api/v1/test-runs/${testRunId}/execute?wait=true`,
         payload: {
           engineIds: ['engine-container-zap', 'engine-container-trivy'],
           options: {
@@ -272,6 +280,417 @@ describe('Class B Container Scanners Pipeline (OWASP ZAP & Aqua Trivy)', () => {
         expect(record.immutableHash).toMatch(/^[a-f0-9]{64}$/);
         expect(record.testRunId).toBe(testRunId);
       }
+    });
+  });
+
+  describe('DockerRunner Security Sandbox & CIS Benchmark Enforcement', () => {
+    const runner = new DockerRunner();
+
+    it('enforces approved image allowlist and rejects unauthorized images', () => {
+      // Approved scanner images
+      expect(isApprovedImage('ghcr.io/zaproxy/zaproxy:stable')).toBe(true);
+      expect(isApprovedImage('zaproxy/zaproxy:weekly')).toBe(true);
+      expect(isApprovedImage('aquasec/trivy:latest')).toBe(true);
+      expect(isApprovedImage('ghcr.io/aquasecurity/trivy:0.49.1')).toBe(true);
+      expect(isApprovedImage('grafana/k6:latest')).toBe(true);
+
+      // Unapproved images
+      expect(isApprovedImage('ubuntu:latest')).toBe(false);
+      expect(isApprovedImage('alpine:3.18')).toBe(false);
+      expect(isApprovedImage('attacker/malicious-scanner:v1')).toBe(false);
+      expect(isApprovedImage('busybox')).toBe(false);
+    });
+
+    it('blocks Docker socket mount attempts with ContainerSecurityError', async () => {
+      const socketMounts = [
+        '/var/run/docker.sock',
+        '/var/run/docker.sock/',
+        '\\\\.\\pipe\\docker_engine',
+        '/run/docker.sock',
+      ];
+
+      for (const socketPath of socketMounts) {
+        await expect(
+          runner.execute({
+            image: 'ghcr.io/zaproxy/zaproxy:stable',
+            volumes: [{ hostPath: socketPath, containerPath: '/var/run/docker.sock' }],
+            simulated: true,
+          }),
+        ).rejects.toThrowError(ContainerSecurityError);
+      }
+    });
+
+    it('blocks host root and sensitive system directory mounts', async () => {
+      const forbiddenPaths = [
+        '/',
+        '/etc',
+        '/root',
+        '/bin',
+        '/usr',
+        '/sys',
+        '/proc',
+        'C:\\Windows',
+        'C:\\Program Files',
+      ];
+
+      for (const badPath of forbiddenPaths) {
+        await expect(
+          runner.execute({
+            image: 'ghcr.io/zaproxy/zaproxy:stable',
+            volumes: [{ hostPath: badPath, containerPath: '/data' }],
+            simulated: true,
+          }),
+        ).rejects.toThrowError(ContainerSecurityError);
+      }
+    });
+
+    it('prohibits --network host to prevent network namespace escape', async () => {
+      await expect(
+        runner.execute({
+          image: 'ghcr.io/zaproxy/zaproxy:stable',
+          network: 'host',
+          simulated: true,
+        }),
+      ).rejects.toThrowError(ContainerSecurityError);
+
+      await expect(
+        runner.execute({
+          image: 'ghcr.io/zaproxy/zaproxy:stable',
+          network: 'container:some_container_id',
+          simulated: true,
+        }),
+      ).rejects.toThrowError(ContainerSecurityError);
+    });
+
+    it('rejects execution when image is not in approved allowlist', async () => {
+      await expect(
+        runner.execute({
+          image: 'ubuntu:latest',
+          simulated: true,
+        }),
+      ).rejects.toThrowError(ContainerSecurityError);
+    });
+
+    it('creates, verifies, and cleanly destroys ephemeral scratch directories', async () => {
+      const scratch = await createScratchDirectory('test-scratch');
+      expect(scratch.path).toBeDefined();
+
+      // Verify scratch directory is recognized as valid by volume validator
+      const validation = validateVolumePath(scratch.path);
+      expect(validation.valid).toBe(true);
+
+      // Verify execution succeeds with valid scratch directory in simulated mode
+      const result = await runner.execute({
+        image: 'ghcr.io/zaproxy/zaproxy:stable',
+        volumes: [{ hostPath: scratch.path, containerPath: '/zap/wrk' }],
+        simulated: true,
+        mockStdout: '{"status":"ok"}',
+      });
+      expect(result.simulated).toBe(true);
+
+      // Cleanup scratch directory
+      await scratch.destroy();
+    });
+
+    it('fails fast on real Docker execution timeout without silent mock fallback', async () => {
+      const runner = new DockerRunner();
+      // Execute without simulated: true and with short timeout
+      // Should fail fast with error instead of silently returning mockStdout
+      await expect(
+        runner.execute({
+          image: 'ghcr.io/zaproxy/zaproxy:stable',
+          mockStdout: '{"silent_mock":true}',
+          simulated: false,
+          timeoutMs: 150,
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('cleans up and rejects on abortSignal without silent mock fallback', async () => {
+      const runner = new DockerRunner();
+      const controller = new AbortController();
+      const execPromise = runner.execute({
+        image: 'ghcr.io/zaproxy/zaproxy:stable',
+        mockStdout: '{"silent_mock":true}',
+        simulated: false,
+        abortSignal: controller.signal,
+      });
+      controller.abort();
+      await expect(execPromise).rejects.toThrow();
+    });
+  });
+
+  describe('Class B Volume Exchange & Report Parsing (Real vs Simulated)', () => {
+    it('ZAP: mounts ephemeral volume to /zap/wrk:rw and parses real report.json with exit code 2 (warnings)', async () => {
+      let capturedHostPath = '';
+      const customReport = {
+        '@programName': 'OWASP ZAP',
+        '@version': '2.14.0',
+        site: [
+          {
+            '@name': 'Custom Real Test Site',
+            alerts: [
+              {
+                pluginid: '99001',
+                alertRef: '99001',
+                alert: 'Custom Real ZAP Finding Alert',
+                name: 'Custom Real ZAP Finding Alert',
+                riskcode: '1',
+                confidence: '2',
+                riskdesc: 'Low (Medium)',
+                desc: 'Real scanner test finding generated in test scratch volume.',
+                instances: [{ uri: '/api/v1/test', method: 'GET' }],
+                solution: 'Review real scanner alerts.',
+              },
+            ],
+          },
+        ],
+      };
+
+      const mockRunner = {
+        execute: async (options: { volumes?: { hostPath: string; containerPath: string; mode?: string }[] }) => {
+          const wrkVol = options.volumes?.find((v) => v.containerPath === '/zap/wrk');
+          expect(wrkVol).toBeDefined();
+          expect(wrkVol?.mode).toBe('rw');
+          expect(validateVolumePath(wrkVol!.hostPath).valid).toBe(true);
+
+          capturedHostPath = wrkVol!.hostPath;
+          // Simulate ZAP writing real report.json to /zap/wrk/report.json
+          const reportFile = path.join(capturedHostPath, 'report.json');
+          await fs.promises.writeFile(reportFile, JSON.stringify(customReport), 'utf-8');
+
+          return {
+            exitCode: 2, // ZAP returns exit code 2 when WARN alerts are present
+            stdout: 'ZAP Baseline completed with warnings',
+            stderr: '',
+            durationMs: 50,
+            simulated: false,
+          };
+        },
+      } as unknown as DockerRunner;
+
+      const engine = new ZapScannerEngine(mockRunner);
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { simulated: false },
+        },
+        createDummyContext(false),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0]?.title).toBe('Custom Real ZAP Finding Alert');
+      expect(result.metrics.find((m) => m.name === 'zap_findings_count')?.value).toBe(1);
+
+      // Verify scratch directory was cleanly destroyed in finally
+      expect(fs.existsSync(capturedHostPath)).toBe(false);
+    });
+
+    it('ZAP: fails fast and throws TestEngineError when report.json is missing and simulated: false', async () => {
+      const mockRunner = {
+        execute: async () => ({
+          exitCode: 1,
+          stdout: '',
+          stderr: 'Container crashed before writing report',
+          durationMs: 15,
+          simulated: false,
+        }),
+      } as unknown as DockerRunner;
+
+      const engine = new ZapScannerEngine(mockRunner);
+
+      // 1. With throwOnError: true, throws TestEngineError
+      await expect(
+        engine.execute(
+          {
+            targetUrl: serverUrl,
+            options: { simulated: false, throwOnError: true },
+          },
+          createDummyContext(false),
+        ),
+      ).rejects.toThrowError(TestEngineError);
+
+      // 2. Without throwOnError, returns success: false with clear message and ZERO mock fallback
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { simulated: false },
+        },
+        createDummyContext(false),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.findings).toEqual([]);
+      expect(result.error).toContain('failed to produce report.json at /zap/wrk/report.json');
+    });
+
+    it('Trivy: mounts target and output scratch volumes and parses real report.json', async () => {
+      let capturedOutPath = '';
+      const customReport = {
+        SchemaVersion: 2,
+        ArtifactName: 'test-artifact',
+        ArtifactType: 'filesystem',
+        Results: [
+          {
+            Target: 'package.json',
+            Class: 'lang-pkgs',
+            Type: 'npm',
+            Vulnerabilities: [
+              {
+                VulnerabilityID: 'CVE-2025-99999',
+                PkgName: 'vulnerable-test-lib',
+                InstalledVersion: '1.0.0',
+                FixedVersion: '1.0.1',
+                Severity: 'HIGH',
+                Title: 'Custom Test Real Vulnerability in Trivy Output',
+                PrimaryURL: 'https://avd.aquasec.com/test',
+              },
+            ],
+          },
+        ],
+      };
+
+      const mockRunner = {
+        execute: async (options: {
+          args?: string[];
+          volumes?: { hostPath: string; containerPath: string; mode?: string }[];
+        }) => {
+          expect(options.args).toEqual([
+            'fs',
+            '--format',
+            'json',
+            '--output',
+            '/trivy-out/report.json',
+            '/target-src',
+          ]);
+
+          const outVol = options.volumes?.find((v) => v.containerPath === '/trivy-out');
+          const srcVol = options.volumes?.find((v) => v.containerPath === '/target-src');
+
+          expect(outVol).toBeDefined();
+          expect(outVol?.mode).toBe('rw');
+          expect(srcVol).toBeDefined();
+          expect(srcVol?.mode).toBe('ro');
+
+          capturedOutPath = outVol!.hostPath;
+          const reportFile = path.join(capturedOutPath, 'report.json');
+          await fs.promises.writeFile(reportFile, JSON.stringify(customReport), 'utf-8');
+
+          return {
+            exitCode: 0,
+            stdout: '',
+            stderr: '',
+            durationMs: 40,
+            simulated: false,
+          };
+        },
+      } as unknown as DockerRunner;
+
+      const engine = new TrivyScannerEngine(mockRunner);
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { simulated: false },
+        },
+        createDummyContext(false),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0]?.title).toContain('CVE-2025-99999');
+      expect(result.metrics.find((m) => m.name === 'trivy_high_count')?.value).toBe(1);
+
+      // Verify scratch directory destroyed
+      expect(fs.existsSync(capturedOutPath)).toBe(false);
+    });
+
+    it('Trivy: handles container image scanning mode without mounting source directory', async () => {
+      const mockRunner = {
+        execute: async (options: {
+          args?: string[];
+          volumes?: { hostPath: string; containerPath: string; mode?: string }[];
+        }) => {
+          expect(options.args).toEqual([
+            'image',
+            '--format',
+            'json',
+            '--output',
+            '/trivy-out/report.json',
+            'alpine:3.19',
+          ]);
+
+          // Image mode only mounts outScratch to /trivy-out, no /target-src
+          expect(options.volumes?.some((v) => v.containerPath === '/target-src')).toBe(false);
+          const outVol = options.volumes?.find((v) => v.containerPath === '/trivy-out');
+          expect(outVol).toBeDefined();
+
+          const reportFile = path.join(outVol!.hostPath, 'report.json');
+          await fs.promises.writeFile(
+            reportFile,
+            JSON.stringify({ SchemaVersion: 2, ArtifactName: 'alpine:3.19', Results: [] }),
+            'utf-8',
+          );
+
+          return {
+            exitCode: 0,
+            stdout: '',
+            stderr: '',
+            durationMs: 30,
+            simulated: false,
+          };
+        },
+      } as unknown as DockerRunner;
+
+      const engine = new TrivyScannerEngine(mockRunner);
+      const result = await engine.execute(
+        {
+          targetUrl: 'alpine:3.19',
+          options: { simulated: false },
+        },
+        createDummyContext(false),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.findings).toEqual([]);
+    });
+
+    it('Trivy: fails fast and throws TestEngineError when report.json is missing and simulated: false', async () => {
+      const mockRunner = {
+        execute: async () => ({
+          exitCode: 1,
+          stdout: '',
+          stderr: 'Trivy execution crashed',
+          durationMs: 20,
+          simulated: false,
+        }),
+      } as unknown as DockerRunner;
+
+      const engine = new TrivyScannerEngine(mockRunner);
+
+      // 1. With throwOnError: true, throws TestEngineError
+      await expect(
+        engine.execute(
+          {
+            targetUrl: serverUrl,
+            options: { simulated: false, throwOnError: true },
+          },
+          createDummyContext(false),
+        ),
+      ).rejects.toThrowError(TestEngineError);
+
+      // 2. Without throwOnError, returns success: false with clear error and ZERO mock fallback
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { simulated: false },
+        },
+        createDummyContext(false),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.findings).toEqual([]);
+      expect(result.error).toContain('failed to produce report.json at /trivy-out/report.json');
     });
   });
 });

@@ -22,6 +22,7 @@ export const TargetScopeSchema = z.object({
   excludedPaths: z.array(z.string()).default([]),
   testing: TargetTestingCapabilitiesSchema,
   limits: TargetLimitsSchema,
+  allowPrivateIps: z.boolean().default(false).optional(),
 });
 
 export type TargetScope = z.infer<typeof TargetScopeSchema>;
@@ -47,8 +48,10 @@ export const CreateTargetInputSchema = z.object({
   excludedPaths: z.array(z.string()).default([]),
   testing: TargetTestingCapabilitiesSchema.optional(),
   limits: TargetLimitsSchema.optional(),
+  allowPrivateIps: z.boolean().default(false).optional(),
 });
 
 export type CreateTargetInput = z.infer<typeof CreateTargetInputSchema>;
 
+export * from './ip-utils.js';
 export * from './scope-validator.js';

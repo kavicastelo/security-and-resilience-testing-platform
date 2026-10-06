@@ -1,7 +1,8 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { CreateTestRunInputSchema } from '@security-lab/domain';
 import { testRunsService } from '../services/test-runs.service.js';
-import { testRunnerService, ExecuteRunOptions } from '../services/runner.service.js';
+import { ExecuteRunOptions } from '../services/runner.service.js';
+import { executionManager } from '../services/execution-manager.js';
 import { findingsService } from '../services/findings.service.js';
 import { evidenceService } from '../services/evidence.service.js';
 import { metricsService } from '../services/metrics.service.js';
@@ -70,16 +71,29 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     });
   });
 
-  // 4. Execute TestRun
+  // 4. Execute TestRun (Asynchronous Queue Decoupled from HTTP Response)
   fastify.post<{
     Params: { id: string };
     Body?: ExecuteRunOptions;
+    Querystring: { wait?: string };
   }>('/api/v1/test-runs/:id/execute', async (request, reply) => {
+    const shouldWait = request.query.wait === 'true' || request.body?.wait === true;
+
     try {
-      const result = await testRunnerService.executeTestRun(request.params.id, request.body);
-      return reply.send({
+      if (shouldWait) {
+        // Synchronous / wait mode: block and await complete execution
+        const result = await executionManager.executeAndWait(request.params.id, request.body);
+        return reply.status(200).send({
+          success: true,
+          data: result,
+        });
+      }
+
+      // Asynchronous decoupled mode: enqueue job and immediately return 202 Accepted
+      const queuedJob = await executionManager.enqueue(request.params.id, request.body);
+      return reply.status(202).send({
         success: true,
-        data: result,
+        data: queuedJob,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Test run execution failed';
@@ -87,6 +101,51 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
         success: false,
         error: {
           code: 'TESTRUN_EXECUTION_FAILED',
+          message,
+        },
+      });
+    }
+  });
+
+  // 4b. Cancel In-Flight or Queued TestRun
+  fastify.post<{
+    Params: { id: string };
+  }>('/api/v1/test-runs/:id/cancel', async (request, reply) => {
+    try {
+      const cancelResult = await executionManager.cancel(request.params.id);
+      if (cancelResult.status === 'not_found') {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'TESTRUN_NOT_FOUND',
+            message: cancelResult.reason || `TestRun with ID "${request.params.id}" not found`,
+          },
+        });
+      }
+
+      if (!cancelResult.cancelled) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'TESTRUN_NOT_CANCELLABLE',
+            message: cancelResult.reason || `TestRun cannot be cancelled in state "${cancelResult.status}"`,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        success: true,
+        data: {
+          status: 'cancelled',
+          testRunId: request.params.id,
+        },
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to cancel test run';
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_CANCEL_FAILED',
           message,
         },
       });

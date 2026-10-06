@@ -328,7 +328,7 @@ describe('Phase 5: Release Gating & Enterprise Reporting Pipeline', () => {
       // Execute TestRun
       const execRes = await app.inject({
         method: 'POST',
-        url: `/api/v1/test-runs/${testRunId}/execute`,
+        url: `/api/v1/test-runs/${testRunId}/execute?wait=true`,
       });
       expect(execRes.statusCode).toBe(200);
     });

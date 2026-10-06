@@ -2,10 +2,12 @@ import { TestEngine } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding } from '../result.js';
+import { safeFetch } from '../http/index.js';
 
 export class RateLimitResilienceEngine implements TestEngine {
   readonly id = 'engine-native-resilience';
   readonly version = '1.0.0';
+  readonly executionClass = 'class_a_native' as const;
 
   capabilities(): TestCapability[] {
     return [
@@ -43,7 +45,7 @@ export class RateLimitResilienceEngine implements TestEngine {
     // Send burst of requests concurrently
     const promises = Array.from({ length: burstCount }, async () => {
       try {
-        const res = await fetch(input.targetUrl, {
+        const res = await safeFetch(input.targetUrl, {
           method: 'GET',
           headers: {
             'User-Agent': 'SecurityLab-ResilienceQA/1.0',
@@ -51,6 +53,7 @@ export class RateLimitResilienceEngine implements TestEngine {
             ...input.customHeaders,
           },
           signal: context.abortSignal,
+          scope: context.target?.scope,
         });
 
         const headerMap: Record<string, string> = {};

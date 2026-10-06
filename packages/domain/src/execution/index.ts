@@ -15,6 +15,7 @@ export const ExecutionStatusSchema = z.enum([
   'failed',
   'timed_out',
   'skipped',
+  'cancelled',
 ]);
 
 export type ExecutionStatus = z.infer<typeof ExecutionStatusSchema>;

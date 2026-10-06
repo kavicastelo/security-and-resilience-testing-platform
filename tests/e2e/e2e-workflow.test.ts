@@ -104,7 +104,7 @@ describe('End-to-End (E2E) Full Lifecycle Security QA Workflow', () => {
     // 4. Execute TestRun with Native Class A Engines
     const execRes = await app.inject({
       method: 'POST',
-      url: `/api/v1/test-runs/${testRunId}/execute`,
+      url: `/api/v1/test-runs/${testRunId}/execute?wait=true`,
       payload: {
         engineIds: ['engine-native-headers', 'engine-native-cors'],
       },

@@ -78,8 +78,8 @@ loadCommand
       // eslint-disable-next-line no-console
       console.log(`TestRun created [ID: ${pc.dim(run.id)}] - Spawning Class C worker...`);
 
-      // 2. Execute
-      const result = await apiClient.post<TestRunExecutionResponse>(`/api/v1/test-runs/${run.id}/execute`, {
+      // 2. Execute (synchronous wait mode)
+      const result = await apiClient.post<TestRunExecutionResponse>(`/api/v1/test-runs/${run.id}/execute?wait=true`, {
         engineIds: ['engine-worker-k6'],
         options: {
           vus,
@@ -212,8 +212,8 @@ loadCommand
         triggeredBy: 'manual',
       });
 
-      // 2. Execute
-      const result = await apiClient.post<TestRunExecutionResponse>(`/api/v1/test-runs/${run.id}/execute`, {
+      // 2. Execute (synchronous wait mode)
+      const result = await apiClient.post<TestRunExecutionResponse>(`/api/v1/test-runs/${run.id}/execute?wait=true`, {
         engineIds: ['engine-native-resilience'],
       });
 

@@ -18,16 +18,10 @@ import {
 } from '@security-lab/domain';
 import { createImmutableEvidence } from '@security-lab/evidence';
 import {
-  HeadersSecurityEngine,
-  CorsSecurityEngine,
-  TlsSecurityEngine,
-  DeclarativeTestEngine,
-  ZapScannerEngine,
-  TrivyScannerEngine,
-  K6ResilienceEngine,
-  RateLimitResilienceEngine,
+  engineRegistry,
   TestEngine,
   ExecutionContext,
+  EngineExecutionClass,
 } from '@security-lab/test-sdk';
 import { logger } from '@security-lab/logger';
 
@@ -36,6 +30,7 @@ export interface ExecuteRunOptions {
   definitionYaml?: string;
   customHeaders?: Record<string, string>;
   options?: Record<string, unknown>;
+  wait?: boolean;
 }
 
 export interface TestRunExecutionResult {
@@ -51,13 +46,15 @@ export interface TestRunExecutionResult {
 }
 
 export class TestRunnerService {
-  private readonly defaultEngines: TestEngine[] = [
-    new HeadersSecurityEngine(),
-    new CorsSecurityEngine(),
-    new TlsSecurityEngine(),
-  ];
-
   async executeTestRun(testRunId: string, options?: ExecuteRunOptions): Promise<TestRunExecutionResult> {
+    return this.executeTestRunInternal(testRunId, options);
+  }
+
+  async executeTestRunInternal(
+    testRunId: string,
+    options?: ExecuteRunOptions,
+    abortSignal?: AbortSignal,
+  ): Promise<TestRunExecutionResult> {
     const runLogger = logger.child({ testRunId });
     const { db } = getDatabase();
 
@@ -70,6 +67,16 @@ export class TestRunnerService {
     const target = await targetsService.getTargetById(testRun.targetId);
     if (!target) {
       throw new Error(`Target "${testRun.targetId}" not found for TestRun "${testRunId}"`);
+    }
+
+    // Check if run was aborted or already cancelled
+    if (abortSignal?.aborted || testRun.status === 'cancelled') {
+      runLogger.info(`Test run ${testRunId} was cancelled before starting execution.`);
+      return {
+        testRun,
+        executions: [],
+        findings: [],
+      };
     }
 
     // Mark test run as running
@@ -121,43 +128,42 @@ export class TestRunnerService {
       };
     }
 
-    // 3. Resolve Engines to Execute
+    // 3. Resolve Engines to Execute via EngineRegistry
     let enginesToRun: TestEngine[] = [];
     const definitionYaml =
       options?.definitionYaml ||
       (testRun.metadata?.definitionYaml as string | undefined);
 
-    const allKnown: TestEngine[] = [
-      ...this.defaultEngines,
-      new ZapScannerEngine(),
-      new TrivyScannerEngine(),
-      new DeclarativeTestEngine(),
-      new K6ResilienceEngine(),
-      new RateLimitResilienceEngine(),
-    ];
-
     if (definitionYaml || testRun.profileId === 'declarative') {
-      enginesToRun = [new DeclarativeTestEngine()];
+      const decl = engineRegistry.get('engine-native-declarative');
+      enginesToRun = decl ? [decl] : [];
     } else if (testRun.profileId === 'class-b-scanners' || testRun.profileId === 'container-scanners') {
-      enginesToRun = [new ZapScannerEngine(), new TrivyScannerEngine()];
+      enginesToRun = engineRegistry.findByExecutionClass('class_b_container');
     } else if (testRun.profileId === 'zap') {
-      enginesToRun = [new ZapScannerEngine()];
+      const zap = engineRegistry.get('engine-container-zap');
+      enginesToRun = zap ? [zap] : [];
     } else if (testRun.profileId === 'trivy') {
-      enginesToRun = [new TrivyScannerEngine()];
+      const trivy = engineRegistry.get('engine-container-trivy');
+      enginesToRun = trivy ? [trivy] : [];
     } else if (testRun.profileId === 'class-c-resilience' || testRun.profileId === 'resilience') {
-      enginesToRun = [new K6ResilienceEngine(), new RateLimitResilienceEngine()];
+      const k6 = engineRegistry.get('engine-worker-k6');
+      const rl = engineRegistry.get('engine-native-resilience');
+      enginesToRun = [k6, rl].filter((e): e is TestEngine => e !== undefined);
     } else if (testRun.profileId === 'k6' || testRun.profileId === 'load-sla') {
-      enginesToRun = [new K6ResilienceEngine()];
+      const k6 = engineRegistry.get('engine-worker-k6');
+      enginesToRun = k6 ? [k6] : [];
     } else if (testRun.profileId === 'rate-limit') {
-      enginesToRun = [new RateLimitResilienceEngine()];
+      const rl = engineRegistry.get('engine-native-resilience');
+      enginesToRun = rl ? [rl] : [];
     } else if (options?.engineIds && options.engineIds.length > 0) {
-      const requested = new Set(options.engineIds);
-      enginesToRun = allKnown.filter((e) => requested.has(e.id));
+      enginesToRun = options.engineIds
+        .map((id) => engineRegistry.get(id))
+        .filter((e): e is TestEngine => e !== undefined);
       if (enginesToRun.length === 0) {
-        enginesToRun = this.defaultEngines;
+        enginesToRun = engineRegistry.findByExecutionClass('class_a_native');
       }
     } else {
-      enginesToRun = this.defaultEngines;
+      enginesToRun = engineRegistry.findByExecutionClass('class_a_native');
     }
 
     const executionResults: {
@@ -172,16 +178,18 @@ export class TestRunnerService {
     let totalPassedTests = 0;
     let totalFailedTests = 0;
 
-    // 4. Run Engines Sequentially
+    // 4. Run Engines Sequentially with Cancellation Checks
     for (const engine of enginesToRun) {
+      if (abortSignal?.aborted) {
+        runLogger.warn(`Execution for test run ${testRunId} aborted before dispatching [${engine.id}].`);
+        break;
+      }
+
       runLogger.info(`Dispatching engine [${engine.id}]...`);
 
-      let executionClass: 'class_a_native' | 'class_b_container' | 'class_c_worker' = 'class_a_native';
-      if (engine.id === 'engine-worker-k6') {
-        executionClass = 'class_c_worker';
-      } else if (['engine-container-zap', 'engine-container-trivy'].includes(engine.id)) {
-        executionClass = 'class_b_container';
-      }
+      const entry = engineRegistry.getEntry(engine.id);
+      const executionClass: EngineExecutionClass =
+        entry?.executionClass || engine.executionClass || 'class_a_native';
 
       const [executionRow] = await db
         .insert(testExecutions)
@@ -198,7 +206,6 @@ export class TestRunnerService {
         throw new Error(`Failed to initialize execution record for engine ${engine.id}`);
       }
 
-      const abortController = new AbortController();
       const context: ExecutionContext = {
         correlationId: crypto.randomUUID(),
         testRunId,
@@ -209,7 +216,7 @@ export class TestRunnerService {
           baseUrl: target.baseUrl,
           scope: target.scope,
         },
-        abortSignal: abortController.signal,
+        abortSignal: abortSignal || new AbortController().signal,
         reportProgress: (percent, msg) => {
           runLogger.debug(`[${engine.id}] Progress ${percent}%: ${msg}`);
         },
@@ -251,6 +258,25 @@ export class TestRunnerService {
 
       try {
         const result = await engine.execute(engineInput, context);
+
+        if (abortSignal?.aborted) {
+          await db
+            .update(testExecutions)
+            .set({
+              status: 'cancelled',
+              completedAt: new Date(),
+              errorMessage: 'Execution aborted by cancellation request',
+            })
+            .where(eq(testExecutions.id, executionRow.id));
+
+          executionResults.push({
+            id: executionRow.id,
+            engineId: engine.id,
+            status: 'cancelled',
+            error: 'Execution cancelled',
+          });
+          break;
+        }
 
         // Process findings and immutable forensic evidence
         for (const rawFinding of result.findings) {
@@ -337,10 +363,13 @@ export class TestRunnerService {
         });
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
+        const isCancelled = abortSignal?.aborted || errorMsg.toLowerCase().includes('abort');
+        const finalExecStatus = isCancelled ? 'cancelled' : 'failed';
+
         await db
           .update(testExecutions)
           .set({
-            status: 'failed',
+            status: finalExecStatus,
             completedAt: new Date(),
             errorMessage: errorMsg,
           })
@@ -349,9 +378,13 @@ export class TestRunnerService {
         executionResults.push({
           id: executionRow.id,
           engineId: engine.id,
-          status: 'failed',
+          status: finalExecStatus,
           error: errorMsg,
         });
+
+        if (isCancelled) {
+          break;
+        }
         totalFailedTests++;
       }
     }
@@ -377,7 +410,13 @@ export class TestRunnerService {
       findingsCount: severityCounts,
     };
 
-    const finalStatus = severityCounts.critical > 0 ? 'failed' : 'completed';
+    const isCancelled = abortSignal?.aborted;
+    const finalStatus = isCancelled
+      ? 'cancelled'
+      : severityCounts.critical > 0
+        ? 'failed'
+        : 'completed';
+
     const updatedTestRun = await testRunsService.updateTestRunStatus(testRunId, finalStatus, summary);
 
     runLogger.info(`Test run ${testRunId} finished with status ${finalStatus}: ${allFindings.length} findings.`);
