@@ -4,19 +4,26 @@ import { apiClient } from '../api/client.js';
 import { Target } from '@security-lab/domain';
 
 export const targetCommand = new Command('target')
-  .description('Register, inspect, and validate authorized target scopes');
+  .description('Register, inspect, update, and validate authorized target scopes');
 
 // Subcommand: list
 targetCommand
   .command('list')
   .description('List registered targets')
   .option('-p, --project <projectId>', 'Filter by Project ID')
+  .option('--format <format>', 'Output format (table, json)', 'table')
   .action(async (options) => {
     try {
       const path = options.project
         ? `/api/v1/projects/${options.project}/targets`
         : '/api/v1/targets';
       const targets = await apiClient.get<Target[]>(path);
+
+      if (options.format === 'json') {
+        // eslint-disable-next-line no-console
+        console.log(JSON.stringify(targets, null, 2));
+        return;
+      }
 
       if (targets.length === 0) {
         // eslint-disable-next-line no-console
@@ -47,6 +54,50 @@ targetCommand
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(pc.red(`✖ Failed to list targets: ${msg}`));
+      process.exit(1);
+    }
+  });
+
+// Subcommand: get
+targetCommand
+  .command('get <id>')
+  .description('Inspect details and defensive boundaries of a specific target')
+  .option('--format <format>', 'Output format (table, json)', 'table')
+  .action(async (id: string, options) => {
+    try {
+      const target = await apiClient.get<Target>(`/api/v1/targets/${id}`);
+
+      if (options.format === 'json') {
+        // eslint-disable-next-line no-console
+        console.log(JSON.stringify(target, null, 2));
+        return;
+      }
+
+      // eslint-disable-next-line no-console
+      console.log(pc.bold(pc.cyan(`\nTarget: ${target.name} [${target.id}]`)));
+      // eslint-disable-next-line no-console
+      console.log(`  Project ID:      ${pc.dim(target.projectId)}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Base URL:        ${pc.cyan(target.baseUrl)}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Allowed Hosts:   ${target.scope.allowedHosts.join(', ')}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Allowed Ports:   ${target.scope.allowedPorts.join(', ')}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Excluded Paths:  ${target.scope.excludedPaths.length > 0 ? target.scope.excludedPaths.join(', ') : 'None'}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Active Scanning: ${target.scope.testing.activeScanning ? pc.green('Authorized') : pc.red('Blocked')}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Load Testing:    ${target.scope.testing.loadTesting ? pc.green('Authorized') : pc.red('Blocked')}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Max RPS:         ${target.scope.limits.maxRps}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Max Concurrency: ${target.scope.limits.maxConcurrency}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Created:         ${new Date(target.createdAt).toLocaleString()}\n`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(pc.red(`✖ Failed to get target "${id}": ${msg}`));
       process.exit(1);
     }
   });
@@ -100,6 +151,75 @@ targetCommand
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(pc.red(`✖ Failed to register target: ${msg}`));
+      process.exit(1);
+    }
+  });
+
+// Subcommand: update
+targetCommand
+  .command('update <id>')
+  .description('Update target metadata or security boundaries')
+  .option('-n, --name <name>', 'Target name')
+  .option('-u, --url <url>', 'Base URL')
+  .option('--hosts <hosts>', 'Comma-separated allowed hosts')
+  .option('--ports <ports>', 'Comma-separated allowed ports')
+  .option('--exclude-paths <paths>', 'Comma-separated excluded paths')
+  .option('--active <bool>', 'Authorize active scanning (true/false)')
+  .option('--load <bool>', 'Authorize load testing (true/false)')
+  .option('--max-rps <rps>', 'Max RPS safety limit')
+  .option('--max-concurrency <concurrency>', 'Max concurrency safety limit')
+  .action(async (id: string, options) => {
+    try {
+      const payload: Record<string, unknown> = {};
+      if (options.name) payload.name = options.name;
+      if (options.url) payload.baseUrl = options.url;
+      if (options.hosts) {
+        payload.allowedHosts = options.hosts.split(',').map((h: string) => h.trim());
+      }
+      if (options.ports) {
+        payload.allowedPorts = options.ports.split(',').map((p: string) => parseInt(p.trim(), 10));
+      }
+      if (options.excludePaths) {
+        payload.excludedPaths = options.excludePaths.split(',').map((p: string) => p.trim());
+      }
+
+      const testing: Record<string, boolean> = {};
+      if (options.active !== undefined) testing.activeScanning = options.active === 'true' || options.active === true;
+      if (options.load !== undefined) testing.loadTesting = options.load === 'true' || options.load === true;
+      if (Object.keys(testing).length > 0) payload.testing = testing;
+
+      const limits: Record<string, unknown> = {};
+      if (options.maxRps) limits.maxRps = parseInt(options.maxRps, 10);
+      if (options.maxConcurrency) limits.maxConcurrency = parseInt(options.maxConcurrency, 10);
+      if (Object.keys(limits).length > 0) payload.limits = limits;
+
+      const target = await apiClient.put<Target>(`/api/v1/targets/${id}`, payload);
+
+      // eslint-disable-next-line no-console
+      console.log(pc.green(`✔ Target "${target.name}" [ID: ${target.id}] updated successfully!`));
+      // eslint-disable-next-line no-console
+      console.log(`  Base URL:      ${target.baseUrl}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Allowed Hosts: [${target.scope.allowedHosts.join(', ')}]`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(pc.red(`✖ Failed to update target "${id}": ${msg}`));
+      process.exit(1);
+    }
+  });
+
+// Subcommand: delete
+targetCommand
+  .command('delete <id>')
+  .description('Delete a target and all associated test runs and findings')
+  .action(async (id: string) => {
+    try {
+      await apiClient.delete(`/api/v1/targets/${id}`);
+      // eslint-disable-next-line no-console
+      console.log(pc.green(`✔ Target [ID: ${id}] and associated records deleted successfully.`));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(pc.red(`✖ Failed to delete target "${id}": ${msg}`));
       process.exit(1);
     }
   });

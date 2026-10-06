@@ -1,16 +1,27 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 
-// Load .env if present
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+// Load .env if present (check cwd and parent workspace directories)
+const candidateEnvPaths = [
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(process.cwd(), '../../.env'),
+  path.resolve(process.cwd(), '../.env'),
+];
+
+for (const envPath of candidateEnvPaths) {
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+  }
+}
 
 export const ConfigSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1024).max(65535).default(4000),
   HOST: z.string().default('0.0.0.0'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
-  DATABASE_URL: z.string().url().default('postgresql://postgres:postgres@localhost:5432/security_lab'),
+  DATABASE_URL: z.string().url().default('postgresql://postgres:postgres@localhost:5433/security_lab'),
   DB_MAX_CONNECTIONS: z.coerce.number().int().positive().default(10),
   DB_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),

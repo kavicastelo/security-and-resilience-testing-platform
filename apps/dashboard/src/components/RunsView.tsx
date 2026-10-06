@@ -19,8 +19,14 @@ import {
   ExternalLink,
   Download,
   Scale,
+  Trash2,
+  Search,
+  Copy,
+  Terminal,
 } from 'lucide-react';
 import { EvaluateReleaseModal } from './EvaluateReleaseModal.js';
+import { Pagination } from './Pagination.js';
+import { useAppStore } from '../store/useAppStore.js';
 
 interface Target {
   id: string;
@@ -219,6 +225,7 @@ const RunMetricsDetails: React.FC<{ runId: string; apiUrl: string }> = ({ runId,
 export const RunsView: React.FC = () => {
   const queryClient = useQueryClient();
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+  const { showToast } = useAppStore();
 
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
   const [evaluatingRunId, setEvaluatingRunId] = useState<string | null>(null);
@@ -241,6 +248,34 @@ export const RunsView: React.FC = () => {
   const [isSimulated, setIsSimulated] = useState<boolean>(true);
   const [declarativeYaml, setDeclarativeYaml] = useState(DEFAULT_DECLARATIVE_YAML);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+
+  // Search & Filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'running' | 'failed'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(6);
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    showToast(`Copied ${label} to clipboard`, 'info');
+  };
+
+  // Delete Test Run mutation
+  const deleteRunMutation = useMutation({
+    mutationFn: async (runId: string) => {
+      const res = await fetch(`${apiUrl}/api/v1/test-runs/${runId}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to delete test run');
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
+      queryClient.invalidateQueries({ queryKey: ['findings'] });
+      setExpandedRunId(null);
+    },
+  });
 
   // 1. Fetch Targets
   const { data: targets = [] } = useQuery<Target[]>({
@@ -732,179 +767,297 @@ export const RunsView: React.FC = () => {
       </div>
 
       {/* Test Runs History */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-          Recent Test Runs ({testRuns.length})
-        </h3>
+      <div className="space-y-4">
+        {(() => {
+          const statusCounts = {
+            all: testRuns.length,
+            completed: testRuns.filter((r) => r.status === 'completed').length,
+            running: testRuns.filter((r) => r.status === 'running').length,
+            failed: testRuns.filter((r) => r.status === 'failed').length,
+          };
 
-        {isLoadingRuns ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">Loading test executions...</div>
-        ) : testRuns.length === 0 ? (
-          <div className="p-8 border border-dashed border-border rounded-xl text-center text-sm text-muted-foreground">
-            No test runs recorded yet. Select an authorized target and click "Start Execution" above.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {testRuns.map((run) => {
-              const isExpanded = expandedRunId === run.id;
+          const filteredRuns = testRuns.filter((run) => {
+            if (statusFilter !== 'all' && run.status !== statusFilter) return false;
+            if (searchQuery.trim()) {
+              const q = searchQuery.toLowerCase();
               const target = targets.find((t) => t.id === run.targetId);
-              const counts = run.summary?.findingsCount || { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+              const matchTarget = target?.name.toLowerCase().includes(q) || target?.baseUrl.toLowerCase().includes(q);
+              const matchId = run.id.toLowerCase().includes(q);
+              const matchProfile = (run.profileId || '').toLowerCase().includes(q);
+              if (!matchTarget && !matchId && !matchProfile) return false;
+            }
+            return true;
+          });
 
-              return (
-                <div
-                  key={run.id}
-                  className="rounded-xl border border-border bg-card/40 overflow-hidden transition-all"
-                >
-                  <div
-                    onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
-                    className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-accent/30"
-                  >
-                    <div className="flex items-center gap-3">
-                      {isExpanded ? (
-                        <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                      )}
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm text-foreground">
-                            {target?.name || `Target ${run.targetId.slice(0, 8)}`}
-                          </span>
-                          {getStatusBadge(run.status)}
-                          <span className="text-xs font-mono text-muted-foreground px-2 py-0.5 bg-accent rounded">
-                            {run.profileId || 'default'}
-                          </span>
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3">
-                          <span>ID: {run.id.slice(0, 13)}...</span>
-                          <span>•</span>
-                          <span>{new Date(run.createdAt).toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
+          const paginatedRuns = filteredRuns.slice(
+            (currentPage - 1) * pageSize,
+            currentPage * pageSize,
+          );
 
-                    {/* Findings Counters */}
-                    <div className="flex items-center gap-2 text-xs font-mono">
-                      {counts.critical > 0 && (
-                        <span className="px-2 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20">
-                          {counts.critical} Crit
-                        </span>
-                      )}
-                      {counts.high > 0 && (
-                        <span className="px-2 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/20">
-                          {counts.high} High
-                        </span>
-                      )}
-                      {counts.medium > 0 && (
-                        <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/20">
-                          {counts.medium} Med
-                        </span>
-                      )}
-                      {counts.low > 0 && (
-                        <span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/20">
-                          {counts.low} Low
-                        </span>
-                      )}
-                      {counts.critical === 0 && counts.high === 0 && counts.medium === 0 && (
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-                          0 Vulnerabilities
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Expanded Run Details */}
-                  {isExpanded && (
-                    <div className="p-4 border-t border-border bg-background/50 space-y-3">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                        <div className="p-2.5 rounded bg-card border border-border/60">
-                          <span className="text-muted-foreground block">Total Tests</span>
-                          <span className="font-semibold text-foreground text-sm">
-                            {run.summary?.totalTests ?? 0}
-                          </span>
-                        </div>
-                        <div className="p-2.5 rounded bg-card border border-border/60">
-                          <span className="text-muted-foreground block">Passed</span>
-                          <span className="font-semibold text-emerald-400 text-sm">
-                            {run.summary?.passedTests ?? 0}
-                          </span>
-                        </div>
-                        <div className="p-2.5 rounded bg-card border border-border/60">
-                          <span className="text-muted-foreground block">Failed</span>
-                          <span className="font-semibold text-rose-400 text-sm">
-                            {run.summary?.failedTests ?? 0}
-                          </span>
-                        </div>
-                        <div className="p-2.5 rounded bg-card border border-border/60">
-                          <span className="text-muted-foreground block">Findings Identified</span>
-                          <span className="font-semibold text-amber-400 text-sm">
-                            {(counts.critical || 0) + (counts.high || 0) + (counts.medium || 0) + (counts.low || 0)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Quantitative Latency & SLA Metrics */}
-                      <RunMetricsDetails runId={run.id} apiUrl={apiUrl} />
-
-                      {/* Export Reports & Release Gating Toolbar */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-border/50 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground font-medium flex items-center gap-1.5">
-                            <FileText className="w-3.5 h-3.5 text-blue-400" /> Export Reports:
-                          </span>
-                          <a
-                            href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=html`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-2.5 py-1 rounded bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
-                          >
-                            <ExternalLink className="w-3 h-3 text-blue-400" /> HTML Report
-                          </a>
-                          <a
-                            href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=junit`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-2.5 py-1 rounded bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
-                          >
-                            <Download className="w-3 h-3 text-emerald-400" /> JUnit XML
-                          </a>
-                          <a
-                            href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=sarif`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-2.5 py-1 rounded bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
-                          >
-                            <Download className="w-3 h-3 text-purple-400" /> SARIF v2.1
-                          </a>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEvaluatingRunId(run.id);
-                            }}
-                            className="px-2.5 py-1 rounded bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-blue-400 transition-colors font-mono text-[11px] flex items-center gap-1"
-                          >
-                            <Scale className="w-3 h-3 text-blue-400" /> Evaluate Gate
-                          </button>
-                        </div>
-
-                        <button
-                          onClick={() => {
-                            // Switch tab to findings
-                            const event = new CustomEvent('navigate-tab', { detail: 'findings' });
-                            window.dispatchEvent(event);
-                          }}
-                          className="text-xs text-blue-400 hover:text-blue-300 font-medium"
-                        >
-                          View Full Findings & Forensic Evidence →
-                        </button>
-                      </div>
-                    </div>
-                  )}
+          return (
+            <>
+              {/* Header and Filter Controls */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1.5 border-b sm:border-b-0 pb-2 sm:pb-0 border-border">
+                  {(
+                    [
+                      { id: 'all', label: 'All Executions', count: statusCounts.all },
+                      { id: 'completed', label: 'Completed', count: statusCounts.completed },
+                      { id: 'running', label: 'Running', count: statusCounts.running },
+                      { id: 'failed', label: 'Failed', count: statusCounts.failed },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => {
+                        setStatusFilter(tab.id);
+                        setCurrentPage(1);
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        statusFilter === tab.id
+                          ? 'bg-primary/15 text-blue-400 border border-primary/25 shadow-sm'
+                          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-accent text-foreground">
+                        {tab.count}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              );
-            })}
-          </div>
-        )}
+
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Search by target or run ID..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    className="w-full pl-8 pr-3 py-1.5 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-muted-foreground/60"
+                  />
+                </div>
+              </div>
+
+              {isLoadingRuns ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">Loading test executions...</div>
+              ) : filteredRuns.length === 0 ? (
+                <div className="p-8 border border-dashed border-border rounded-xl text-center text-sm text-muted-foreground">
+                  No test runs match your search or filter criteria.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {paginatedRuns.map((run) => {
+                    const isExpanded = expandedRunId === run.id;
+                    const target = targets.find((t) => t.id === run.targetId);
+                    const counts = run.summary?.findingsCount || { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+
+                    return (
+                      <div
+                        key={run.id}
+                        className="rounded-2xl border border-border bg-card/60 backdrop-blur-sm overflow-hidden transition-all hover:border-primary/40 shadow-sm"
+                      >
+                        <div
+                          onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+                          className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-accent/30 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            {isExpanded ? (
+                              <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                            )}
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-sm text-foreground">
+                                  {target?.name || `Target ${run.targetId.slice(0, 8)}`}
+                                </span>
+                                {getStatusBadge(run.status)}
+                                <span className="text-xs font-mono text-muted-foreground px-2 py-0.5 bg-accent/80 rounded border border-border/60">
+                                  {run.profileId || 'default'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyToClipboard(run.id, 'Run ID');
+                                  }}
+                                  title="Copy Run ID"
+                                  className="text-[10px] font-mono bg-accent/60 hover:bg-accent px-1.5 py-0.5 rounded text-muted-foreground flex items-center gap-1 transition-colors"
+                                >
+                                  <span>{run.id.slice(0, 8)}...</span>
+                                  <Copy className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3">
+                                <span>{new Date(run.createdAt).toLocaleString()}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Findings Counters & CLI Trigger */}
+                          <div className="flex items-center gap-2 text-xs font-mono flex-wrap">
+                            {counts.critical > 0 && (
+                              <span className="px-2 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20">
+                                {counts.critical} Crit
+                              </span>
+                            )}
+                            {counts.high > 0 && (
+                              <span className="px-2 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/20">
+                                {counts.high} High
+                              </span>
+                            )}
+                            {counts.medium > 0 && (
+                              <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/20">
+                                {counts.medium} Med
+                              </span>
+                            )}
+                            {counts.low > 0 && (
+                              <span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/20">
+                                {counts.low} Low
+                              </span>
+                            )}
+                            {counts.critical === 0 && counts.high === 0 && counts.medium === 0 && (
+                              <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                                0 Vulnerabilities
+                              </span>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                copyToClipboard(`security-lab test findings --run ${run.id}`, 'CLI findings command');
+                              }}
+                              title="Copy CLI command to inspect findings"
+                              className="p-1 rounded text-muted-foreground hover:text-blue-400 hover:bg-accent transition-colors"
+                            >
+                              <Terminal className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expanded Run Details */}
+                        {isExpanded && (
+                          <div className="p-4 border-t border-border bg-background/50 space-y-3 animate-fade-in">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                              <div className="p-2.5 rounded-xl bg-card border border-border/60">
+                                <span className="text-muted-foreground block text-[11px]">Total Tests</span>
+                                <span className="font-semibold text-foreground text-sm font-mono">
+                                  {run.summary?.totalTests ?? 0}
+                                </span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-card border border-border/60">
+                                <span className="text-muted-foreground block text-[11px]">Passed</span>
+                                <span className="font-semibold text-emerald-400 text-sm font-mono">
+                                  {run.summary?.passedTests ?? 0}
+                                </span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-card border border-border/60">
+                                <span className="text-muted-foreground block text-[11px]">Failed</span>
+                                <span className="font-semibold text-rose-400 text-sm font-mono">
+                                  {run.summary?.failedTests ?? 0}
+                                </span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-card border border-border/60">
+                                <span className="text-muted-foreground block text-[11px]">Findings Identified</span>
+                                <span className="font-semibold text-amber-400 text-sm font-mono">
+                                  {(counts.critical || 0) + (counts.high || 0) + (counts.medium || 0) + (counts.low || 0)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Quantitative Latency & SLA Metrics */}
+                            <RunMetricsDetails runId={run.id} apiUrl={apiUrl} />
+
+                            {/* Export Reports & Release Gating Toolbar */}
+                            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-border/50 text-xs">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-muted-foreground font-medium flex items-center gap-1.5">
+                                  <FileText className="w-3.5 h-3.5 text-blue-400" /> Export Reports:
+                                </span>
+                                <a
+                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=html`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2.5 py-1 rounded-lg bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
+                                >
+                                  <ExternalLink className="w-3 h-3 text-blue-400" /> HTML Report
+                                </a>
+                                <a
+                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=junit`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2.5 py-1 rounded-lg bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
+                                >
+                                  <Download className="w-3 h-3 text-emerald-400" /> JUnit XML
+                                </a>
+                                <a
+                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=sarif`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2.5 py-1 rounded-lg bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
+                                >
+                                  <Download className="w-3 h-3 text-purple-400" /> SARIF v2.1
+                                </a>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEvaluatingRunId(run.id);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-blue-400 transition-colors font-mono text-[11px] flex items-center gap-1"
+                                >
+                                  <Scale className="w-3 h-3 text-blue-400" /> Evaluate Gate
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (window.confirm(`Are you sure you want to delete test run ${run.id}? This will also delete associated test findings and metrics.`)) {
+                                      deleteRunMutation.mutate(run.id);
+                                    }
+                                  }}
+                                  disabled={deleteRunMutation.isPending}
+                                  title="Delete Test Run"
+                                  className="px-2.5 py-1 rounded-lg bg-rose-950/30 hover:bg-rose-950/50 border border-rose-800/40 text-rose-400 hover:text-rose-300 transition-colors font-mono text-[11px] flex items-center gap-1 disabled:opacity-50"
+                                >
+                                  <Trash2 className="w-3 h-3" /> Delete Run
+                                </button>
+                              </div>
+
+                              <button
+                                onClick={() => {
+                                  // Switch tab to findings
+                                  const event = new CustomEvent('navigate-tab', { detail: 'findings' });
+                                  window.dispatchEvent(event);
+                                }}
+                                className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                              >
+                                View Full Findings & Forensic Evidence →
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Pagination */}
+              <Pagination
+                currentPage={currentPage}
+                totalItems={filteredRuns.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+                pageSizeOptions={[4, 6, 12, 20]}
+              />
+            </>
+          );
+        })()}
       </div>
 
       {/* Evaluate Release Gate Modal */}

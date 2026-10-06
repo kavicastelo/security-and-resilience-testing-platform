@@ -3,6 +3,7 @@ import { logger } from '@security-lab/logger';
 import { buildApp } from './app/index.js';
 import { closeDatabase } from './services/db.js';
 
+// Security Lab Controller Server
 async function startServer(): Promise<void> {
   logger.info(
     {

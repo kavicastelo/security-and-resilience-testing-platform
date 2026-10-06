@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { getDatabase } from './db.js';
-import { targets } from './db/schema.js';
+import { targets, testRuns } from './db/schema.js';
 import {
   CreateTargetInput,
   Target,
@@ -112,8 +112,95 @@ export class TargetsService {
     };
   }
 
+  async updateTarget(
+    id: string,
+    input: {
+      name?: string;
+      baseUrl?: string;
+      allowedHosts?: string[];
+      allowedPorts?: number[];
+      excludedPaths?: string[];
+      testing?: Partial<TargetScope['testing']>;
+      limits?: Partial<TargetScope['limits']>;
+      scope?: Partial<TargetScope>;
+    },
+  ): Promise<Target | null> {
+    const { db } = getDatabase();
+    const existing = await this.getTargetById(id);
+    if (!existing) return null;
+
+    const nestedScope = input.scope || {};
+
+    const mergedScope: TargetScope = {
+      allowedHosts: input.allowedHosts ?? nestedScope.allowedHosts ?? existing.scope.allowedHosts,
+      allowedPorts: input.allowedPorts ?? nestedScope.allowedPorts ?? existing.scope.allowedPorts,
+      excludedPaths: input.excludedPaths ?? nestedScope.excludedPaths ?? existing.scope.excludedPaths,
+      testing: {
+        activeScanning:
+          input.testing?.activeScanning ??
+          nestedScope.testing?.activeScanning ??
+          existing.scope.testing.activeScanning,
+        loadTesting:
+          input.testing?.loadTesting ??
+          nestedScope.testing?.loadTesting ??
+          existing.scope.testing.loadTesting,
+        chaosTesting:
+          input.testing?.chaosTesting ??
+          nestedScope.testing?.chaosTesting ??
+          existing.scope.testing.chaosTesting,
+      },
+      limits: {
+        maxRps: input.limits?.maxRps ?? nestedScope.limits?.maxRps ?? existing.scope.limits.maxRps,
+        maxConcurrency:
+          input.limits?.maxConcurrency ??
+          nestedScope.limits?.maxConcurrency ??
+          existing.scope.limits.maxConcurrency,
+        maxDuration:
+          input.limits?.maxDuration ??
+          nestedScope.limits?.maxDuration ??
+          existing.scope.limits.maxDuration,
+      },
+    };
+
+    const targetUrl = input.baseUrl ?? existing.baseUrl;
+    const baseUrlValidation = validateUrlAgainstScope(targetUrl, mergedScope);
+    if (!baseUrlValidation.valid) {
+      throw new Error(
+        `Target baseUrl "${targetUrl}" violates defined scope boundaries: ${baseUrlValidation.violations.join('; ')}`,
+      );
+    }
+
+    const updateValues: Record<string, unknown> = {
+      scope: mergedScope,
+      updatedAt: new Date(),
+    };
+    if (input.name !== undefined) updateValues.name = input.name;
+    if (input.baseUrl !== undefined) updateValues.baseUrl = input.baseUrl;
+
+    const [updated] = await db
+      .update(targets)
+      .set(updateValues)
+      .where(eq(targets.id, id))
+      .returning();
+
+    if (!updated) return null;
+
+    return {
+      id: updated.id,
+      projectId: updated.projectId,
+      name: updated.name,
+      baseUrl: updated.baseUrl,
+      scope: updated.scope,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    };
+  }
+
   async deleteTarget(id: string): Promise<boolean> {
     const { db } = getDatabase();
+    // Cascade delete any associated test runs first to respect foreign key constraint
+    await db.delete(testRuns).where(eq(testRuns.targetId, id));
+
     const deleted = await db.delete(targets).where(eq(targets.id, id)).returning();
     return deleted.length > 0;
   }

@@ -199,6 +199,12 @@ export class ReleasesService {
       release: createdRelease,
     };
   }
+
+  async deleteRelease(id: string): Promise<boolean> {
+    const { db } = getDatabase();
+    const deleted = await db.delete(releases).where(eq(releases.id, id)).returning();
+    return deleted.length > 0;
+  }
 }
 
 export const releasesService = new ReleasesService();

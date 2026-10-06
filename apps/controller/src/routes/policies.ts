@@ -58,4 +58,76 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       });
     }
   });
+
+  // 5. Update Policy (PUT / PATCH)
+  const handleUpdatePolicy = async (
+    request: { params: { id: string }; body: unknown },
+    reply: { status: (code: number) => { send: (payload: unknown) => unknown }; send: (payload: unknown) => unknown },
+  ) => {
+    const { id } = request.params;
+    const body = (request.body as Partial<CreatePolicyInput>) || {};
+
+    try {
+      const updated = await policiesService.updatePolicy(id, body);
+      if (!updated) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'POLICY_NOT_FOUND',
+            message: `Policy "${id}" not found`,
+          },
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: updated,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update policy';
+      const status = /default|baseline/i.test(message) ? 403 : 400;
+      return reply.status(status).send({
+        success: false,
+        error: {
+          code: status === 403 ? 'POLICY_FORBIDDEN' : 'POLICY_UPDATE_FAILED',
+          message,
+        },
+      });
+    }
+  };
+
+  fastify.put<{ Params: { id: string } }>('/api/v1/policies/:id', handleUpdatePolicy);
+  fastify.patch<{ Params: { id: string } }>('/api/v1/policies/:id', handleUpdatePolicy);
+
+  // 6. Delete Policy
+  fastify.delete<{ Params: { id: string } }>('/api/v1/policies/:id', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const deleted = await policiesService.deletePolicy(id);
+      if (!deleted) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'POLICY_NOT_FOUND',
+            message: `Policy "${id}" not found`,
+          },
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: { id, deleted: true },
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to delete policy';
+      const status = /default|baseline/i.test(message) ? 403 : 400;
+      return reply.status(status).send({
+        success: false,
+        error: {
+          code: status === 403 ? 'POLICY_FORBIDDEN' : 'POLICY_DELETE_FAILED',
+          message,
+        },
+      });
+    }
+  });
 };

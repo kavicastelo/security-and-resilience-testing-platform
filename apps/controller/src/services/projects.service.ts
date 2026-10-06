@@ -52,6 +52,32 @@ export class ProjectsService {
     };
   }
 
+  async updateProject(id: string, input: Partial<CreateProjectInput>): Promise<Project | null> {
+    const { db } = getDatabase();
+    const updateValues: Record<string, unknown> = {
+      updatedAt: new Date(),
+    };
+
+    if (input.name !== undefined) updateValues.name = input.name;
+    if (input.description !== undefined) updateValues.description = input.description;
+
+    const [updated] = await db
+      .update(projects)
+      .set(updateValues)
+      .where(eq(projects.id, id))
+      .returning();
+
+    if (!updated) return null;
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      description: updated.description ?? undefined,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    };
+  }
+
   async deleteProject(id: string): Promise<boolean> {
     const { db } = getDatabase();
     const deleted = await db.delete(projects).where(eq(projects.id, id)).returning();

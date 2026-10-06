@@ -60,4 +60,24 @@ export const releasesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       data: item,
     });
   });
+
+  // 4. Delete Release
+  fastify.delete<{ Params: { id: string } }>('/api/v1/releases/:id', async (request, reply) => {
+    const { id } = request.params;
+    const deleted = await releasesService.deleteRelease(id);
+    if (!deleted) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'RELEASE_NOT_FOUND',
+          message: `Release "${id}" not found`,
+        },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: { id, deleted: true },
+    });
+  });
 };

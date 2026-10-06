@@ -69,6 +69,50 @@ export class EnvironmentsService {
       updatedAt: row.updatedAt,
     };
   }
+
+  async updateEnvironment(
+    id: string,
+    input: {
+      name?: string;
+      type?: Environment['type'];
+      variables?: Record<string, string>;
+      headers?: Record<string, string>;
+    },
+  ): Promise<Environment | null> {
+    const { db } = getDatabase();
+    const updateValues: Record<string, unknown> = {
+      updatedAt: new Date(),
+    };
+    if (input.name !== undefined) updateValues.name = input.name;
+    if (input.type !== undefined) updateValues.type = input.type;
+    if (input.variables !== undefined) updateValues.variables = input.variables;
+    if (input.headers !== undefined) updateValues.headers = input.headers;
+
+    const [updated] = await db
+      .update(environments)
+      .set(updateValues)
+      .where(eq(environments.id, id))
+      .returning();
+
+    if (!updated) return null;
+
+    return {
+      id: updated.id,
+      projectId: updated.projectId,
+      name: updated.name,
+      type: updated.type as Environment['type'],
+      variables: (updated.variables as Record<string, string>) || {},
+      headers: (updated.headers as Record<string, string>) || {},
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    };
+  }
+
+  async deleteEnvironment(id: string): Promise<boolean> {
+    const { db } = getDatabase();
+    const deleted = await db.delete(environments).where(eq(environments.id, id)).returning();
+    return deleted.length > 0;
+  }
 }
 
 export const environmentsService = new EnvironmentsService();

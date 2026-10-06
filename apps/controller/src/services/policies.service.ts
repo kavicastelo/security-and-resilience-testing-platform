@@ -176,6 +176,60 @@ export class PoliciesService {
 
     return ENTERPRISE_DEFAULT_POLICY;
   }
+
+  async updatePolicy(
+    id: string,
+    input: {
+      name?: string;
+      description?: string;
+      rules?: PolicyRule[];
+    },
+  ): Promise<Policy | null> {
+    const { db } = getDatabase();
+    if (id === ENTERPRISE_DEFAULT_POLICY.id) {
+      throw new Error('Cannot modify the enterprise baseline default policy');
+    }
+
+    const updateValues: Record<string, unknown> = {
+      updatedAt: new Date(),
+    };
+    if (input.name !== undefined) updateValues.name = input.name;
+    if (input.description !== undefined) updateValues.description = input.description;
+    if (input.rules !== undefined) updateValues.rules = input.rules;
+
+    const [updated] = await db
+      .update(policies)
+      .set(updateValues)
+      .where(eq(policies.id, id))
+      .returning();
+
+    if (!updated) return null;
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      description: updated.description || undefined,
+      rules: updated.rules as PolicyRule[],
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    };
+  }
+
+  async deletePolicy(id: string): Promise<boolean> {
+    const { db } = getDatabase();
+    if (id === ENTERPRISE_DEFAULT_POLICY.id) {
+      throw new Error('Cannot delete the enterprise baseline default policy');
+    }
+
+    const [existing] = await db.select().from(policies).where(eq(policies.id, id)).limit(1);
+    if (!existing) return false;
+    if (existing.isDefault) {
+      throw new Error('Cannot delete a default policy');
+    }
+
+    const deleted = await db.delete(policies).where(eq(policies.id, id)).returning();
+    return deleted.length > 0;
+  }
 }
 
 export const policiesService = new PoliciesService();
