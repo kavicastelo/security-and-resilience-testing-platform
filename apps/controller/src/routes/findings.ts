@@ -3,16 +3,17 @@ import { FindingSeverity, FindingStatus } from '@security-lab/domain';
 import { findingsService } from '../services/findings.service.js';
 
 export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-  // 1. List findings with optional filters
+  // 1. List findings with optional filters (testRunId, targetId, severity, status)
   fastify.get<{
     Querystring: {
       testRunId?: string;
       targetId?: string;
       severity?: FindingSeverity;
+      status?: FindingStatus;
     };
   }>('/api/v1/findings', async (request, reply) => {
-    const { testRunId, targetId, severity } = request.query;
-    const findingsList = await findingsService.listFindings({ testRunId, targetId, severity });
+    const { testRunId, targetId, severity, status } = request.query;
+    const findingsList = await findingsService.listFindings({ testRunId, targetId, severity, status });
     return reply.send({
       success: true,
       data: findingsList,

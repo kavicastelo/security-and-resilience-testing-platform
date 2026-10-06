@@ -1,0 +1,88 @@
+# Example: Multi-User Authorization & BOLA/IDOR Matrix Test Specification
+# Automated cross-identity permutation testing for broken object and function level access control.
+
+id: bola-api-matrix-001
+name: Multi-User BOLA and BFLA Access Control Matrix
+version: 1.0.0
+category: authorization
+description: Verifies object-level tenant isolation (BOLA/IDOR) and role-based privilege boundaries (BFLA).
+
+identities:
+  - id: user_a
+    name: Standard User A
+    role: user
+    token: Bearer token-user-a-101
+    metadata:
+      userId: "101"
+
+  - id: user_b
+    name: Standard User B
+    role: user
+    token: Bearer token-user-b-102
+    metadata:
+      userId: "102"
+
+  - id: admin_user
+    name: Platform Administrator
+    role: admin
+    token: Bearer token-admin-999
+    metadata:
+      userId: "999"
+
+  - id: anonymous_guest
+    name: Unauthenticated Guest
+    role: guest
+    isGuest: true
+
+resources:
+  - id: doc-user-a
+    ownerIdentityId: user_a
+    resourceType: document
+    pathParam: documentId
+    value: doc-101
+    metadata:
+      title: Confidential Financial Report A
+
+  - id: doc-user-b
+    ownerIdentityId: user_b
+    resourceType: document
+    pathParam: documentId
+    value: doc-102
+    metadata:
+      title: Confidential Financial Report B
+
+rules:
+  # Object-level document access rule:
+  # Only the owner (or global admin) should be permitted to retrieve the document.
+  - id: rule-document-read
+    name: Document Object Access Control
+    path: /api/documents/{documentId}
+    method: GET
+    resourceType: document
+    action: read
+    allowOwner: true
+    allowedRoles:
+      - admin
+    allowGuest: false
+    expectedAllowedStatus:
+      - 200
+    expectedDeniedStatus:
+      - 401
+      - 403
+      - 404
+
+  # Function-level administrative user management rule:
+  # Only identities with the 'admin' role may access this endpoint.
+  - id: rule-admin-users
+    name: Administrator Users Listing
+    path: /api/admin/users
+    method: GET
+    action: admin
+    allowedRoles:
+      - admin
+    allowGuest: false
+    expectedAllowedStatus:
+      - 200
+    expectedDeniedStatus:
+      - 401
+      - 403

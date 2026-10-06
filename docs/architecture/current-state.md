@@ -107,7 +107,7 @@ TestRunnerService.executeTestRun()
 
 ## 4. Database Schema & Entity Relationships
 
-The PostgreSQL database (managed via Drizzle ORM and raw SQL migrations in `infrastructure/postgres/migrations/`) currently contains 8 tables:
+The PostgreSQL database (managed via Drizzle ORM and forward-only SQL migrations in `infrastructure/postgres/migrations/`) contains 15 tables with relational indexing, append-only forensic audit triggers, and vulnerability lifecycle tracking:
 
 ```
 projects (id PK, name UNIQUE)
@@ -116,15 +116,25 @@ projects (id PK, name UNIQUE)
    │
    ├──▶ targets (id PK, project_id FK, name, base_url, scope JSONB)
    │       │
+   │       ├──▶ test_definitions (id PK, project_id FK, target_id FK, name, version, spec JSONB/YAML)
+   │       ├──▶ identity_profiles (id PK, project_id FK, target_id FK, persona_name, role, auth_type, headers JSONB)
+   │       ├──▶ credentials (id PK, project_id FK, target_id FK, name, cred_type, encrypted_payload, iv, tag)
+   │       │
    │       ▼
    ├──▶ test_runs (id PK, project_id FK, target_id FK, environment_id FK, profile_id, status, summary JSONB)
    │       │
    │       ├──▶ test_executions (id PK, test_run_id FK, engine_id, execution_class, status, duration_ms, raw_result JSONB)
    │       │       │
-   │       │       ├──▶ evidence_records (id PK, test_run_id FK, execution_id FK, request JSONB, response JSONB, immutable_hash)
+   │       │       ├──▶ evidence_records [APPEND-ONLY TRIGGER PROTECTED]
+   │       │       │    (id PK, test_run_id FK, execution_id FK, request JSONB, response JSONB, immutable_hash)
+   │       │       │    Trigger: prevent_evidence_tamper() aborts any UPDATE or DELETE statement.
    │       │       │
-   │       │       └──▶ findings (id PK, fingerprint, title, severity, test_run_id FK, execution_id FK, target_id FK, evidence_id FK)
+   │       │       └──▶ findings [DEDUPLICATED & REGRESSION INTELLIGENCE]
+   │       │            (id PK, fingerprint, title, severity, status, occurrence_count, first_detected_at,
+   │       │             last_detected_at, fixed_at, fixed_in_run_id, test_run_id FK, execution_id FK, target_id FK)
    │       │
+   │       ├──▶ reports (id PK, test_run_id FK, project_id FK, report_type, format, content, generated_at)
+   │       ├──▶ artifacts (id PK, test_run_id FK, execution_id FK, name, artifact_type, storage_path, sha256_hash, byte_size)
    │       └──▶ metrics (id PK, test_run_id FK, execution_id FK, name, value, unit, tags JSONB)
    │
    ├──▶ releases (id PK, project_id FK, test_run_id FK, policy_id FK, decision, reason, evaluated_at)
@@ -132,13 +142,13 @@ projects (id PK, name UNIQUE)
    └──▶ policies (id PK, name, rules JSONB, is_default)
 ```
 
-### Missing Entities in Database:
-- `test_definitions` (Declarative YAML test specs are not stored as first-class database entities)
-- `reports` (Generated JUnit, SARIF, and HTML reports are dynamically rendered and never persisted)
-- `artifacts` (No table or storage for container logs, raw outputs, pcap files, or scanner dumps)
-- `credentials` (No secure credentials vault for bearer tokens, API keys, or basic auth)
-- `identity_profiles` (No user personas for BOLA/IDOR multi-role testing)
-- `authorization_matrix` (No table for role-to-endpoint access rules)
+### Hardened Database Features (Phase 10):
+- **First-Class Persistence Entities**: `test_definitions`, `reports`, `artifacts`, `identity_profiles`, and `credentials` are fully relational tables with cascading foreign keys and Drizzle ORM schemas.
+- **Relational Indexing**: All foreign keys and query columns (`testRunId`, `targetId`, `fingerprint`, `status`, `severity`, `fixedInRunId`) feature explicit B-Tree indexes.
+- **Forensic Evidence Immutability**: PostgreSQL trigger `trg_evidence_immutable` executes `prevent_evidence_tamper()` on `evidence_records`, raising `EVIDENCE_TAMPER_PROTECTION` (SQLSTATE 55000) on any attempted `UPDATE` or `DELETE`.
+- **Deterministic Evidence Hashing**: RFC 8785 canonical JSON serialization ensures identical SHA-256 hashes across varying key ordering.
+- **Fingerprint Collision Resistance**: Hardened formula `SHA-256(targetId : engineId : category : ruleOrCweId : endpointPath : (parameterName || ''))` eliminates endpoint and parameter collisions.
+- **Automated Regression Intelligence**: Lifecycle state machine (`open`, `resolved`, `regressed`, `false_positive`, `ignored`) with automated reconciliation (`reconcileTestRunFindings`) resolving un-detected findings and tracking recurrence counters (`occurrenceCount`).
 
 ---
 
