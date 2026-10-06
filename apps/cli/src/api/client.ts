@@ -36,6 +36,55 @@ export class ApiClient {
     return json.data as T;
   }
 
+  async put<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
+    if (!res.ok) {
+      throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+    }
+    return json.data as T;
+  }
+
+  async patch<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
+    if (!res.ok) {
+      throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+    }
+    return json.data as T;
+  }
+
+  async delete<T = unknown>(path: string): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'DELETE',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
+    if (!res.ok) {
+      throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+    }
+    return json.data as T;
+  }
+
   async getText(path: string): Promise<string> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       headers: {

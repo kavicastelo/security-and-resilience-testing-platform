@@ -11,7 +11,13 @@ import {
   Pencil,
   Trash2,
   X,
+  Search,
+  Copy,
+  Terminal,
+  Filter,
 } from 'lucide-react';
+import { Pagination } from './Pagination.js';
+import { useAppStore } from '../store/useAppStore.js';
 
 interface TargetScope {
   allowedHosts: string[];
@@ -48,6 +54,7 @@ interface ScopeValidationResponse {
 export const TargetsView: React.FC = () => {
   const queryClient = useQueryClient();
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+  const { showToast } = useAppStore();
 
   // Target list query
   const { data: targets = [], isLoading } = useQuery<Target[]>({
@@ -59,6 +66,12 @@ export const TargetsView: React.FC = () => {
       return json.data || [];
     },
   });
+
+  // Filter & Pagination state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [capabilityFilter, setCapabilityFilter] = useState<'all' | 'activeScanning' | 'loadTesting'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(4);
 
   // Scope validation playground state
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
@@ -87,6 +100,11 @@ export const TargetsView: React.FC = () => {
   const [editMaxRps, setEditMaxRps] = useState(50);
   const [editMaxConcurrency, setEditMaxConcurrency] = useState(10);
   const [editError, setEditError] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    showToast(`Copied ${label} to clipboard`, 'info');
+  };
 
   const handleOpenEdit = (target: Target) => {
     setEditingTarget(target);
@@ -119,6 +137,7 @@ export const TargetsView: React.FC = () => {
     },
     onSuccess: (data) => {
       setValidationResult(data);
+      showToast(data.valid ? 'Scope validation succeeded' : 'Boundary violation detected', data.valid ? 'success' : 'error');
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -126,6 +145,7 @@ export const TargetsView: React.FC = () => {
         valid: false,
         violations: [msg],
       });
+      showToast(msg, 'error');
     },
   });
 
@@ -180,16 +200,18 @@ export const TargetsView: React.FC = () => {
       if (!res.ok) throw new Error(json.error?.message || 'Failed to create target');
       return json.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['targets'] });
       setIsCreating(false);
       setNewTargetName('');
       setNewTargetUrl('');
       setNewTargetHosts('');
+      showToast(`Target "${data.name}" created successfully`);
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       setCreationError(msg);
+      showToast(msg, 'error');
     },
   });
 
@@ -238,13 +260,15 @@ export const TargetsView: React.FC = () => {
       if (!res.ok) throw new Error(json.error?.message || 'Failed to update target');
       return json.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['targets'] });
       setEditingTarget(null);
+      showToast(`Target "${data.name}" updated successfully`);
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       setEditError(msg);
+      showToast(msg, 'error');
     },
   });
 
@@ -265,11 +289,40 @@ export const TargetsView: React.FC = () => {
       if (selectedTargetId === deletedId) {
         setSelectedTargetId('');
       }
+      showToast('Target deleted successfully', 'info');
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(msg, 'error');
     },
   });
 
+  // Filtered targets
+  const filteredTargets = targets.filter((target) => {
+    if (capabilityFilter === 'activeScanning' && !target.scope?.testing?.activeScanning) {
+      return false;
+    }
+    if (capabilityFilter === 'loadTesting' && !target.scope?.testing?.loadTesting) {
+      return false;
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const matchName = target.name.toLowerCase().includes(q);
+      const matchUrl = target.baseUrl.toLowerCase().includes(q);
+      const matchHost = target.scope?.allowedHosts?.some((h) => h.toLowerCase().includes(q));
+      if (!matchName && !matchUrl && !matchHost) return false;
+    }
+    return true;
+  });
+
+  // Paged targets
+  const paginatedTargets = filteredTargets.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 animate-fade-in">
       {/* Header section */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -283,7 +336,7 @@ export const TargetsView: React.FC = () => {
         </div>
         <button
           onClick={() => setIsCreating(true)}
-          className="inline-flex items-center space-x-2 px-3.5 py-2 rounded-lg bg-primary hover:bg-primary/90 text-white text-xs font-semibold shadow-md transition-colors"
+          className="inline-flex items-center space-x-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-white text-xs font-semibold shadow-md transition-all duration-150 self-start md:self-auto hover:glow-blue"
         >
           <Plus className="w-4 h-4" />
           <span>Register New Target</span>
@@ -292,7 +345,7 @@ export const TargetsView: React.FC = () => {
 
       {/* Target Registration Form Modal */}
       {isCreating && (
-        <div className="p-6 rounded-xl border border-primary/30 bg-card/90 space-y-4">
+        <div className="p-6 rounded-2xl border border-primary/30 bg-card/95 backdrop-blur-md space-y-4 shadow-xl animate-fade-in">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground">Register Authorized Target</h3>
             <button
@@ -392,7 +445,7 @@ export const TargetsView: React.FC = () => {
 
       {/* Target Edit Form Modal */}
       {editingTarget && (
-        <div className="p-6 rounded-xl border border-amber-500/30 bg-card/95 space-y-4 shadow-xl">
+        <div className="p-6 rounded-2xl border border-amber-500/30 bg-card/95 backdrop-blur-md space-y-4 shadow-xl animate-fade-in">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Pencil className="w-4 h-4 text-amber-400" />
@@ -514,46 +567,97 @@ export const TargetsView: React.FC = () => {
         </div>
       )}
 
+      {/* Filter and Search Bar */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="relative w-full sm:w-80">
+          <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search targets by name, host, or URL..."
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-muted-foreground/60"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
+          <select
+            value={capabilityFilter}
+            onChange={(e) => {
+              setCapabilityFilter(e.target.value as typeof capabilityFilter);
+              setCurrentPage(1);
+            }}
+            className="w-full sm:w-auto px-3 py-2 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+          >
+            <option value="all">All Capabilities</option>
+            <option value="activeScanning">Active Scanning Authorized</option>
+            <option value="loadTesting">Load Testing Authorized</option>
+          </select>
+        </div>
+      </div>
+
       {/* Target Scope Cards */}
       <div className="space-y-4">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-          Active Registered Targets ({targets.length})
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Active Registered Targets ({filteredTargets.length})
+          </h3>
+          <span className="text-xs font-mono text-muted-foreground">
+            CLI: <code className="text-blue-400">security-lab target list</code>
+          </span>
+        </div>
 
         {isLoading ? (
           <div className="p-8 text-center text-xs text-muted-foreground">Loading targets...</div>
-        ) : targets.length === 0 ? (
+        ) : filteredTargets.length === 0 ? (
           <div className="p-8 border border-dashed border-border rounded-xl text-center text-xs text-muted-foreground space-y-2">
-            <p>No target scopes registered yet.</p>
-            <p>Register your first target above or run: <code>security-lab target create</code></p>
+            <p>No target scopes match the filter criteria.</p>
+            <p>Register your target above or run: <code>security-lab target create</code></p>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {targets.map((target) => (
+            {paginatedTargets.map((target) => (
               <div
                 key={target.id}
-                className="p-5 rounded-xl border border-border bg-card space-y-4 hover:border-primary/40 transition-colors"
+                className="p-5 rounded-2xl border border-border bg-card/70 backdrop-blur-sm space-y-4 hover:border-primary/50 transition-all duration-200 shadow-sm hover:shadow-md"
               >
-                <div className="flex items-start justify-between">
+                <div className="flex items-start justify-between gap-2">
                   <div className="space-y-1">
                     <div className="flex items-center space-x-2">
                       <h4 className="font-semibold text-foreground text-sm">{target.name}</h4>
-                      <span className="text-[10px] font-mono bg-accent px-1.5 py-0.5 rounded text-muted-foreground">
-                        {target.id.slice(0, 8)}...
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(target.id, 'Target ID')}
+                        title="Copy Target ID"
+                        className="text-[10px] font-mono bg-accent/70 hover:bg-accent px-1.5 py-0.5 rounded text-muted-foreground flex items-center gap-1 transition-colors"
+                      >
+                        <span>{target.id.slice(0, 8)}...</span>
+                        <Copy className="w-2.5 h-2.5" />
+                      </button>
                     </div>
                     <div className="flex items-center space-x-1.5 text-xs text-primary font-mono">
-                      <Globe className="w-3.5 h-3.5" />
-                      <span>{target.baseUrl}</span>
+                      <Globe className="w-3.5 h-3.5 shrink-0" />
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(target.baseUrl, 'Base URL')}
+                        title="Copy Base URL"
+                        className="hover:underline text-left truncate"
+                      >
+                        {target.baseUrl}
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-1.5 shrink-0">
                     <button
                       onClick={() => {
                         setSelectedTargetId(target.id);
                         setTestUrl(`${target.baseUrl}/api/v1/health`);
                       }}
-                      className="text-[11px] font-medium text-blue-400 hover:text-blue-300 bg-blue-950/30 border border-blue-800/40 px-2.5 py-1 rounded-md"
+                      className="text-[11px] font-medium text-blue-400 hover:text-blue-300 bg-blue-950/30 border border-blue-800/40 px-2.5 py-1 rounded-md transition-colors"
                     >
                       Test Scope
                     </button>
@@ -597,52 +701,74 @@ export const TargetsView: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-4 pt-1">
+                  <div className="flex flex-wrap items-center gap-4 pt-1 text-muted-foreground">
                     <div>
-                      <span className="text-muted-foreground text-[11px]">Ports: </span>
+                      <span className="text-[11px]">Ports: </span>
                       <span className="font-mono text-foreground">{target.scope.allowedPorts.join(', ')}</span>
                     </div>
                     <div>
-                      <span className="text-muted-foreground text-[11px]">Max RPS: </span>
+                      <span className="text-[11px]">Max RPS: </span>
                       <span className="font-mono text-foreground">{target.scope.limits.maxRps}</span>
                     </div>
                     <div>
-                      <span className="text-muted-foreground text-[11px]">Max Concurrency: </span>
+                      <span className="text-[11px]">Max Concurrency: </span>
                       <span className="font-mono text-foreground">{target.scope.limits.maxConcurrency}</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Capability Badges */}
-                <div className="flex items-center space-x-2 pt-2 border-t border-border/40 text-[11px]">
-                  <span className="text-muted-foreground">Capabilities:</span>
-                  <span
-                    className={`px-2 py-0.5 rounded-full font-medium ${
-                      target.scope.testing.activeScanning
-                        ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-800/40'
-                        : 'bg-muted text-muted-foreground'
-                    }`}
+                {/* Capability Badges & CLI Hint */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/40 text-[11px]">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-muted-foreground">Capabilities:</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full font-medium ${
+                        target.scope.testing.activeScanning
+                          ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-800/40'
+                          : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      Active Scan: {target.scope.testing.activeScanning ? 'ON' : 'OFF'}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full font-medium ${
+                        target.scope.testing.loadTesting
+                          ? 'bg-indigo-950/40 text-indigo-400 border border-indigo-800/40'
+                          : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      Load Test: {target.scope.testing.loadTesting ? 'ON' : 'OFF'}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(`security-lab test run --target ${target.id}`, 'Run CLI Command')}
+                    title="Copy CLI run command"
+                    className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground hover:text-blue-400"
                   >
-                    Active Scanning: {target.scope.testing.activeScanning ? 'ON' : 'OFF'}
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded-full font-medium ${
-                      target.scope.testing.loadTesting
-                        ? 'bg-indigo-950/40 text-indigo-400 border border-indigo-800/40'
-                        : 'bg-muted text-muted-foreground'
-                    }`}
-                  >
-                    Load Testing: {target.scope.testing.loadTesting ? 'ON' : 'OFF'}
-                  </span>
+                    <Terminal className="w-3 h-3 text-blue-400" />
+                    <span>Run via CLI</span>
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         )}
+
+        {/* Pagination component */}
+        <Pagination
+          currentPage={currentPage}
+          totalItems={filteredTargets.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          pageSizeOptions={[2, 4, 8, 12]}
+        />
       </div>
 
       {/* Interactive Scope Boundary Playground */}
-      <div className="p-6 rounded-xl border border-blue-900/40 bg-card/60 space-y-4">
+      <div className="p-6 rounded-2xl border border-blue-900/40 bg-card/60 backdrop-blur-md space-y-4">
         <div className="flex items-center space-x-2 text-foreground font-semibold text-sm">
           <Radio className="w-4 h-4 text-blue-400" />
           <span>Security Scope Validator Playground</span>
@@ -658,7 +784,7 @@ export const TargetsView: React.FC = () => {
             <select
               value={selectedTargetId}
               onChange={(e) => setSelectedTargetId(e.target.value)}
-              className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground"
+              className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:ring-1 focus:ring-blue-500"
             >
               <option value="">Select target...</option>
               {targets.map((t) => (
@@ -676,13 +802,13 @@ export const TargetsView: React.FC = () => {
               value={testUrl}
               onChange={(e) => setTestUrl(e.target.value)}
               placeholder="https://staging.example.com/api/v1/health"
-              className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground font-mono"
+              className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground font-mono focus:ring-1 focus:ring-blue-500"
             />
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-          <div className="flex items-center space-x-4 text-xs">
+          <div className="flex flex-wrap items-center gap-4 text-xs">
             <span className="text-muted-foreground">Test Capability Mode:</span>
             <label className="flex items-center space-x-1.5 cursor-pointer">
               <input
@@ -726,7 +852,7 @@ export const TargetsView: React.FC = () => {
         {/* Validation Verdict Display */}
         {validationResult && (
           <div
-            className={`p-4 rounded-xl border mt-4 text-xs space-y-2 ${
+            className={`p-4 rounded-xl border mt-4 text-xs space-y-2 animate-fade-in ${
               validationResult.valid
                 ? 'bg-emerald-950/40 border-emerald-800/50 text-emerald-300'
                 : 'bg-red-950/40 border-red-800/50 text-red-300'
@@ -767,3 +893,4 @@ export const TargetsView: React.FC = () => {
     </div>
   );
 };
+

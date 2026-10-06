@@ -261,3 +261,60 @@ testCommand
       process.exit(1);
     }
   });
+
+// Subcommand: get
+testCommand
+  .command('get <id>')
+  .description('Inspect details, summary, and status of a specific test run')
+  .option('--format <format>', 'Output format (table, json)', 'table')
+  .action(async (id: string, options) => {
+    try {
+      const run = await apiClient.get<TestRun>(`/api/v1/test-runs/${id}`);
+
+      if (options.format === 'json') {
+        // eslint-disable-next-line no-console
+        console.log(JSON.stringify(run, null, 2));
+        return;
+      }
+
+      // eslint-disable-next-line no-console
+      console.log(pc.bold(pc.cyan(`\nTest Run: ${run.id}`)));
+      // eslint-disable-next-line no-console
+      console.log(`  Target ID:   ${pc.dim(run.targetId)}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Project ID:  ${pc.dim(run.projectId)}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Status:      ${run.status === 'completed' ? pc.green(run.status) : pc.yellow(run.status)}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Profile:     ${run.profileId || 'default'}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Total Tests: ${run.summary?.totalTests ?? 0}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Passed:      ${pc.green(String(run.summary?.passedTests ?? 0))}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Failed:      ${pc.red(String(run.summary?.failedTests ?? 0))}`);
+      // eslint-disable-next-line no-console
+      console.log(`  Created:     ${new Date(run.createdAt).toLocaleString()}\n`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(pc.red(`✖ Failed to get test run "${id}": ${msg}`));
+      process.exit(1);
+    }
+  });
+
+// Subcommand: delete
+testCommand
+  .command('delete <id>')
+  .description('Delete a test run and its associated findings and metrics')
+  .action(async (id: string) => {
+    try {
+      await apiClient.delete(`/api/v1/test-runs/${id}`);
+      // eslint-disable-next-line no-console
+      console.log(pc.green(`✔ Test Run [ID: ${id}] and associated records deleted successfully.`));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(pc.red(`✖ Failed to delete test run "${id}": ${msg}`));
+      process.exit(1);
+    }
+  });
+

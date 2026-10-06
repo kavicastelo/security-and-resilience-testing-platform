@@ -7,6 +7,7 @@ import {
   AlertOctagon,
   Scale,
   FileCode,
+  X,
 } from 'lucide-react';
 
 interface NavItem {
@@ -25,13 +26,21 @@ const navItems: NavItem[] = [
 ];
 
 export const Sidebar: React.FC = () => {
-  const { activeTab, setActiveTab } = useAppStore();
+  const { activeTab, setActiveTab, isMobileMenuOpen, setIsMobileMenuOpen } = useAppStore();
 
-  return (
-    <aside className="w-64 border-r border-border bg-card/30 flex flex-col justify-between p-4 h-[calc(100vh-4rem)]">
+  const renderNavContent = () => (
+    <>
       <div className="space-y-1">
-        <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Core Navigation
+        <div className="flex items-center justify-between px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <span>Core Navigation</span>
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="md:hidden p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent"
+            aria-label="Close Navigation"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
         <nav className="space-y-1">
           {navItems.map((item) => {
@@ -40,11 +49,14 @@ export const Sidebar: React.FC = () => {
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-all duration-150 ${
                   isActive
-                    ? 'bg-primary/15 text-blue-400 font-medium border border-primary/20'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                    ? 'bg-primary/15 text-blue-400 font-medium border border-primary/25 shadow-sm'
+                    : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
                 }`}
               >
                 <div className="flex items-center space-x-3">
@@ -62,7 +74,7 @@ export const Sidebar: React.FC = () => {
         </nav>
       </div>
 
-      <div className="p-3 rounded-lg bg-accent/40 border border-border/60 text-xs space-y-2">
+      <div className="p-3.5 rounded-xl bg-accent/40 border border-border/70 text-xs space-y-2">
         <div className="flex items-center space-x-2 text-foreground font-medium">
           <FileCode className="w-4 h-4 text-blue-400" />
           <span>Architecture Mode</span>
@@ -71,6 +83,28 @@ export const Sidebar: React.FC = () => {
           Modular monolith with isolated execution container boundaries. Local-first security QA laboratory.
         </p>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex w-64 border-r border-border bg-card/30 flex-col justify-between p-4 h-[calc(100vh-4rem)] sticky top-16 shrink-0">
+        {renderNavContent()}
+      </aside>
+
+      {/* Mobile Drawer Overlay */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-50 md:hidden flex animate-fade-in">
+          <div
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+          <aside className="relative w-72 bg-card border-r border-border p-4 flex flex-col justify-between z-10 shadow-2xl h-full">
+            {renderNavContent()}
+          </aside>
+        </div>
+      )}
+    </>
   );
 };

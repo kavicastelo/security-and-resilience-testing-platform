@@ -7,6 +7,7 @@ import { TargetsView } from './components/TargetsView.js';
 import { RunsView } from './components/RunsView.js';
 import { FindingsView } from './components/FindingsView.js';
 import { PoliciesView } from './components/PoliciesView.js';
+import { ToastNotification } from './components/ToastNotification.js';
 import { useAppStore } from './store/useAppStore.js';
 
 const queryClient = new QueryClient({
@@ -34,11 +35,11 @@ export const AppContent: React.FC = () => {
   }, [setActiveTab]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
+    <div className="min-h-screen flex flex-col bg-background text-foreground antialiased selection:bg-blue-600/30 selection:text-blue-200">
       <Header />
-      <div className="flex flex-1">
+      <div className="flex flex-1 relative">
         <Sidebar />
-        <main className="flex-1 p-8 overflow-y-auto">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
           {activeTab === 'overview' && <Overview />}
           {activeTab === 'targets' && <TargetsView />}
           {activeTab === 'runs' && <RunsView />}
@@ -46,6 +47,7 @@ export const AppContent: React.FC = () => {
           {activeTab === 'policies' && <PoliciesView />}
         </main>
       </div>
+      <ToastNotification />
     </div>
   );
 };

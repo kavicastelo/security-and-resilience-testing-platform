@@ -12,7 +12,12 @@ import {
   Info,
   Trash2,
   Tag,
+  Copy,
+  Terminal,
+  X,
 } from 'lucide-react';
+import { Pagination } from './Pagination.js';
+import { useAppStore } from '../store/useAppStore.js';
 
 interface Finding {
   id: string;
@@ -58,9 +63,19 @@ interface Evidence {
 export const FindingsView: React.FC = () => {
   const queryClient = useQueryClient();
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+  const { showToast } = useAppStore();
+
   const [selectedSeverity, setSelectedSeverity] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [expandedFindingId, setExpandedFindingId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(6);
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    showToast(`Copied ${label} to clipboard`, 'info');
+  };
 
   // 1. Fetch Findings
   const { data: findings = [], isLoading } = useQuery<Finding[]>({
@@ -87,8 +102,13 @@ export const FindingsView: React.FC = () => {
       if (!res.ok) throw new Error(json.error?.message || 'Failed to update finding status');
       return json.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['findings'] });
+      showToast(`Finding status updated to ${data.status}`);
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(msg, 'error');
     },
   });
 
@@ -104,6 +124,11 @@ export const FindingsView: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['findings'] });
+      showToast('Finding deleted', 'info');
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(msg, 'error');
     },
   });
 
@@ -129,18 +154,37 @@ export const FindingsView: React.FC = () => {
     info: findings.filter((f) => f.severity === 'info').length,
   };
 
+  const statusCounts = {
+    all: findings.length,
+    open: findings.filter((f) => !f.status || f.status === 'open').length,
+    resolved: findings.filter((f) => f.status === 'resolved').length,
+    false_positive: findings.filter((f) => f.status === 'false_positive').length,
+    risk_accepted: findings.filter((f) => f.status === 'risk_accepted').length,
+    suppressed: findings.filter((f) => f.status === 'suppressed').length,
+  };
+
   const filteredFindings = findings.filter((f) => {
     if (selectedSeverity !== 'all' && f.severity !== selectedSeverity) return false;
+    if (selectedStatus !== 'all') {
+      const s = f.status || 'open';
+      if (s !== selectedStatus) return false;
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const match =
         f.title.toLowerCase().includes(q) ||
         f.category.toLowerCase().includes(q) ||
-        f.description.toLowerCase().includes(q);
+        f.description.toLowerCase().includes(q) ||
+        f.fingerprint.toLowerCase().includes(q);
       if (!match) return false;
     }
     return true;
   });
+
+  const paginatedFindings = filteredFindings.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
 
   const getSeverityBadge = (severity: Finding['severity']) => {
     switch (severity) {
@@ -305,32 +349,86 @@ export const FindingsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search findings by title, category, or description..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
+      {/* Status Filter Tabs & Search Bar */}
+      <div className="space-y-3">
+        {/* Status Tabs */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border pb-2.5">
+          {(
+            [
+              { id: 'all', label: 'All Statuses', count: statusCounts.all },
+              { id: 'open', label: 'Open', count: statusCounts.open },
+              { id: 'resolved', label: 'Resolved', count: statusCounts.resolved },
+              { id: 'false_positive', label: 'False Positive', count: statusCounts.false_positive },
+              { id: 'risk_accepted', label: 'Risk Accepted', count: statusCounts.risk_accepted },
+              { id: 'suppressed', label: 'Suppressed', count: statusCounts.suppressed },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                setSelectedStatus(tab.id);
+                setCurrentPage(1);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                selectedStatus === tab.id
+                  ? 'bg-primary/15 text-blue-400 border border-primary/25 shadow-sm'
+                  : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+              }`}
+            >
+              <span>{tab.label}</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-accent text-foreground">
+                {tab.count}
+              </span>
+            </button>
+          ))}
         </div>
 
-        <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-muted-foreground" />
-          <select
-            value={selectedSeverity}
-            onChange={(e) => setSelectedSeverity(e.target.value)}
-            className="px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="all">All Severities</option>
-            <option value="critical">Critical Only</option>
-            <option value="high">High Only</option>
-            <option value="medium">Medium Only</option>
-            <option value="low">Low Only</option>
-          </select>
+        {/* Filter and Search Bar */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Search findings by title, category, fingerprint, or description..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full pl-9 pr-9 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-muted-foreground/60"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setCurrentPage(1);
+                }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
+            <select
+              value={selectedSeverity}
+              onChange={(e) => {
+                setSelectedSeverity(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="px-3 py-2 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="all">All Severities</option>
+              <option value="critical">Critical Only</option>
+              <option value="high">High Only</option>
+              <option value="medium">Medium Only</option>
+              <option value="low">Low Only</option>
+              <option value="info">Info Only</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -347,32 +445,44 @@ export const FindingsView: React.FC = () => {
             </p>
           </div>
         ) : (
-          filteredFindings.map((finding) => {
+          paginatedFindings.map((finding) => {
             const isExpanded = expandedFindingId === finding.id;
 
             return (
               <div
                 key={finding.id}
-                className="rounded-xl border border-border bg-card/40 overflow-hidden transition-all"
+                className="rounded-2xl border border-border bg-card/60 backdrop-blur-sm overflow-hidden transition-all hover:border-primary/40 shadow-sm"
               >
                 <div
                   onClick={() => setExpandedFindingId(isExpanded ? null : finding.id)}
-                  className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-accent/30"
+                  className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-accent/30 transition-colors"
                 >
                   <div className="flex items-start gap-3">
                     {isExpanded ? (
-                      <ChevronDown className="w-4 h-4 text-muted-foreground mt-1" />
+                      <ChevronDown className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
                     ) : (
-                      <ChevronRight className="w-4 h-4 text-muted-foreground mt-1" />
+                      <ChevronRight className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
                     )}
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         {getSeverityBadge(finding.severity)}
                         {getStatusBadge(finding.status)}
                         <span className="font-semibold text-sm text-foreground">{finding.title}</span>
-                        <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent text-muted-foreground">
+                        <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent text-muted-foreground border border-border/50">
                           {finding.category}
                         </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyToClipboard(finding.fingerprint, 'Fingerprint');
+                          }}
+                          title="Copy finding fingerprint"
+                          className="text-[10px] font-mono bg-accent/60 hover:bg-accent px-1.5 py-0.5 rounded text-muted-foreground flex items-center gap-1 transition-colors"
+                        >
+                          <span>{finding.fingerprint.slice(0, 10)}...</span>
+                          <Copy className="w-2.5 h-2.5" />
+                        </button>
                       </div>
                       <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
                         {finding.description}
@@ -390,12 +500,12 @@ export const FindingsView: React.FC = () => {
 
                 {/* Expanded Details & Forensics */}
                 {isExpanded && (
-                  <div className="p-5 border-t border-border bg-background/50 space-y-4">
+                  <div className="p-5 border-t border-border bg-background/50 space-y-4 animate-fade-in">
                     {/* Triage & Management Actions */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg bg-accent/40 border border-border/70 text-xs">
-                      <div className="flex items-center gap-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-accent/40 border border-border/70 text-xs">
+                      <div className="flex flex-wrap items-center gap-2.5">
                         <span className="text-muted-foreground font-medium flex items-center gap-1.5">
-                          <Tag className="w-3.5 h-3.5 text-blue-400" /> Triage Finding Status:
+                          <Tag className="w-3.5 h-3.5 text-blue-400" /> Triage Status:
                         </span>
                         <select
                           value={finding.status || 'open'}
@@ -404,7 +514,7 @@ export const FindingsView: React.FC = () => {
                             updateStatusMutation.mutate({ findingId: finding.id, status: e.target.value });
                           }}
                           disabled={updateStatusMutation.isPending}
-                          className="px-2.5 py-1 rounded bg-background border border-border text-foreground font-mono text-xs focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                          className="px-2.5 py-1 rounded-lg bg-background border border-border text-foreground font-mono text-xs focus:ring-1 focus:ring-blue-500 cursor-pointer"
                         >
                           <option value="open">Open</option>
                           <option value="resolved">Resolved / Fixed</option>
@@ -413,24 +523,40 @@ export const FindingsView: React.FC = () => {
                           <option value="suppressed">Suppressed</option>
                         </select>
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (window.confirm(`Are you sure you want to delete finding "${finding.title}"?`)) {
-                            deleteFindingMutation.mutate(finding.id);
-                          }
-                        }}
-                        disabled={deleteFindingMutation.isPending}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-950/30 hover:bg-rose-950/50 border border-rose-800/40 text-rose-400 hover:text-rose-300 transition-colors text-xs disabled:opacity-50"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete Finding</span>
-                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyToClipboard(`security-lab findings triage ${finding.id} --status resolved`, 'CLI triage command');
+                          }}
+                          title="Copy CLI command to triage finding"
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-accent hover:bg-accent/80 border border-border text-muted-foreground hover:text-foreground text-xs font-mono transition-colors"
+                        >
+                          <Terminal className="w-3.5 h-3.5 text-blue-400" />
+                          <span>CLI Triage</span>
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`Are you sure you want to delete finding "${finding.title}"?`)) {
+                              deleteFindingMutation.mutate(finding.id);
+                            }
+                          }}
+                          disabled={deleteFindingMutation.isPending}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-950/30 hover:bg-rose-950/50 border border-rose-800/40 text-rose-400 hover:text-rose-300 transition-colors text-xs disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Recommendation Card */}
                     {finding.recommendation && (
-                      <div className="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs space-y-1">
+                      <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs space-y-1">
                         <span className="font-semibold text-emerald-400 block">
                           Remediation Recommendation:
                         </span>
@@ -441,7 +567,7 @@ export const FindingsView: React.FC = () => {
                     )}
 
                     {/* Forensic Evidence Container */}
-                    <div className="p-4 rounded-lg bg-card border border-border/80 space-y-3">
+                    <div className="p-4 rounded-xl bg-card border border-border/80 space-y-3">
                       <div className="flex items-center justify-between border-b border-border/60 pb-2">
                         <div className="flex items-center gap-2">
                           <FileCheck className="w-4 h-4 text-blue-400" />
@@ -464,7 +590,7 @@ export const FindingsView: React.FC = () => {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono">
                             {/* Request */}
                             {evidence.request && (
-                              <div className="p-3 rounded bg-background/80 border border-border/60 space-y-1">
+                              <div className="p-3 rounded-lg bg-background/80 border border-border/60 space-y-1">
                                 <span className="text-muted-foreground text-[11px] block font-sans font-semibold">
                                   Captured Request:
                                 </span>
@@ -476,7 +602,7 @@ export const FindingsView: React.FC = () => {
 
                             {/* Response */}
                             {evidence.response && (
-                              <div className="p-3 rounded bg-background/80 border border-border/60 space-y-1">
+                              <div className="p-3 rounded-lg bg-background/80 border border-border/60 space-y-1">
                                 <span className="text-muted-foreground text-[11px] block font-sans font-semibold">
                                   Target Response:
                                 </span>
@@ -497,7 +623,7 @@ export const FindingsView: React.FC = () => {
                           {/* Expected vs Actual Box */}
                           {(evidence.expected !== undefined || evidence.actual !== undefined) && (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono text-xs">
-                              <div className="p-3 rounded bg-emerald-500/5 border border-emerald-500/20">
+                              <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
                                 <span className="text-emerald-400 text-[11px] block font-sans font-semibold mb-1">
                                   Expected State:
                                 </span>
@@ -507,7 +633,7 @@ export const FindingsView: React.FC = () => {
                                     : String(evidence.expected)}
                                 </div>
                               </div>
-                              <div className="p-3 rounded bg-rose-500/5 border border-rose-500/20">
+                              <div className="p-3 rounded-lg bg-rose-500/5 border border-rose-500/20">
                                 <span className="text-rose-400 text-[11px] block font-sans font-semibold mb-1">
                                   Actual Target Behavior:
                                 </span>
@@ -532,6 +658,16 @@ export const FindingsView: React.FC = () => {
             );
           })
         )}
+
+        {/* Pagination component */}
+        <Pagination
+          currentPage={currentPage}
+          totalItems={filteredFindings.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          pageSizeOptions={[4, 6, 12, 20]}
+        />
       </div>
     </div>
   );
