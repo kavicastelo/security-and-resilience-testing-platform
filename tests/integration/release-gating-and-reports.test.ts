@@ -407,4 +407,244 @@ describe('Phase 5: Release Gating & Enterprise Reporting Pipeline', () => {
       expect(json.data[0].rules.length).toBeGreaterThan(0);
     });
   });
+
+  describe('4. Policy Engine v2 & Release Governance Pipeline', () => {
+    const baseTestPolicy: Policy = {
+      id: 'p-v2-test',
+      name: 'Policy v2 Governance Baseline',
+      description: 'Tests required profiles, waivers, and endpoint SLAs',
+      requiredProfiles: ['engine-native-tls', 'engine-native-authorization'],
+      rules: [
+        {
+          id: 'rule-zero-critical',
+          name: 'Zero Critical Vulnerabilities',
+          condition: {
+            maxAllowedSeverity: 'high',
+          },
+          action: 'block_release',
+        },
+      ],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    it('blocks release when a required test profile was omitted from execution', () => {
+      const result = evaluatePolicy(baseTestPolicy, [], [], {
+        executedProfiles: ['engine-native-headers'],
+      });
+
+      expect(result.passed).toBe(false);
+      expect(result.decision).toBe('failed');
+      const missingProfiles = result.violations.filter((v) => v.category === 'required_profile');
+      expect(missingProfiles.length).toBe(2);
+      expect(missingProfiles.some((v) => v.reason.includes('engine-native-tls'))).toBe(true);
+      expect(missingProfiles.some((v) => v.reason.includes('engine-native-authorization'))).toBe(true);
+    });
+
+    it('passes required profile check when all mandatory test profiles are executed', () => {
+      const result = evaluatePolicy(baseTestPolicy, [], [], {
+        executedProfiles: ['engine-native-tls', 'engine-native-authorization', 'engine-native-headers'],
+      });
+
+      const missingProfiles = result.violations.filter((v) => v.category === 'required_profile');
+      expect(missingProfiles.length).toBe(0);
+      expect(result.passed).toBe(true);
+    });
+
+    it('allows release when a critical finding is covered by a valid unexpired waiver', () => {
+      const critFinding: Finding = {
+        id: 'crit-1',
+        fingerprint: 'fp-sha256-critical-target-login',
+        title: 'Legacy SQL Injection on Migration Staging',
+        category: 'injection',
+        severity: 'critical',
+        confidence: 'certain',
+        status: 'open',
+        description: 'Vulnerability in legacy table slated for migration',
+        testDefinitionId: 'engine-native-contract',
+        testRunId: 'run-v2-1',
+        executionId: 'exec-v2-1',
+        targetId: 'tgt-v2-1',
+        firstDetectedAt: new Date(),
+        lastDetectedAt: new Date(),
+        metadata: {},
+      };
+
+      const policyWithValidWaiver: Policy = {
+        ...baseTestPolicy,
+        requiredProfiles: [],
+        waivers: [
+          {
+            fingerprint: 'fp-sha256-critical-target-login',
+            reason: 'Temporary waiver approved during active cloud migration window',
+            approvedBy: 'security-lead@company.internal',
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days in future
+          },
+        ],
+      };
+
+      const result = evaluatePolicy(policyWithValidWaiver, [critFinding], []);
+      expect(result.passed).toBe(true);
+      expect(result.decision).toBe('passed');
+      expect(result.waivedFindings.length).toBe(1);
+      expect(result.waivedFindings[0]?.fingerprint).toBe('fp-sha256-critical-target-login');
+      expect(result.waivedFindings[0]?.approvedBy).toBe('security-lead@company.internal');
+      expect(result.violations.length).toBe(0);
+    });
+
+    it('strictly blocks release when a finding waiver has expired', () => {
+      const critFinding: Finding = {
+        id: 'crit-2',
+        fingerprint: 'fp-sha256-expired-waiver-item',
+        title: 'Unpatched Remote Code Execution',
+        category: 'injection',
+        severity: 'critical',
+        confidence: 'certain',
+        status: 'open',
+        description: 'Previously waived issue whose time has expired',
+        testDefinitionId: 'engine-native-contract',
+        testRunId: 'run-v2-2',
+        executionId: 'exec-v2-2',
+        targetId: 'tgt-v2-2',
+        firstDetectedAt: new Date(),
+        lastDetectedAt: new Date(),
+        metadata: {},
+      };
+
+      const policyWithExpiredWaiver: Policy = {
+        ...baseTestPolicy,
+        requiredProfiles: [],
+        waivers: [
+          {
+            fingerprint: 'fp-sha256-expired-waiver-item',
+            reason: 'Expired exemption',
+            approvedBy: 'security-lead@company.internal',
+            expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000), // Expired 24 hours ago
+          },
+        ],
+      };
+
+      const result = evaluatePolicy(policyWithExpiredWaiver, [critFinding], []);
+      expect(result.passed).toBe(false);
+      expect(result.decision).toBe('failed');
+      expect(result.expiredWaivers.length).toBe(1);
+      expect(result.expiredWaivers[0]?.fingerprint).toBe('fp-sha256-expired-waiver-item');
+
+      const expiredViolation = result.violations.find((v) => v.ruleId === 'waiver-expired');
+      expect(expiredViolation).toBeDefined();
+      expect(expiredViolation?.action).toBe('block_release');
+      expect(expiredViolation?.category).toBe('waiver');
+
+      // Assert finding was also evaluated as active and violated zero-critical
+      const severityViolation = result.violations.find((v) => v.category === 'severity');
+      expect(severityViolation).toBeDefined();
+    });
+
+    it('enforces per-endpoint latency SLAs', () => {
+      const policyWithEndpointSlas: Policy = {
+        ...baseTestPolicy,
+        requiredProfiles: [],
+        rules: [
+          {
+            id: 'rule-endpoint-sla',
+            name: 'API Endpoint SLAs',
+            condition: {
+              endpointSlas: [
+                { path: '/api/v1/checkout', maxP95LatencyMs: 150 },
+                { path: '/api/v1/health', maxP95LatencyMs: 50 },
+              ],
+            },
+            action: 'block_release',
+          },
+        ],
+      };
+
+      const metrics = [
+        {
+          id: 'm-sla-1',
+          testRunId: 'r-1',
+          executionId: 'e-1',
+          name: 'http_req_duration_p95',
+          value: 230, // Breaches 150ms SLA
+          unit: 'ms',
+          tags: { path: '/api/v1/checkout' },
+          timestamp: new Date(),
+        },
+        {
+          id: 'm-sla-2',
+          testRunId: 'r-1',
+          executionId: 'e-1',
+          name: 'http_req_duration_p95',
+          value: 30, // Within 50ms SLA
+          unit: 'ms',
+          tags: { path: '/api/v1/health' },
+          timestamp: new Date(),
+        },
+      ];
+
+      const result = evaluatePolicy(policyWithEndpointSlas, [], metrics);
+      expect(result.passed).toBe(false);
+      expect(result.decision).toBe('failed');
+      const slaViolation = result.violations.find((v) => v.category === 'endpoint_sla');
+      expect(slaViolation).toBeDefined();
+      expect(slaViolation?.reason).toContain('/api/v1/checkout');
+      expect(slaViolation?.reason).toContain('230ms');
+    });
+
+    it('persists cryptographically sealed release records with evaluatorHash in PostgreSQL', async () => {
+      // 1. Create minimal project & test run for release gating evaluation
+      const { getDatabase } = await import('../../apps/controller/src/services/db.js');
+      const { sql } = getDatabase();
+
+      const [proj] = await sql`
+        INSERT INTO projects (name, description)
+        VALUES (${'Release Governance Sealed Audit ' + Date.now()}, 'Audit Trail Testing')
+        RETURNING id
+      `;
+      const [tgt] = await sql`
+        INSERT INTO targets (project_id, name, base_url, scope)
+        VALUES (${proj.id}, 'Audit Target', 'http://127.0.0.1:8080', '{"allowedHosts": ["127.0.0.1"]}'::jsonb)
+        RETURNING id
+      `;
+      const [tr] = await sql`
+        INSERT INTO test_runs (project_id, target_id, profile_id, status)
+        VALUES (${proj.id}, ${tgt.id}, 'native-class-a', 'completed')
+        RETURNING id
+      `;
+
+      // 2. Evaluate release gate via API
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/releases/evaluate',
+        payload: {
+          testRunId: tr.id,
+          name: 'v2.0.0-governance-audit',
+          version: '2.0.0',
+          gitCommit: '7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e',
+          gitBranch: 'main',
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.success).toBe(true);
+      expect(body.data.evaluatorHash).toBeDefined();
+      expect(body.data.evaluatorHash).toHaveLength(64); // Valid SHA-256 hex string
+
+      // 3. Verify PostgreSQL persistence of evaluator_hash and metadata
+      const [releaseRow] = await sql`
+        SELECT id, name, version, git_commit, git_branch, evaluator_hash, metadata
+        FROM releases
+        WHERE id = ${body.data.release.id}
+      `;
+
+      expect(releaseRow).toBeDefined();
+      expect(releaseRow.evaluator_hash).toBe(body.data.evaluatorHash);
+      expect(releaseRow.git_commit).toBe('7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e');
+      expect(releaseRow.metadata).toBeDefined();
+      expect(releaseRow.metadata.evaluatorHash).toBe(body.data.evaluatorHash);
+      expect(releaseRow.metadata.executedProfiles).toBeDefined();
+    });
+  });
 });
+

@@ -10,6 +10,7 @@ import { reportCommand } from './commands/report.js';
 import { gateCommand } from './commands/gate.js';
 import { policyCommand } from './commands/policy.js';
 import { findingsCommand } from './commands/findings.js';
+import { contractCommand } from './commands/contract.js';
 
 const program = new Command();
 
@@ -22,7 +23,7 @@ program
   .option('--format <format>', 'Output format (table, json, yaml, junit)', 'table')
   .option('--verbose', 'Enable verbose logging output', false);
 
-// Registered and implemented commands: version, project, target, test, scan, load, resilience, report, gate, policy, findings
+// Registered and implemented commands: version, project, target, test, scan, load, resilience, report, gate, policy, findings, contract
 program.addCommand(versionCommand);
 program.addCommand(projectCommand);
 program.addCommand(targetCommand);
@@ -39,6 +40,7 @@ program.addCommand(reportCommand);
 program.addCommand(gateCommand);
 program.addCommand(policyCommand);
 program.addCommand(findingsCommand);
+program.addCommand(contractCommand);
 
 program.parse(process.argv);
 

@@ -11,3 +11,5 @@ export * from './policy/index.js';
 export * from './security-contract/index.js';
 export * from './release/index.js';
 export * from './normalizers/index.js';
+export * from './authorization/index.js';
+export * from './openapi/index.js';

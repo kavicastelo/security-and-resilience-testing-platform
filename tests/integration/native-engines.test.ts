@@ -15,7 +15,7 @@ describe('Class A Native Test Engines & Declarative Runner Suite', () => {
   let serverUrl: string;
 
   // Mode flag for mock server responses
-  let mockMode: 'insecure' | 'secure' | 'custom_json' = 'insecure';
+  let mockMode: 'insecure' | 'secure' | 'custom_json' | 'workflow_api' = 'insecure';
 
   beforeAll(async () => {
     server = http.createServer((req, res) => {
@@ -68,6 +68,84 @@ describe('Class A Native Test Engines & Declarative Runner Suite', () => {
             data: { authenticated: false, scope: 'read_only' },
           }),
         );
+      } else if (mockMode === 'workflow_api') {
+        const parsedUrl = new URL(req.url || '/', `http://127.0.0.1:${serverPort}`);
+        const pathname = parsedUrl.pathname;
+
+        if (pathname === '/auth/login' && req.method === 'POST') {
+          let body = '';
+          req.on('data', (chunk) => {
+            body += chunk;
+          });
+          req.on('end', () => {
+            let jsonBody = {};
+            try {
+              jsonBody = JSON.parse(body);
+            } catch {
+              // Ignore parse error
+            }
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Set-Cookie': 'session_id=sess-998877; Path=/; HttpOnly',
+            });
+            res.end(
+              JSON.stringify({
+                token: 'jwt.mock.token.12345',
+                user: { id: 'usr-101', role: 'auditor' },
+                received: jsonBody,
+              }),
+            );
+          });
+          return;
+        }
+
+        if (pathname === '/api/profile' && req.method === 'GET') {
+          const auth = req.headers['authorization'];
+          const cookie = req.headers['cookie'];
+          if (auth === 'Bearer jwt.mock.token.12345' || cookie?.includes('session_id=sess-998877')) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                id: 'usr-101',
+                email: 'auditor@example.com',
+                role: 'auditor',
+                active: true,
+                authMethod: auth ? 'bearer' : 'cookie',
+              }),
+            );
+          } else {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Unauthorized' }));
+          }
+          return;
+        }
+
+        if (pathname === '/api/items/item-456' && req.method === 'GET') {
+          const view = parsedUrl.searchParams.get('view');
+          const includeAudit = parsedUrl.searchParams.get('includeAudit');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              id: 'item-456',
+              name: 'Secure Vault Item',
+              price: 99.95,
+              ownerId: 'usr-101',
+              view,
+              includeAudit: includeAudit === 'true',
+            }),
+          );
+          return;
+        }
+
+        if (pathname === '/api/failing-step') {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Server error' }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Not found' }));
+        return;
       }
     });
 
@@ -287,6 +365,261 @@ tests:
       expect(assertionFinding).toBeDefined();
       expect(assertionFinding?.severity).toBe('high');
       expect(assertionFinding?.evidence?.actual).toBe('operational');
+    });
+
+    it('executes multi-step chained workflow with variable extraction, pathParams, and query params', async () => {
+      mockMode = 'workflow_api';
+
+      const multiStepYaml = `
+id: multi-step-auth-workflow
+name: Multi-Step Chained Auth & Resource Access
+version: 2.0.0
+category: authentication
+tests:
+  - id: step-login
+    name: Login Step
+    path: /auth/login
+    method: POST
+    body:
+      username: admin
+      password: secure-password
+    expectedStatus: [200]
+    extract:
+      - field: body.token
+        as: authToken
+      - field: body.user.id
+        as: userId
+    assertions:
+      - field: body.token
+        operator: exists
+      - field: body.user.role
+        operator: equals
+        value: auditor
+
+  - id: step-profile
+    name: Fetch Profile Step
+    dependsOn: step-login
+    path: /api/profile
+    method: GET
+    headers:
+      Authorization: Bearer \${authToken}
+    expectedStatus: 200
+    assertions:
+      - field: body.id
+        operator: equals
+        value: \${userId}
+      - field: body.role
+        operator: equals
+        value: auditor
+      - field: body
+        operator: contains_json_path
+        value: email
+      - field: body.email
+        operator: schema_matches
+        value: string
+      - field: body.active
+        operator: schema_matches
+        value: boolean
+
+  - id: step-item
+    name: Fetch Resource with Path and Query Parameters
+    dependsOn: step-login
+    path: /api/items/{itemId}
+    method: GET
+    pathParams:
+      itemId: item-456
+    params:
+      view: full
+      includeAudit: true
+    headers:
+      Authorization: Bearer \${authToken}
+    expectedStatus: [200]
+    assertions:
+      - field: body.id
+        operator: equals
+        value: item-456
+      - field: body.ownerId
+        operator: equals
+        value: \${userId}
+      - field: body.view
+        operator: equals
+        value: full
+      - field: body.includeAudit
+        operator: schema_matches
+        value: boolean
+`;
+
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { yaml: multiStepYaml },
+        },
+        createDummyContext(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.findings.length).toBe(0);
+
+      const raw = result.rawOutput as {
+        extractedVariables: Record<string, unknown>;
+        assertionsPassed: number;
+        assertionsFailed: number;
+      };
+      expect(raw.extractedVariables['authToken']).toBe('jwt.mock.token.12345');
+      expect(raw.extractedVariables['userId']).toBe('usr-101');
+      expect(raw.assertionsPassed).toBeGreaterThanOrEqual(8);
+      expect(raw.assertionsFailed).toBe(0);
+    });
+
+    it('persists session cookies across chained requests in cookie jar', async () => {
+      mockMode = 'workflow_api';
+
+      const cookieJarYaml = `
+id: session-cookie-chain
+name: Cookie Jar Session Persistence Test
+version: 2.0.0
+category: cookies
+tests:
+  - id: login-set-cookie
+    name: Login and Receive Set-Cookie
+    path: /auth/login
+    method: POST
+    body:
+      username: cookie-user
+    expectedStatus: [200]
+
+  - id: access-with-cookie
+    name: Access Protected Profile via Automatic Cookie Jar
+    dependsOn: login-set-cookie
+    path: /api/profile
+    method: GET
+    expectedStatus: [200]
+    assertions:
+      - field: body.authMethod
+        operator: equals
+        value: cookie
+      - field: body.role
+        operator: equals
+        value: auditor
+`;
+
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { yaml: cookieJarYaml },
+        },
+        createDummyContext(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.findings.length).toBe(0);
+    });
+
+    it('skips dependent steps when predecessor in dependsOn fails', async () => {
+      mockMode = 'workflow_api';
+
+      const skipYaml = `
+id: skip-dependency-workflow
+name: Dependency Failure Skip Test
+version: 2.0.0
+category: api_schema
+tests:
+  - id: step-should-fail
+    name: Endpoint That Fails
+    path: /api/failing-step
+    method: GET
+    expectedStatus: [200] # Server returns 500, causing this step to fail
+
+  - id: step-dependent
+    name: Dependent Step That Must Be Skipped
+    dependsOn: step-should-fail
+    path: /api/profile
+    method: GET
+    expectedStatus: [200]
+`;
+
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { yaml: skipYaml },
+        },
+        createDummyContext(),
+      );
+
+      expect(result.success).toBe(false);
+      const skippedFinding = result.findings.find((f) => f.title.includes('Step Skipped'));
+      expect(skippedFinding).toBeDefined();
+      expect(skippedFinding?.severity).toBe('info');
+      expect(skippedFinding?.description).toContain('prerequisite dependency "step-should-fail" did not pass');
+    });
+
+    it('evaluates advanced assertion operators (contains_json_path, not_contains_json_path, schema_matches)', async () => {
+      mockMode = 'custom_json';
+
+      const advancedAssertionsYaml = `
+id: advanced-operators-test
+name: Advanced Operators Verification
+version: 2.0.0
+category: api_schema
+tests:
+  - id: test-operators
+    name: Verify Advanced Operators
+    path: /
+    method: GET
+    assertions:
+      - field: body
+        operator: contains_json_path
+        value: data.scope
+      - field: body
+        operator: not_contains_json_path
+        value: sensitive_admin_token
+      - field: body.version
+        operator: schema_matches
+        value: string
+      - field: body.data.authenticated
+        operator: schema_matches
+        value: boolean
+`;
+
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { yaml: advancedAssertionsYaml },
+        },
+        createDummyContext(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.findings.length).toBe(0);
+    });
+
+    it('blocks dynamically interpolated URLs targeting out-of-scope destinations', async () => {
+      const ssrfAttackYaml = `
+id: ssrf-interpolated-escape
+name: SSRF Interpolation Escape Check
+version: 2.0.0
+category: http_security
+inputs:
+  evilHost: "http://169.254.169.254/latest/meta-data"
+tests:
+  - id: step-ssrf
+    name: SSRF Probe via Interpolated URL
+    path: \${evilHost}
+    method: GET
+`;
+
+      const result = await engine.execute(
+        {
+          targetUrl: serverUrl,
+          options: { yaml: ssrfAttackYaml },
+        },
+        createDummyContext(),
+      );
+
+      expect(result.success).toBe(false);
+      const boundaryViolation = result.findings.find((f) => f.title.includes('Security Boundary Violation'));
+      expect(boundaryViolation).toBeDefined();
+      expect(boundaryViolation?.severity).toBe('critical');
     });
   });
 });

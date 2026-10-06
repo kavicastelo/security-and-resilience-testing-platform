@@ -8,6 +8,9 @@ import { RateLimitResilienceEngine } from './engines/rate-limit.engine.js';
 import { ZapScannerEngine } from './engines/zap.engine.js';
 import { TrivyScannerEngine } from './engines/trivy.engine.js';
 import { K6ResilienceEngine } from './engines/k6.engine.js';
+import { AuthenticationSecurityEngine } from './engines/authentication.engine.js';
+import { AuthorizationSecurityEngine } from './engines/authorization.engine.js';
+import { SecurityContractEngine } from './engines/contract.engine.js';
 
 export interface EngineRegistrationMetadata {
   executionClass?: EngineExecutionClass;
@@ -188,6 +191,9 @@ export function createDefaultEngineRegistry(): EngineRegistry {
   registry.register(new ZapScannerEngine());
   registry.register(new TrivyScannerEngine());
   registry.register(new K6ResilienceEngine());
+  registry.register(new AuthenticationSecurityEngine());
+  registry.register(new AuthorizationSecurityEngine());
+  registry.register(new SecurityContractEngine());
   return registry;
 }
 

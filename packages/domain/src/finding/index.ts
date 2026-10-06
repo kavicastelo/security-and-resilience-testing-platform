@@ -23,8 +23,10 @@ export const FindingStatusSchema = z.enum([
   'acknowledged',
   'in_progress',
   'resolved',
+  'regressed',
   'false_positive',
   'accepted_risk',
+  'ignored',
 ]);
 
 export type FindingStatus = z.infer<typeof FindingStatusSchema>;
@@ -46,6 +48,8 @@ export const FindingSchema = z.object({
   targetId: z.string().uuid(),
   releaseId: z.string().uuid().optional(),
   evidenceId: z.string().uuid().optional(),
+  occurrenceCount: z.number().int().default(1),
+  fixedInRunId: z.string().uuid().optional(),
   firstDetectedAt: z.date(),
   lastDetectedAt: z.date(),
   fixedAt: z.date().optional(),

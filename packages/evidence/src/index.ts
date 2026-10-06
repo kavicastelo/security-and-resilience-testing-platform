@@ -25,12 +25,16 @@ export interface CreateEvidenceParams {
   gitCommit?: string;
 }
 
+import { canonicalizeJson } from './canonical-json.js';
+
+export * from './canonical-json.js';
+
 /**
  * Computes a deterministic SHA-256 fingerprint of the evidence payload
- * to guarantee forensic integrity and tamper detection.
+ * to guarantee forensic integrity and tamper detection using RFC 8785 Canonical JSON.
  */
 export function computeEvidenceHash(payload: Omit<Evidence, 'immutableHash'>): string {
-  const canonicalString = JSON.stringify({
+  const canonicalString = canonicalizeJson({
     testRunId: payload.testRunId,
     executionId: payload.executionId,
     request: payload.request,
@@ -38,7 +42,7 @@ export function computeEvidenceHash(payload: Omit<Evidence, 'immutableHash'>): s
     expected: payload.expected,
     actual: payload.actual,
     environment: payload.environment,
-    timestamp: payload.timestamp.toISOString(),
+    timestamp: payload.timestamp instanceof Date ? payload.timestamp.toISOString() : payload.timestamp,
     applicationVersion: payload.applicationVersion,
     gitCommit: payload.gitCommit,
   });

@@ -1,0 +1,110 @@
+# Example: Multi-Step Chained Workflow & Authentication (DSL v2)
+# Demonstrates request body payloads, variable extraction, chained headers, path parameters, and query parameters.
+
+id: test-def-api-login-access-002
+name: Authenticated User Profile & Protected Resource Access
+version: 2.0.0
+category: authentication
+description: Performs multi-step authentication, captures JWT bearer token, and validates access to protected user resources.
+
+target:
+  endpoint: /
+  requiredCapabilities:
+    - protocol_audit
+
+inputs:
+  expectedRole: user
+  testItemId: item-456
+
+authentication:
+  type: none # Custom auth flow demonstrated in tests
+
+tests:
+  # Step 1: Authenticate via POST with JSON body and extract authToken
+  - id: step-auth-login
+    name: User Authentication Flow
+    description: Authenticates with user credentials and extracts JWT bearer token from response body
+    path: /auth/login
+    method: POST
+    headers:
+      Content-Type: application/json
+    body:
+      username: security-tester
+      password: "SamplePassword123!"
+    expectedStatus: [200, 201]
+    extract:
+      - field: body.token
+        as: authToken
+      - field: body.user.id
+        as: authUserId
+      - field: headers.set-cookie
+        as: sessionCookie
+    assertions:
+      - field: body.token
+        operator: exists
+        severity: critical
+        message: Login response must include authentication token.
+      - field: body.token
+        operator: matches_regex
+        value: "^[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+$"
+        severity: high
+        message: Token must match JWT three-part structure.
+
+  # Step 2: Access protected profile using extracted authToken
+  - id: step-get-profile
+    name: Retrieve Protected User Profile
+    description: Validates access to /api/profile using Bearer token extracted from login step
+    dependsOn: step-auth-login
+    path: /api/profile
+    method: GET
+    headers:
+      Authorization: Bearer ${authToken}
+    expectedStatus: [200]
+    assertions:
+      - field: status
+        operator: equals
+        value: 200
+      - field: body.role
+        operator: equals
+        value: ${expectedRole}
+        severity: medium
+      - field: body
+        operator: contains_json_path
+        value: email
+        severity: medium
+      - field: body.email
+        operator: schema_matches
+        value: string
+        severity: low
+
+  # Step 3: Access resource with path parameters and query parameters
+  - id: step-get-item-details
+    name: Access Resource with Path and Query Parameters
+    description: Tests path templating and query parameter substitution
+    dependsOn: step-auth-login
+    path: /api/items/{itemId}
+    method: GET
+    pathParams:
+      itemId: ${testItemId}
+    params:
+      view: full
+      includeAudit: true
+    headers:
+      Authorization: Bearer ${authToken}
+    expectedStatus: [200]
+    assertions:
+      - field: body.id
+        operator: equals
+        value: ${testItemId}
+        severity: medium
+      - field: body.error
+        operator: does_not_exist
+        severity: high
+
+thresholds:
+  maxAllowedFindings:
+    critical: 0
+    high: 0
+    medium: 1
+    low: 5
+    info: 20

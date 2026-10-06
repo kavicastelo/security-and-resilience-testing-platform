@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildApp } from '../../apps/controller/src/app/index.js';
-import { closeDatabase, checkDatabaseHealth } from '../../apps/controller/src/services/db.js';
+import { closeDatabase, checkDatabaseHealth, getDatabase } from '../../apps/controller/src/services/db.js';
+import { findingsService } from '../../apps/controller/src/services/findings.service.js';
 import { FastifyInstance } from 'fastify';
 
 describe('Comprehensive Data CRUD Operations API', () => {
@@ -553,10 +554,71 @@ describe('Comprehensive Data CRUD Operations API', () => {
       });
 
       expect(res.statusCode).toBe(200);
+      const bodyData = JSON.parse(res.payload);
+      expect(bodyData.success).toBe(true);
+      expect(bodyData.data.status).toBe('resolved');
+      expect(bodyData.data.fixedAt).toBeDefined();
+    });
+
+    it('FILTER: GET /api/v1/findings?status=resolved filters by lifecycle status', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/findings?status=resolved',
+      });
+
+      expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.success).toBe(true);
-      expect(body.data.status).toBe('resolved');
-      expect(body.data.fixedAt).toBeDefined();
+      expect(Array.isArray(body.data)).toBe(true);
+      for (const f of body.data) {
+        expect(f.status).toBe('resolved');
+      }
+    });
+
+    it('LIFECYCLE: Re-detecting a resolved finding transitions it to regressed', async () => {
+      if (!findingId) return;
+
+      const findingBefore = await findingsService.getFindingById(findingId);
+      if (!findingBefore) return;
+
+      const regressedFinding = await findingsService.saveFinding({
+        fingerprint: findingBefore.fingerprint,
+        title: findingBefore.title,
+        category: findingBefore.category,
+        severity: findingBefore.severity,
+        description: 'Vulnerability reappeared in build',
+        testDefinitionId: findingBefore.testDefinitionId,
+        testRunId,
+        executionId: findingBefore.executionId,
+        targetId,
+      });
+
+      expect(regressedFinding.id).toBe(findingBefore.id);
+      expect(regressedFinding.status).toBe('regressed');
+      expect(regressedFinding.occurrenceCount).toBeGreaterThanOrEqual(2);
+      expect(regressedFinding.fixedAt).toBeUndefined();
+    });
+
+    it('LIFECYCLE: Deduplication updates lastDetectedAt and increments occurrenceCount for recurring findings', async () => {
+      if (!findingId) return;
+
+      const current = await findingsService.getFindingById(findingId);
+      if (!current) return;
+
+      const recurringFinding = await findingsService.saveFinding({
+        fingerprint: current.fingerprint,
+        title: current.title,
+        category: current.category,
+        severity: current.severity,
+        description: 'Still present',
+        testDefinitionId: current.testDefinitionId,
+        testRunId,
+        executionId: current.executionId,
+        targetId,
+      });
+
+      expect(recurringFinding.id).toBe(current.id);
+      expect(recurringFinding.occurrenceCount).toBe(current.occurrenceCount + 1);
     });
 
     it('CREATE: POST /api/v1/releases/evaluate records release gate evaluation', async () => {
@@ -625,4 +687,83 @@ describe('Comprehensive Data CRUD Operations API', () => {
       expect(getRes.statusCode).toBe(404);
     });
   });
+
+  // ==========================================
+  // 5. Evidence Forensic Immutability Trigger
+  // ==========================================
+  describe('Evidence Forensic Immutability Trigger', () => {
+    it('strictly forbids UPDATE and DELETE operations on evidence_records via PostgreSQL trigger', async () => {
+      const { sql } = getDatabase();
+
+      const projectName = `Evidence Forensic Immutability Project ${Date.now()}`;
+      const [proj] = await sql`
+        INSERT INTO projects (name, description)
+        VALUES (${projectName}, 'Validating append-only trigger')
+        RETURNING id
+      `;
+      const [tgt] = await sql`
+        INSERT INTO targets (project_id, name, base_url, scope)
+        VALUES (${proj.id}, 'Forensic Target', 'http://127.0.0.1:8080', '{"allowedHosts": ["127.0.0.1"]}'::jsonb)
+        RETURNING id
+      `;
+      const [tr] = await sql`
+        INSERT INTO test_runs (project_id, target_id, profile_id, status)
+        VALUES (${proj.id}, ${tgt.id}, 'default', 'completed')
+        RETURNING id
+      `;
+      const [exec] = await sql`
+        INSERT INTO test_executions (test_run_id, engine_id, status)
+        VALUES (${tr.id}, 'engine-native-contract', 'completed')
+        RETURNING id
+      `;
+
+      // 2. Insert fresh evidence record
+      const [ev] = await sql`
+        INSERT INTO evidence_records (
+          test_run_id,
+          execution_id,
+          request,
+          response,
+          immutable_hash
+        ) VALUES (
+          ${tr.id},
+          ${exec.id},
+          '{"url": "http://127.0.0.1:8080/api/users"}'::jsonb,
+          '{"statusCode": 200}'::jsonb,
+          'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+        )
+        RETURNING id
+      `;
+
+      // 3. Attempting to UPDATE the evidence record must fail with EVIDENCE_TAMPER_PROTECTION
+      let updateError: unknown = null;
+      try {
+        await sql`
+          UPDATE evidence_records
+          SET immutable_hash = '0000000000000000000000000000000000000000000000000000000000000000'
+          WHERE id = ${ev.id}
+        `;
+      } catch (err) {
+        updateError = err;
+      }
+
+      expect(updateError).toBeDefined();
+      expect(String(updateError)).toContain('EVIDENCE_TAMPER_PROTECTION');
+
+      // 4. Attempting to direct DELETE the evidence record must fail with EVIDENCE_TAMPER_PROTECTION
+      let deleteError: unknown = null;
+      try {
+        await sql`
+          DELETE FROM evidence_records
+          WHERE id = ${ev.id}
+        `;
+      } catch (err) {
+        deleteError = err;
+      }
+
+      expect(deleteError).toBeDefined();
+      expect(String(deleteError)).toContain('EVIDENCE_TAMPER_PROTECTION');
+    });
+  });
 });
+

@@ -1,0 +1,23 @@
+openapi: 3.0.3
+info:
+  title: Flawed API Example
+  version: 1.0.0
+servers:
+  - url: http://insecure.production.example.com
+paths:
+  /api/v1/data:
+    get:
+      summary: Get data
+      parameters:
+        - name: secret_token
+          in: query
+          required: true
+      responses:
+        '200':
+          description: OK
+  /api/v1/delete-all:
+    delete:
+      summary: Unprotected delete operation
+      responses:
+        '200':
+          description: OK

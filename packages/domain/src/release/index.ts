@@ -20,6 +20,8 @@ export const ReleaseSchema = z.object({
   policyId: z.string().optional(),
   decision: ReleaseGateDecisionSchema.default('warning'),
   reason: z.string().optional(),
+  evaluatorHash: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional().default({}),
   evaluatedAt: z.date().optional(),
   createdAt: z.date(),
   updatedAt: z.date(),

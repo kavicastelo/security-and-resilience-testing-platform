@@ -1,0 +1,68 @@
+openapi: 3.0.3
+info:
+  title: Petstore Security Contract Sample
+  version: 1.0.0
+  description: Example OpenAPI specification illustrating contract audit rules and schema fuzzing.
+servers:
+  - url: https://api.petstore.example.com/v1
+    description: Production secure endpoint
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKeyHeader:
+      type: apiKey
+      name: X-API-KEY
+      in: header
+  schemas:
+    PetInput:
+      type: object
+      required:
+        - name
+        - category
+      properties:
+        name:
+          type: string
+        category:
+          type: string
+        age:
+          type: integer
+        isVaccinated:
+          type: boolean
+paths:
+  /pets:
+    get:
+      summary: List all pets
+      security:
+        - apiKeyHeader: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: A paged array of pets
+    post:
+      summary: Create a pet
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PetInput'
+      responses:
+        '201':
+          description: Pet created
+  /health:
+    get:
+      summary: Service health check
+      security: []
+      responses:
+        '200':
+          description: Service is healthy

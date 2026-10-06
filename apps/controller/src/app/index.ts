@@ -13,6 +13,7 @@ import { findingsRoutes } from '../routes/findings.js';
 import { reportsRoutes } from '../routes/reports.js';
 import { releasesRoutes } from '../routes/releases.js';
 import { policiesRoutes } from '../routes/policies.js';
+import { contractsRoutes } from '../routes/contracts.js';
 import { logger } from '@security-lab/logger';
 
 export interface BuildAppOptions {
@@ -76,6 +77,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(reportsRoutes);
   app.register(releasesRoutes);
   app.register(policiesRoutes);
+  app.register(contractsRoutes);
 
   return app;
 }

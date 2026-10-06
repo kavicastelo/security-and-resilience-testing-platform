@@ -1,4 +1,5 @@
 import { SingleTestSpec } from './index.js';
+import { extractFieldValue } from './interpolator.js';
 
 export type AssertionSpec = SingleTestSpec['assertions'][number];
 
@@ -11,25 +12,52 @@ export interface AssertionEvaluationResult {
   message?: string;
 }
 
+export { extractFieldValue };
+
 /**
- * Extracts a nested field value from a target object using dot notation (e.g. "headers.content-type" or "status").
+ * Validates whether a value matches a simple schema or type name.
  */
-export function extractFieldValue(data: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.');
-  let current: unknown = data;
-
-  for (const part of parts) {
-    if (current === null || current === undefined || typeof current !== 'object') {
-      return undefined;
+function matchesTypeOrSchema(val: unknown, schema: unknown): boolean {
+  if (typeof schema === 'string') {
+    const type = schema.trim().toLowerCase();
+    switch (type) {
+      case 'string':
+        return typeof val === 'string';
+      case 'number':
+        return typeof val === 'number' && !isNaN(val);
+      case 'integer':
+      case 'int':
+        return typeof val === 'number' && Number.isInteger(val);
+      case 'boolean':
+      case 'bool':
+        return typeof val === 'boolean';
+      case 'array':
+        return Array.isArray(val);
+      case 'object':
+        return typeof val === 'object' && val !== null && !Array.isArray(val);
+      case 'null':
+        return val === null;
+      case 'date':
+        return typeof val === 'string' && !isNaN(Date.parse(val));
+      default:
+        return false;
     }
-
-    // Case-insensitive match for headers
-    const obj = current as Record<string, unknown>;
-    const matchingKey = Object.keys(obj).find((k) => k.toLowerCase() === part.toLowerCase());
-    current = matchingKey ? obj[matchingKey] : obj[part];
   }
 
-  return current;
+  if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
+    if (val === null || val === undefined || typeof val !== 'object') {
+      return false;
+    }
+    const valObj = val as Record<string, unknown>;
+    for (const [prop, expectedType] of Object.entries(schema as Record<string, unknown>)) {
+      if (!matchesTypeOrSchema(valObj[prop], expectedType)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -84,6 +112,30 @@ export function evaluateAssertion(assertion: AssertionSpec, actualValue: unknown
       }
       break;
 
+    case 'contains_json_path': {
+      if (expectedValue !== undefined && expectedValue !== null) {
+        const nestedVal = extractFieldValue(actualValue, String(expectedValue));
+        passed = nestedVal !== undefined && nestedVal !== null;
+      } else {
+        passed = actualValue !== undefined && actualValue !== null;
+      }
+      break;
+    }
+
+    case 'not_contains_json_path': {
+      if (expectedValue !== undefined && expectedValue !== null) {
+        const nestedVal = extractFieldValue(actualValue, String(expectedValue));
+        passed = nestedVal === undefined || nestedVal === null;
+      } else {
+        passed = actualValue === undefined || actualValue === null;
+      }
+      break;
+    }
+
+    case 'schema_matches':
+      passed = matchesTypeOrSchema(actualValue, expectedValue);
+      break;
+
     default:
       passed = false;
   }
@@ -94,6 +146,8 @@ export function evaluateAssertion(assertion: AssertionSpec, actualValue: unknown
     field,
     expected: expectedValue,
     actual: actualValue,
-    message: passed ? undefined : message || `Assertion failed: [${field}] ${operator} "${expectedValue}" (actual: "${actualValue}")`,
+    message: passed
+      ? undefined
+      : message || `Assertion failed: [${field}] ${operator} "${expectedValue}" (actual: "${actualValue}")`,
   };
 }

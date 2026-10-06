@@ -1,12 +1,14 @@
 import { eq } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { policies } from './db/schema.js';
-import { Policy, PolicyRule } from '@security-lab/domain';
+import { Policy, PolicyRule, PolicyWaiver } from '@security-lab/domain';
 
 export const ENTERPRISE_DEFAULT_POLICY: Policy = {
   id: '00000000-0000-0000-0000-000000000001',
   name: 'Enterprise Security Baseline Gate',
   description: 'Strict baseline policy enforcing zero critical vulnerabilities, limited high/medium findings, and P95 latency SLA compliance',
+  requiredProfiles: [],
+  waivers: [],
   rules: [
     {
       id: 'rule-zero-critical',
@@ -47,6 +49,8 @@ export interface CreatePolicyInput {
   name: string;
   description?: string;
   rules: PolicyRule[];
+  requiredProfiles?: string[];
+  waivers?: PolicyWaiver[];
   isDefault?: boolean;
 }
 
@@ -61,6 +65,8 @@ export class PoliciesService {
         name: input.name,
         description: input.description,
         rules: input.rules,
+        requiredProfiles: input.requiredProfiles || [],
+        waivers: input.waivers || [],
         isDefault: input.isDefault ?? false,
       })
       .returning();
@@ -74,6 +80,8 @@ export class PoliciesService {
       name: row.name,
       description: row.description || undefined,
       rules: row.rules as PolicyRule[],
+      requiredProfiles: (row.requiredProfiles as string[]) || [],
+      waivers: (row.waivers as PolicyWaiver[]) || [],
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -92,6 +100,8 @@ export class PoliciesService {
       name: r.name,
       description: r.description || undefined,
       rules: r.rules as PolicyRule[],
+      requiredProfiles: (r.requiredProfiles as string[]) || [],
+      waivers: (r.waivers as PolicyWaiver[]) || [],
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     }));
@@ -107,6 +117,8 @@ export class PoliciesService {
         name: row.name,
         description: row.description || undefined,
         rules: row.rules as PolicyRule[],
+        requiredProfiles: (row.requiredProfiles as string[]) || [],
+        waivers: (row.waivers as PolicyWaiver[]) || [],
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       };
@@ -129,6 +141,8 @@ export class PoliciesService {
         name: row.name,
         description: row.description || undefined,
         rules: row.rules as PolicyRule[],
+        requiredProfiles: (row.requiredProfiles as string[]) || [],
+        waivers: (row.waivers as PolicyWaiver[]) || [],
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       };
@@ -143,6 +157,8 @@ export class PoliciesService {
           name: ENTERPRISE_DEFAULT_POLICY.name,
           description: ENTERPRISE_DEFAULT_POLICY.description,
           rules: ENTERPRISE_DEFAULT_POLICY.rules,
+          requiredProfiles: ENTERPRISE_DEFAULT_POLICY.requiredProfiles || [],
+          waivers: ENTERPRISE_DEFAULT_POLICY.waivers || [],
           isDefault: true,
         })
         .onConflictDoNothing()
@@ -154,6 +170,8 @@ export class PoliciesService {
           name: inserted.name,
           description: inserted.description || undefined,
           rules: inserted.rules as PolicyRule[],
+          requiredProfiles: (inserted.requiredProfiles as string[]) || [],
+          waivers: (inserted.waivers as PolicyWaiver[]) || [],
           createdAt: inserted.createdAt,
           updatedAt: inserted.updatedAt,
         };
@@ -169,6 +187,8 @@ export class PoliciesService {
         name: seeded.name,
         description: seeded.description || undefined,
         rules: seeded.rules as PolicyRule[],
+        requiredProfiles: (seeded.requiredProfiles as string[]) || [],
+        waivers: (seeded.waivers as PolicyWaiver[]) || [],
         createdAt: seeded.createdAt,
         updatedAt: seeded.updatedAt,
       };
@@ -183,6 +203,8 @@ export class PoliciesService {
       name?: string;
       description?: string;
       rules?: PolicyRule[];
+      requiredProfiles?: string[];
+      waivers?: PolicyWaiver[];
     },
   ): Promise<Policy | null> {
     const { db } = getDatabase();
@@ -196,6 +218,8 @@ export class PoliciesService {
     if (input.name !== undefined) updateValues.name = input.name;
     if (input.description !== undefined) updateValues.description = input.description;
     if (input.rules !== undefined) updateValues.rules = input.rules;
+    if (input.requiredProfiles !== undefined) updateValues.requiredProfiles = input.requiredProfiles;
+    if (input.waivers !== undefined) updateValues.waivers = input.waivers;
 
     const [updated] = await db
       .update(policies)
@@ -210,6 +234,8 @@ export class PoliciesService {
       name: updated.name,
       description: updated.description || undefined,
       rules: updated.rules as PolicyRule[],
+      requiredProfiles: (updated.requiredProfiles as string[]) || [],
+      waivers: (updated.waivers as PolicyWaiver[]) || [],
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
     };

@@ -4,7 +4,11 @@ import { getDatabase } from './db.js';
 import { testExecutions } from './db/schema.js';
 import { testRunsService } from './test-runs.service.js';
 import { targetsService } from './targets.service.js';
-import { findingsService } from './findings.service.js';
+import {
+  findingsService,
+  computeHardenedFindingFingerprint,
+  extractFindingComponents,
+} from './findings.service.js';
 import { evidenceService } from './evidence.service.js';
 import { metricsService } from './metrics.service.js';
 import {
@@ -280,10 +284,22 @@ export class TestRunnerService {
 
         // Process findings and immutable forensic evidence
         for (const rawFinding of result.findings) {
-          const fingerprint = crypto
-            .createHash('sha256')
-            .update(`${engine.id}:${target.id}:${rawFinding.title}:${rawFinding.category}:${rawFinding.severity}`)
-            .digest('hex');
+          const { ruleOrCweId, endpointPath, parameterName } = extractFindingComponents({
+            category: rawFinding.category,
+            title: rawFinding.title,
+            location: (rawFinding as { location?: string }).location,
+            evidence: rawFinding.evidence as { request?: { url?: string } } | undefined,
+            metadata: rawFinding.metadata,
+          });
+
+          const fingerprint = computeHardenedFindingFingerprint({
+            targetId: target.id,
+            engineId: engine.id,
+            category: rawFinding.category,
+            ruleOrCweId,
+            endpointPath,
+            parameterName,
+          });
 
           let evidenceId: string | undefined;
 
@@ -389,7 +405,26 @@ export class TestRunnerService {
       }
     }
 
-    // 5. Aggregate Findings and Complete TestRun
+    // 5. Reconcile Findings (Transition unresolved findings to 'resolved' if not detected)
+    const isCancelled = abortSignal?.aborted;
+    if (!isCancelled) {
+      try {
+        const reconciliation = await findingsService.reconcileTestRunFindings(
+          testRunId,
+          target.id,
+          enginesToRun.map((e) => e.id),
+        );
+        if (reconciliation.resolvedCount > 0) {
+          runLogger.info(
+            `Finding reconciliation: ${reconciliation.resolvedCount} previously open findings resolved on target ${target.id}.`,
+          );
+        }
+      } catch (err: unknown) {
+        runLogger.warn({ err }, 'Finding reconciliation encountered an error');
+      }
+    }
+
+    // 6. Aggregate Findings and Complete TestRun
     const severityCounts: Record<FindingSeverity, number> = {
       critical: 0,
       high: 0,
@@ -410,7 +445,6 @@ export class TestRunnerService {
       findingsCount: severityCounts,
     };
 
-    const isCancelled = abortSignal?.aborted;
     const finalStatus = isCancelled
       ? 'cancelled'
       : severityCounts.critical > 0
