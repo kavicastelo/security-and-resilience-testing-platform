@@ -12,8 +12,45 @@ permissions:
   security-events: write
 
 jobs:
+  fast-standalone-gate:
+    name: Fast Standalone Security Gate (Class A Offline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build Packages & CLI
+        run: pnpm run build
+
+      - name: Run Standalone Security Lab Action
+        uses: ./.github/actions/security-lab
+        with:
+          config-file: .securitylab.yaml
+          sarif-output: reports/standalone-security-lab.sarif
+          fail-on: warning
+
+      - name: Upload Standalone SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: reports/standalone-security-lab.sarif
+          category: security-lab-standalone
+
   security-gate:
-    name: Security QA & Compliance Gate
+    name: Full Controller & Resilience Gate
     runs-on: ubuntu-latest
     services:
       postgres:

@@ -54,14 +54,17 @@ export interface CreatePolicyInput {
   isDefault?: boolean;
 }
 
+import { DEFAULT_TENANT_ID } from './tenants.service.js';
+
 export class PoliciesService {
-  async createPolicy(input: CreatePolicyInput): Promise<Policy> {
+  async createPolicy(input: CreatePolicyInput, tenantId?: string): Promise<Policy> {
     const { db } = getDatabase();
 
     const [row] = await db
       .insert(policies)
       .values({
         id: input.id,
+        tenantId: tenantId || DEFAULT_TENANT_ID,
         name: input.name,
         description: input.description,
         rules: input.rules,
@@ -87,9 +90,12 @@ export class PoliciesService {
     };
   }
 
-  async listPolicies(): Promise<Policy[]> {
+  async listPolicies(tenantId?: string): Promise<Policy[]> {
     const { db } = getDatabase();
-    const rows = await db.select().from(policies).orderBy(policies.createdAt);
+    const query = db.select().from(policies);
+    const rows = tenantId
+      ? await query.where(eq(policies.tenantId, tenantId)).orderBy(policies.createdAt)
+      : await query.orderBy(policies.createdAt);
 
     if (rows.length === 0) {
       return [ENTERPRISE_DEFAULT_POLICY];
@@ -239,6 +245,34 @@ export class PoliciesService {
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
     };
+  }
+
+  async addWaiver(policyId: string | undefined, waiver: PolicyWaiver): Promise<Policy> {
+    const targetPolicy = policyId ? await this.getPolicyById(policyId) : await this.getDefaultPolicy();
+    if (!targetPolicy) {
+      throw new Error(`Policy "${policyId}" not found`);
+    }
+
+    const existingWaivers = targetPolicy.waivers || [];
+    const updatedWaivers = [
+      ...existingWaivers.filter((w) => w.fingerprint !== waiver.fingerprint),
+      waiver,
+    ];
+
+    if (targetPolicy.id === ENTERPRISE_DEFAULT_POLICY.id) {
+      const cloned = await this.createPolicy({
+        name: 'Enterprise Security Gate (Active Waivers)',
+        description: 'Cloned from baseline policy with customized finding waivers',
+        rules: targetPolicy.rules,
+        requiredProfiles: targetPolicy.requiredProfiles,
+        waivers: updatedWaivers,
+        isDefault: true,
+      });
+      return cloned;
+    }
+
+    const updated = await this.updatePolicy(targetPolicy.id, { waivers: updatedWaivers });
+    return updated!;
   }
 
   async deletePolicy(id: string): Promise<boolean> {

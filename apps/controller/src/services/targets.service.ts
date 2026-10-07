@@ -10,8 +10,10 @@ import {
   ScopeCheckOptions,
 } from '@security-lab/domain';
 
+import { DEFAULT_TENANT_ID } from './tenants.service.js';
+
 export class TargetsService {
-  async createTarget(input: CreateTargetInput): Promise<Target> {
+  async createTarget(input: CreateTargetInput, tenantId?: string): Promise<Target> {
     const { db } = getDatabase();
 
     const scope: TargetScope = {
@@ -41,6 +43,7 @@ export class TargetsService {
     const [inserted] = await db
       .insert(targets)
       .values({
+        tenantId: tenantId || DEFAULT_TENANT_ID,
         projectId: input.projectId,
         name: input.name,
         baseUrl: input.baseUrl,
@@ -82,9 +85,12 @@ export class TargetsService {
     }));
   }
 
-  async listAllTargets(): Promise<Target[]> {
+  async listAllTargets(tenantId?: string): Promise<Target[]> {
     const { db } = getDatabase();
-    const rows = await db.select().from(targets).orderBy(targets.name);
+    const query = db.select().from(targets);
+    const rows = tenantId
+      ? await query.where(eq(targets.tenantId, tenantId)).orderBy(targets.name)
+      : await query.orderBy(targets.name);
     return rows.map((r) => ({
       id: r.id,
       projectId: r.projectId,

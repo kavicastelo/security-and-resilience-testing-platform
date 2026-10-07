@@ -7,11 +7,18 @@ import {
   generateJUnitXml,
   generateSarifReport,
   generateHtmlExecutiveReport,
+  generateCurlCommand,
   ReportInput,
 } from '@security-lab/contracts';
 import { evaluatePolicy } from '@security-lab/policy-engine';
 import { calculatePostureScore } from '@security-lab/scoring';
-import { Finding, TestRun, Policy } from '@security-lab/domain';
+import { Finding, TestRun, Policy, HttpRequestEvidence } from '@security-lab/domain';
+import { artifactStorageService } from '../../apps/controller/src/services/artifact-storage.service.js';
+import { reportsService } from '../../apps/controller/src/services/reports.service.js';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+
+
 
 describe('Phase 5: Release Gating & Enterprise Reporting Pipeline', () => {
   let app: FastifyInstance;
@@ -646,5 +653,370 @@ describe('Phase 5: Release Gating & Enterprise Reporting Pipeline', () => {
       expect(releaseRow.metadata.executedProfiles).toBeDefined();
     });
   });
+
+  describe('4. Phase 12: Enterprise Reporting, Artifact Management & Storage', () => {
+    it('generates reproducible, bash-compatible cURL commands from HttpRequestEvidence', () => {
+      const sampleRequest: HttpRequestEvidence = {
+        method: 'POST',
+        url: 'http://127.0.0.1:8080/api/v1/auth/login?debug=1',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': "Security-Lab's Agent",
+          Authorization: 'Bearer test-token-123',
+        },
+        body: JSON.stringify({
+          username: "admin' OR '1'='1",
+          password: 'SecretPassword123!',
+        }),
+      };
+
+      const curl = generateCurlCommand(sampleRequest);
+
+      // Verify command starts with curl -X POST
+      expect(curl).toContain("curl -X POST 'http://127.0.0.1:8080/api/v1/auth/login?debug=1'");
+      // Verify headers
+      expect(curl).toContain("-H 'Content-Type: application/json'");
+      expect(curl).toContain("-H 'Authorization: Bearer test-token-123'");
+      // Verify single quote escaping in header and body
+      expect(curl).toContain("Security-Lab'\\''s Agent");
+      expect(curl).toContain("admin'\\'' OR '\\''1'\\''='\\''1");
+      // Verify body data flag
+      expect(curl).toContain('--data-raw');
+
+      // Verify empty input handling
+      expect(generateCurlCommand(undefined)).toBe('');
+      expect(generateCurlCommand(null)).toBe('');
+    });
+
+    it('enforces strict path traversal prevention in ArtifactStorageService', async () => {
+      const fakeRunId = '44444444-4444-4444-4444-444444444444';
+
+      await expect(
+        artifactStorageService.storeArtifact({
+          testRunId: fakeRunId,
+          filename: '../escaped-artifact.txt',
+          content: 'malicious payload',
+        }),
+      ).rejects.toThrow(/Path traversal rejected/i);
+
+      await expect(
+        artifactStorageService.storeArtifact({
+          testRunId: fakeRunId,
+          filename: '..\\escaped-windows.txt',
+          content: 'malicious payload',
+        }),
+      ).rejects.toThrow(/Path traversal rejected/i);
+
+      await expect(
+        artifactStorageService.storeArtifact({
+          testRunId: fakeRunId,
+          filename: '/etc/passwd',
+          content: 'malicious payload',
+        }),
+      ).rejects.toThrow(/Path traversal rejected/i);
+
+      await expect(
+        artifactStorageService.storeArtifact({
+          testRunId: fakeRunId,
+          filename: 'nested/subfolder/file.txt',
+          content: 'malicious payload',
+        }),
+      ).rejects.toThrow(/Path traversal rejected/i);
+
+      await expect(
+        artifactStorageService.storeArtifact({
+          testRunId: fakeRunId,
+          filename: '%2e%2e%2fencoded-traversal.txt',
+          content: 'malicious payload',
+        }),
+      ).rejects.toThrow(/Path traversal rejected/i);
+    });
+
+    it('persists artifacts to disk, verifies SHA-256 hash, and detects file tampering', async () => {
+      const { getDatabase } = await import('../../apps/controller/src/services/db.js');
+      const { sql } = getDatabase();
+
+      // 1. Create target and test run in database
+      const [proj] = await sql`
+        INSERT INTO projects (name, description)
+        VALUES (${'Artifact Storage Test ' + Date.now()}, 'Testing artifact storage')
+        RETURNING id
+      `;
+      const [tgt] = await sql`
+        INSERT INTO targets (project_id, name, base_url, scope)
+        VALUES (${proj.id}, 'Artifact Target', 'http://127.0.0.1:8080', '{"allowedHosts": ["127.0.0.1"]}'::jsonb)
+        RETURNING id
+      `;
+      const [tr] = await sql`
+        INSERT INTO test_runs (project_id, target_id, profile_id, status)
+        VALUES (${proj.id}, ${tgt.id}, 'native-class-a', 'completed')
+        RETURNING id
+      `;
+
+      // 2. Store a raw scanner log artifact
+      const logContent = 'RAW_SCANNER_DUMP: ZAP active scan completed. 0 vulnerabilities found.';
+      const expectedSha256 = crypto.createHash('sha256').update(logContent).digest('hex');
+
+      const stored = await artifactStorageService.storeArtifact({
+        testRunId: tr.id,
+        filename: 'zap-scanner-output.log',
+        content: logContent,
+        mimeType: 'text/plain',
+        type: 'scanner_log',
+        metadata: { scanner: 'owasp-zap', durationSec: 14.5 },
+      });
+
+      expect(stored.id).toBeDefined();
+      expect(stored.name).toBe('zap-scanner-output.log');
+      expect(stored.sha256).toBe(expectedSha256);
+      expect(stored.sizeBytes).toBe(Buffer.byteLength(logContent));
+      expect(fs.existsSync(stored.storagePath)).toBe(true);
+
+      // 3. Retrieve and verify cryptographic authenticity
+      const retrieved = await artifactStorageService.getArtifact(stored.id);
+      expect(retrieved).not.toBeNull();
+      expect(retrieved?.artifact.sha256).toBe(expectedSha256);
+      expect(retrieved?.content.toString('utf-8')).toBe(logContent);
+
+      // 4. Test Tamper Detection: modify disk contents directly
+      fs.writeFileSync(stored.storagePath, 'TAMPERED_CONTENT_MALICIOUS_BYTE');
+      await expect(artifactStorageService.getArtifact(stored.id)).rejects.toThrow(
+        /Forensic integrity violation: SHA-256 mismatch/i,
+      );
+
+      // 5. Cleanup
+      await artifactStorageService.deleteArtifact(stored.id);
+      expect(fs.existsSync(stored.storagePath)).toBe(false);
+    });
+
+    it('calculates finding diffs (NEW, RECURRING, FIXED) across consecutive test runs', async () => {
+      const { getDatabase } = await import('../../apps/controller/src/services/db.js');
+      const { sql } = getDatabase();
+
+      // Setup Target
+      const [proj] = await sql`
+        INSERT INTO projects (name, description)
+        VALUES (${'Finding Diff Test ' + Date.now()}, 'Testing finding diff calculation')
+        RETURNING id
+      `;
+      const [tgt] = await sql`
+        INSERT INTO targets (project_id, name, base_url, scope)
+        VALUES (${proj.id}, 'Diff Target', 'http://127.0.0.1:8080', '{"allowedHosts": ["127.0.0.1"]}'::jsonb)
+        RETURNING id
+      `;
+
+      // Run 1: Detects Finding A (CSP) and Finding B (CORS)
+      const [tr1] = await sql`
+        INSERT INTO test_runs (project_id, target_id, profile_id, status, created_at)
+        VALUES (${proj.id}, ${tgt.id}, 'native-class-a', 'completed', NOW() - INTERVAL '1 hour')
+        RETURNING id
+      `;
+      const [exec1] = await sql`
+        INSERT INTO test_executions (test_run_id, engine_id, execution_class, status)
+        VALUES (${tr1.id}, 'engine-native-headers', 'class_a_native', 'completed')
+        RETURNING id
+      `;
+      await sql`
+        INSERT INTO findings (fingerprint, title, category, severity, status, description, test_definition_id, test_run_id, execution_id, target_id, occurrence_count)
+        VALUES 
+          ('fp-csp-1', 'Missing CSP', 'http_headers', 'high', 'open', 'CSP absent', 'engine-native-headers', ${tr1.id}, ${exec1.id}, ${tgt.id}, 1),
+          ('fp-cors-1', 'Insecure CORS', 'cors', 'medium', 'open', 'CORS wildcards', 'engine-native-headers', ${tr1.id}, ${exec1.id}, ${tgt.id}, 1)
+      `;
+
+      // Run 2: CSP is fixed (no longer detected, marked fixed_in_run_id = tr2), CORS is recurring, and TLS finding C is NEW
+      const [tr2] = await sql`
+        INSERT INTO test_runs (project_id, target_id, profile_id, status, created_at)
+        VALUES (${proj.id}, ${tgt.id}, 'native-class-a', 'completed', NOW())
+        RETURNING id
+      `;
+      const [exec2] = await sql`
+        INSERT INTO test_executions (test_run_id, engine_id, execution_class, status)
+        VALUES (${tr2.id}, 'engine-native-headers', 'class_a_native', 'completed')
+        RETURNING id
+      `;
+
+      // Finding A is marked fixed in Run 2
+      await sql`
+        UPDATE findings
+        SET status = 'resolved', fixed_in_run_id = ${tr2.id}, fixed_at = NOW()
+        WHERE fingerprint = 'fp-csp-1' AND target_id = ${tgt.id}
+      `;
+
+      // Current findings in Run 2: CORS (recurring) and TLS (new)
+      const run2Findings: Finding[] = [
+        {
+          id: 'f-cors-recurring',
+          fingerprint: 'fp-cors-1',
+          title: 'Insecure CORS',
+          category: 'cors',
+          severity: 'medium',
+          confidence: 'firm',
+          status: 'open',
+          description: 'CORS wildcards persist',
+          testDefinitionId: 'engine-native-headers',
+          testRunId: tr2.id,
+          executionId: exec2.id,
+          targetId: tgt.id,
+          occurrenceCount: 2,
+          firstDetectedAt: new Date(Date.now() - 3600000),
+          lastDetectedAt: new Date(),
+          metadata: {},
+        },
+        {
+          id: 'f-tls-new',
+          fingerprint: 'fp-tls-new-1',
+          title: 'Deprecated TLS 1.0 Supported',
+          category: 'tls',
+          severity: 'high',
+          confidence: 'firm',
+          status: 'open',
+          description: 'Server accepts TLS 1.0 handshakes',
+          testDefinitionId: 'engine-native-headers',
+          testRunId: tr2.id,
+          executionId: exec2.id,
+          targetId: tgt.id,
+          occurrenceCount: 1,
+          firstDetectedAt: new Date(),
+          lastDetectedAt: new Date(),
+          metadata: {},
+        },
+      ];
+
+      const tr2Record = {
+        id: tr2.id,
+        projectId: proj.id,
+        targetId: tgt.id,
+        status: 'completed' as const,
+        summary: { totalTests: 1, passedTests: 0, failedTests: 1, errorTests: 0, findingsCount: { critical: 0, high: 1, medium: 1, low: 0, info: 0 } },
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const diffSummary = await reportsService.calculateFindingDiff(tr2Record, run2Findings);
+
+      expect(diffSummary.previousTestRunId).toBe(tr1.id);
+      expect(diffSummary.newCount).toBe(1); // Deprecated TLS
+      expect(diffSummary.recurringCount).toBe(1); // Insecure CORS
+      expect(diffSummary.fixedCount).toBe(1); // Missing CSP fixed
+
+      const recurringItem = diffSummary.details?.find((d) => d.fingerprint === 'fp-cors-1');
+      expect(recurringItem?.diffStatus).toBe('RECURRING');
+
+      const newItem = diffSummary.details?.find((d) => d.fingerprint === 'fp-tls-new-1');
+      expect(newItem?.diffStatus).toBe('NEW');
+
+      const fixedItem = diffSummary.details?.find((d) => d.fingerprint === 'fp-csp-1');
+      expect(fixedItem?.diffStatus).toBe('FIXED');
+
+      // Verify HTML report renders finding diff card
+      const html = generateHtmlExecutiveReport({
+        testRun: tr2Record,
+        executions: [{ id: exec2.id, engineId: 'engine-native-headers', executionClass: 'native', status: 'completed' }],
+        findings: run2Findings,
+        findingDiff: diffSummary,
+      });
+
+      expect(html).toContain('Finding Regression &amp; Diff Intelligence');
+      expect(html).toContain('New Vulnerabilities');
+      expect(html).toContain('Recurring Vulnerabilities');
+      expect(html).toContain('Fixed / Remediated');
+      expect(html).toContain('RECURRING (x2)');
+      expect(html).toContain('NEW');
+
+      // Verify SARIF report includes finding diff in properties
+      const sarif = generateSarifReport({
+        testRun: tr2Record,
+        executions: [],
+        findings: run2Findings,
+        findingDiff: diffSummary,
+      });
+
+      expect(sarif.runs[0]?.properties?.findingDiff).toBeDefined();
+      const sarifFinding = sarif.runs[0]?.results.find((r) => r.fingerprints?.identity === 'fp-cors-1');
+      expect(sarifFinding?.properties?.diffStatus).toBe('RECURRING');
+    });
+
+    it('persists and serves reports and artifacts via REST download API endpoints', async () => {
+      const { getDatabase } = await import('../../apps/controller/src/services/db.js');
+      const { sql } = getDatabase();
+
+      const [proj] = await sql`
+        INSERT INTO projects (name, description)
+        VALUES (${'Report Download API Test ' + Date.now()}, 'Testing report and artifact download endpoints')
+        RETURNING id
+      `;
+      const [tgt] = await sql`
+        INSERT INTO targets (project_id, name, base_url, scope)
+        VALUES (${proj.id}, 'Download Target', 'http://127.0.0.1:8080', '{"allowedHosts": ["127.0.0.1"]}'::jsonb)
+        RETURNING id
+      `;
+      const [tr] = await sql`
+        INSERT INTO test_runs (project_id, target_id, profile_id, status)
+        VALUES (${proj.id}, ${tgt.id}, 'native-class-a', 'completed')
+        RETURNING id
+      `;
+      const [exec] = await sql`
+        INSERT INTO test_executions (test_run_id, engine_id, execution_class, status)
+        VALUES (${tr.id}, 'engine-native-headers', 'class_a_native', 'completed')
+        RETURNING id
+      `;
+
+      // 1. Generate & persist report via reportsService
+      const generatedHtml = await reportsService.generateReport(tr.id, 'html', undefined, true);
+      expect(generatedHtml.id).toBeDefined();
+
+      // 2. Query GET /api/v1/test-runs/:id/reports (list stored reports)
+      const listRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/test-runs/${tr.id}/reports`,
+      });
+
+      expect(listRes.statusCode).toBe(200);
+      const listBody = JSON.parse(listRes.payload);
+      expect(listBody.success).toBe(true);
+      expect(listBody.data.length).toBeGreaterThanOrEqual(1);
+
+      const htmlReportHeader = listBody.data.find((r: { format: string }) => r.format === 'html');
+      expect(htmlReportHeader).toBeDefined();
+      expect(htmlReportHeader.filename).toContain(`security-report-${tr.id}.html`);
+
+      // 3. Download report via GET /api/v1/test-runs/:id/reports/:reportId/download
+      const downloadRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/test-runs/${tr.id}/reports/${htmlReportHeader.id}/download`,
+      });
+
+      expect(downloadRes.statusCode).toBe(200);
+      expect(downloadRes.headers['content-type']).toContain('text/html');
+      expect(downloadRes.headers['content-disposition']).toContain(`attachment; filename="security-report-${tr.id}.html"`);
+      expect(downloadRes.payload).toContain('SECURITY LAB');
+
+      // 4. Store custom artifact and test GET /api/v1/test-runs/:id/artifacts/:artifactId/download
+      const storedArtifact = await artifactStorageService.storeArtifact({
+        testRunId: tr.id,
+        executionId: exec.id,
+        filename: 'telemetry-metrics.json',
+        content: JSON.stringify({ rps: 250, p95Ms: 42.1 }),
+        mimeType: 'application/json',
+        type: 'telemetry',
+      });
+
+      const artifactDownloadRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/test-runs/${tr.id}/artifacts/${storedArtifact.id}/download`,
+      });
+
+      expect(artifactDownloadRes.statusCode).toBe(200);
+      expect(artifactDownloadRes.headers['content-type']).toContain('application/json');
+      expect(artifactDownloadRes.headers['content-disposition']).toContain('attachment; filename="telemetry-metrics.json"');
+      expect(artifactDownloadRes.headers['x-artifact-sha256']).toBe(storedArtifact.sha256);
+      expect(JSON.parse(artifactDownloadRes.payload)).toEqual({ rps: 250, p95Ms: 42.1 });
+
+      // Clean up artifact
+      await artifactStorageService.deleteArtifact(storedArtifact.id);
+    });
+  });
 });
+
 

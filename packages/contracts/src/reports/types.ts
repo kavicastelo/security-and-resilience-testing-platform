@@ -11,6 +11,25 @@ export interface TestExecutionRecord {
   errorMessage?: string;
 }
 
+export type FindingDiffStatus = 'NEW' | 'RECURRING' | 'FIXED';
+
+export interface FindingDiffItem {
+  fingerprint: string;
+  title: string;
+  severity: string;
+  category: string;
+  diffStatus: FindingDiffStatus;
+  findingId?: string;
+}
+
+export interface FindingDiffSummary {
+  newCount: number;
+  recurringCount: number;
+  fixedCount: number;
+  previousTestRunId?: string;
+  details?: FindingDiffItem[];
+}
+
 export interface ReportInput {
   testRun: TestRun;
   target?: Target | { id: string; name: string; baseUrl: string };
@@ -20,4 +39,6 @@ export interface ReportInput {
   evidence?: Evidence[];
   posture?: PostureScoreResult;
   releaseGate?: PolicyEvaluationResult;
+  findingDiff?: FindingDiffSummary;
 }
+

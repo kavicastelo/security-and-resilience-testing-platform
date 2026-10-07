@@ -14,6 +14,8 @@ import { reportsRoutes } from '../routes/reports.js';
 import { releasesRoutes } from '../routes/releases.js';
 import { policiesRoutes } from '../routes/policies.js';
 import { contractsRoutes } from '../routes/contracts.js';
+import { tenantsRoutes } from '../routes/tenants.js';
+import { agentsRoutes } from '../routes/agents.js';
 import { logger } from '@security-lab/logger';
 
 export interface BuildAppOptions {
@@ -78,6 +80,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(releasesRoutes);
   app.register(policiesRoutes);
   app.register(contractsRoutes);
+  app.register(tenantsRoutes, { prefix: '/api/v1/tenants' });
+  app.register(agentsRoutes, { prefix: '/api/v1/agents' });
 
   return app;
 }

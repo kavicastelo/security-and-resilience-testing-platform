@@ -1,6 +1,8 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { FindingSeverity, FindingStatus } from '@security-lab/domain';
 import { findingsService } from '../services/findings.service.js';
+import { testRunsService } from '../services/test-runs.service.js';
+import { executionManager } from '../services/execution-manager.js';
 
 export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. List findings with optional filters (testRunId, targetId, severity, status)
@@ -13,7 +15,8 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     };
   }>('/api/v1/findings', async (request, reply) => {
     const { testRunId, targetId, severity, status } = request.query;
-    const findingsList = await findingsService.listFindings({ testRunId, targetId, severity, status });
+    const tenantId = request.headers['x-tenant-id'] as string | undefined;
+    const findingsList = await findingsService.listFindings({ testRunId, targetId, severity, status, tenantId });
     return reply.send({
       success: true,
       data: findingsList,
@@ -42,10 +45,10 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // 3. Update Finding Status (Triage: open, suppressed, resolved, false_positive, risk_accepted)
   fastify.patch<{
     Params: { id: string };
-    Body: { status: FindingStatus; notes?: string };
+    Body: { status: FindingStatus; notes?: string; triggerRetest?: boolean };
   }>('/api/v1/findings/:id', async (request, reply) => {
     const { id } = request.params;
-    const { status, notes } = request.body || {};
+    const { status, notes, triggerRetest } = request.body || {};
 
     if (!status) {
       return reply.status(400).send({
@@ -69,9 +72,36 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
         });
       }
 
+      let retestRunId: string | undefined;
+      if (triggerRetest && updated.testRunId) {
+        try {
+          const originalRun = await testRunsService.getTestRunById(updated.testRunId);
+          if (originalRun) {
+            const retestRun = await testRunsService.createTestRun({
+              projectId: originalRun.projectId,
+              targetId: originalRun.targetId,
+              profileId: updated.testDefinitionId,
+              triggeredBy: 'api',
+              metadata: {
+                isRetest: true,
+                originalFindingId: updated.id,
+                fingerprint: updated.fingerprint,
+              },
+            });
+            await executionManager.enqueue(retestRun.id, {
+              engineIds: [updated.testDefinitionId],
+            });
+            retestRunId = retestRun.id;
+          }
+        } catch (retestErr) {
+          request.log.warn({ err: retestErr }, 'Failed to trigger automated retest for resolved finding');
+        }
+      }
+
       return reply.send({
         success: true,
         data: updated,
+        retestRunId,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to update finding';

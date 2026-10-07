@@ -33,7 +33,8 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       }
 
       try {
-        const target = await targetsService.createTarget(parseResult.data);
+        const tenantId = request.headers['x-tenant-id'] as string | undefined;
+        const target = await targetsService.createTarget(parseResult.data, tenantId);
         return reply.status(201).send({
           success: true,
           data: target,
@@ -64,8 +65,9 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   );
 
   // 3. List All Targets
-  fastify.get('/api/v1/targets', async (_request, reply) => {
-    const targetList = await targetsService.listAllTargets();
+  fastify.get('/api/v1/targets', async (request, reply) => {
+    const tenantId = request.headers['x-tenant-id'] as string | undefined;
+    const targetList = await targetsService.listAllTargets(tenantId);
     return reply.send({
       success: true,
       data: targetList,

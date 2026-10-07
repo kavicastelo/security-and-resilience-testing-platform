@@ -240,9 +240,9 @@ docker compose down
 | **Monorepo Foundation** | `VERIFIED` | `pnpm` workspaces, strict TypeScript references, clean typecheck and linting. | Maintain boundaries |
 | **Domain Models & Schemas** | `VERIFIED` | Pure domain entities with strict Zod validation (`@security-lab/domain`). | Add Identity & DSL v2 models |
 | **Cross-Boundary Contracts** | `VERIFIED` | API DTOs, execution messages, CLI options (`@security-lab/contracts`). | Maintain contracts |
-| **Enterprise Reporting** | `VERIFIED` | JUnit XML, SARIF v2.1.0, HTML executive reports, and REST export endpoints. | Add persistent artifact storage |
-| **Console CLI** | `VERIFIED` | Commander CLI with `target`, `test`, `scan`, `load`, `report`, and `gate` commands. | Add offline local execution |
-| **Web Dashboard** | `VERIFIED` | React/Vite application with Target Scopes, Test Executions, and Findings Views. | Add real-time SSE stream |
+| **Enterprise Reporting** | `VERIFIED` | JUnit XML, SARIF v2.1.0, HTML executive reports, and immutable artifact storage. | Complete |
+| **Console CLI** | `VERIFIED` | Commander CLI with standalone offline testing, `.securitylab.yaml`, and GitHub Action. | Complete |
+| **Web Dashboard** | `VERIFIED` | Real-time SSE telemetry streaming, live progress & logs, interactive triage, SVG latency percentile curves, and visual policy builder. | Complete |
 | **Class A Native Engines** | `IMPLEMENTED_BUT_UNSAFE` | OWASP Headers, CORS, TLS, and baseline rate-limiting run in-process; follow redirects without re-checking scope. | Phase 01: Redirect interception |
 | **Target Scope Validator** | `IMPLEMENTED_BUT_UNSAFE` | Validates host string and port; lacks DNS resolution, socket pinning, and IP normalization. | Phase 01: DNS & IP hardening |
 | **Docker Runner Sandbox** | `IMPLEMENTED_BUT_UNSAFE` | Spawns containers with CPU/RAM caps; missing capability dropping, non-root user, and socket path restrictions. | Phase 02: Container hardening |

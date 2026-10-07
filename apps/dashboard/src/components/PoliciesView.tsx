@@ -18,6 +18,9 @@ import {
   Search,
   Copy,
   Terminal,
+  ShieldAlert,
+  Clock,
+  Layers,
 } from 'lucide-react';
 import { EvaluateReleaseModal } from './EvaluateReleaseModal.js';
 import { Pagination } from './Pagination.js';
@@ -42,11 +45,20 @@ interface PolicyRule {
   action: 'block_release' | 'warn';
 }
 
+export interface PolicyWaiver {
+  fingerprint: string;
+  reason: string;
+  approvedBy: string;
+  expiresAt: string;
+}
+
 interface Policy {
   id: string;
   name: string;
   description?: string;
   rules: PolicyRule[];
+  requiredProfiles?: string[];
+  waivers?: PolicyWaiver[];
   createdAt?: string;
   updatedAt?: string;
 }
@@ -88,6 +100,18 @@ export const PoliciesView: React.FC = () => {
     showToast(`Copied ${label} to clipboard`, 'info');
   };
 
+  // Available test profiles for mandatory enforcement
+  const AVAILABLE_PROFILES = [
+    { id: 'engine-native-tls', name: 'TLS & Cipher Verification', category: 'Class A' },
+    { id: 'engine-native-headers', name: 'Defensive Security Headers', category: 'Class A' },
+    { id: 'engine-native-cors', name: 'CORS Access Control Rules', category: 'Class A' },
+    { id: 'engine-native-auth', name: 'Authentication & Session Gate', category: 'Class A' },
+    { id: 'engine-native-resilience', name: 'Burst Rate Limiting SLA', category: 'Class A' },
+    { id: 'declarative', name: 'Declarative OpenAPI Contracts', category: 'Class A' },
+    { id: 'class-b-scanners', name: 'Container Scanners (ZAP / Trivy)', category: 'Class B' },
+    { id: 'k6', name: 'Grafana k6 Concurrency Performance', category: 'Class C' },
+  ];
+
   // Policy Form State
   const [newPolicyName, setNewPolicyName] = useState('');
   const [newPolicyDesc, setNewPolicyDesc] = useState('');
@@ -96,6 +120,15 @@ export const PoliciesView: React.FC = () => {
   const [maxMedium, setMaxMedium] = useState<number>(5);
   const [maxP95LatencyMs, setMaxP95LatencyMs] = useState<number>(500);
   const [maxErrorRatePercent, setMaxErrorRatePercent] = useState<number>(1.0);
+  const [selectedRequiredProfiles, setSelectedRequiredProfiles] = useState<string[]>([
+    'engine-native-tls',
+    'engine-native-headers',
+  ]);
+  const [activeWaivers, setActiveWaivers] = useState<PolicyWaiver[]>([]);
+  const [newWaiverFingerprint, setNewWaiverFingerprint] = useState<string>('');
+  const [newWaiverReason, setNewWaiverReason] = useState<string>('');
+  const [newWaiverApprover, setNewWaiverApprover] = useState<string>('AppSec Lead');
+  const [newWaiverDays, setNewWaiverDays] = useState<number>(30);
 
   const handleOpenCreatePolicy = () => {
     setEditingPolicy(null);
@@ -106,6 +139,10 @@ export const PoliciesView: React.FC = () => {
     setMaxMedium(5);
     setMaxP95LatencyMs(500);
     setMaxErrorRatePercent(1.0);
+    setSelectedRequiredProfiles(['engine-native-tls', 'engine-native-headers']);
+    setActiveWaivers([]);
+    setNewWaiverFingerprint('');
+    setNewWaiverReason('');
     setIsCreatePolicyOpen(true);
   };
 
@@ -124,7 +161,38 @@ export const PoliciesView: React.FC = () => {
       setMaxP95LatencyMs(perfRule.condition.maxP95LatencyMs ?? 500);
       setMaxErrorRatePercent(perfRule.condition.maxErrorRatePercent ?? 1.0);
     }
+    setSelectedRequiredProfiles(policy.requiredProfiles || []);
+    setActiveWaivers(policy.waivers || []);
+    setNewWaiverFingerprint('');
+    setNewWaiverReason('');
     setIsCreatePolicyOpen(true);
+  };
+
+  const handleAddWaiver = () => {
+    if (!newWaiverFingerprint.trim()) {
+      showToast('Finding fingerprint is required', 'error');
+      return;
+    }
+    if (!newWaiverReason.trim()) {
+      showToast('Waiver justification is required', 'error');
+      return;
+    }
+    const expiresAt = new Date(Date.now() + newWaiverDays * 24 * 60 * 60 * 1000).toISOString();
+    const waiver: PolicyWaiver = {
+      fingerprint: newWaiverFingerprint.trim(),
+      reason: newWaiverReason.trim(),
+      approvedBy: newWaiverApprover.trim() || 'AppSec Lead',
+      expiresAt,
+    };
+    setActiveWaivers((prev) => [...prev, waiver]);
+    setNewWaiverFingerprint('');
+    setNewWaiverReason('');
+    showToast('Waiver added to policy draft');
+  };
+
+  const handleRemoveWaiver = (index: number) => {
+    setActiveWaivers((prev) => prev.filter((_, i) => i !== index));
+    showToast('Waiver removed from draft', 'info');
   };
 
   // Fetch Policies
@@ -183,6 +251,8 @@ export const PoliciesView: React.FC = () => {
           name: newPolicyName.trim(),
           description: newPolicyDesc.trim() || undefined,
           rules,
+          requiredProfiles: selectedRequiredProfiles,
+          waivers: activeWaivers,
         }),
       });
 
@@ -243,6 +313,8 @@ export const PoliciesView: React.FC = () => {
           name: newPolicyName.trim(),
           description: newPolicyDesc.trim() || undefined,
           rules,
+          requiredProfiles: selectedRequiredProfiles,
+          waivers: activeWaivers,
         }),
       });
 
@@ -516,6 +588,58 @@ export const PoliciesView: React.FC = () => {
                         </div>
                       </div>
 
+                      {/* Mandatory Test Profiles */}
+                      {policy.requiredProfiles && policy.requiredProfiles.length > 0 && (
+                        <div className="space-y-1.5 border-t border-border/50 pt-3">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                            <Layers className="w-3 h-3 text-blue-400" />
+                            Mandatory Test Profiles ({policy.requiredProfiles.length})
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {policy.requiredProfiles.map((prof) => (
+                              <span
+                                key={prof}
+                                className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20"
+                              >
+                                {prof}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Active Policy Waivers */}
+                      {policy.waivers && policy.waivers.length > 0 && (
+                        <div className="space-y-1.5 border-t border-border/50 pt-3">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                            <ShieldAlert className="w-3 h-3 text-amber-400" />
+                            Active Policy Waivers ({policy.waivers.length})
+                          </span>
+                          <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                            {policy.waivers.map((waiver, widx) => (
+                              <div
+                                key={widx}
+                                className="p-2 rounded-lg bg-amber-500/5 border border-amber-500/20 text-[11px] flex items-center justify-between"
+                              >
+                                <div className="space-y-0.5 min-w-0 pr-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono text-foreground font-semibold text-[10px]">
+                                      {waiver.fingerprint.slice(0, 10)}...
+                                    </span>
+                                    <span className="text-muted-foreground text-[10px]">by {waiver.approvedBy}</span>
+                                  </div>
+                                  <p className="text-muted-foreground text-[10px] truncate">{waiver.reason}</p>
+                                </div>
+                                <span className="font-mono text-[9px] text-amber-300 shrink-0 flex items-center gap-1 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  Exp: {new Date(waiver.expiresAt).toLocaleDateString()}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="pt-2 text-[11px] font-mono text-muted-foreground flex items-center justify-between border-t border-border/40">
                         <div className="flex items-center gap-2">
                           <button
@@ -770,7 +894,7 @@ export const PoliciesView: React.FC = () => {
       {/* Modal 2: Create / Edit Custom Policy */}
       {isCreatePolicyOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-card border border-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+          <div className="bg-card border border-border w-full max-w-2xl max-h-[92vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
             <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-card/60">
               <div className="flex items-center gap-2.5">
                 <Sliders className="w-5 h-5 text-blue-400" />
@@ -786,7 +910,7 @@ export const PoliciesView: React.FC = () => {
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-5 overflow-y-auto max-h-[calc(92vh-140px)]">
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1">
                   Policy Name <span className="text-rose-400">*</span>
@@ -880,9 +1004,179 @@ export const PoliciesView: React.FC = () => {
                 </div>
               </div>
 
+              {/* Mandatory Test Profiles */}
+              <div className="space-y-2 pt-2 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-foreground">
+                    Mandatory Test Profiles
+                  </label>
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    {selectedRequiredProfiles.length} selected
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  The release gate will automatically block if any of the selected profiles were not executed during the test run.
+                </p>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {AVAILABLE_PROFILES.map((prof) => {
+                    const isSelected = selectedRequiredProfiles.includes(prof.id);
+                    return (
+                      <button
+                        key={prof.id}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedRequiredProfiles((prev) => prev.filter((p) => p !== prof.id));
+                          } else {
+                            setSelectedRequiredProfiles((prev) => [...prev, prof.id]);
+                          }
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex items-start gap-2.5 transition-colors ${
+                          isSelected
+                            ? 'bg-blue-500/10 border-blue-500/40 text-blue-300'
+                            : 'bg-background hover:bg-accent/40 border-border text-muted-foreground'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="mt-0.5 rounded border-border text-blue-500 focus:ring-0"
+                        />
+                        <div className="space-y-0.5">
+                          <span className="text-xs font-medium text-foreground block">{prof.name}</span>
+                          <span className="text-[10px] font-mono text-muted-foreground">{prof.id} &bull; {prof.category}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Policy Waivers Management */}
+              <div className="space-y-3 pt-2 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-foreground">
+                    Policy Waivers & Exemptions ({activeWaivers.length})
+                  </label>
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    Temporary overrides
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Exempt known vulnerabilities from blocking this policy until their expiration date.
+                </p>
+
+                {activeWaivers.length > 0 && (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {activeWaivers.map((waiver, idx) => (
+                      <div
+                        key={idx}
+                        className="p-2.5 rounded-xl bg-accent/40 border border-border/70 flex items-center justify-between text-xs"
+                      >
+                        <div className="space-y-0.5 min-w-0 pr-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-foreground font-semibold text-[11px]">
+                              {waiver.fingerprint.slice(0, 14)}...
+                            </span>
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              by {waiver.approvedBy}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground truncate">{waiver.reason}</p>
+                          <div className="text-[10px] text-amber-400 font-mono flex items-center gap-1">
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>Expires: {new Date(waiver.expiresAt).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveWaiver(idx)}
+                          className="p-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 transition-colors shrink-0"
+                          title="Remove Waiver"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Inline Add Waiver Form */}
+                <div className="p-3 rounded-xl bg-card border border-border/80 space-y-2.5">
+                  <span className="text-[11px] font-semibold text-foreground uppercase tracking-wider block">
+                    + Add New Finding Waiver
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-1">
+                        Finding Fingerprint
+                      </label>
+                      <input
+                        type="text"
+                        value={newWaiverFingerprint}
+                        onChange={(e) => setNewWaiverFingerprint(e.target.value)}
+                        placeholder="e.g. c7a1... or SHA256"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-background border border-border text-foreground font-mono text-[11px] focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-1">
+                        Approver Name / Role
+                      </label>
+                      <input
+                        type="text"
+                        value={newWaiverApprover}
+                        onChange={(e) => setNewWaiverApprover(e.target.value)}
+                        placeholder="e.g. AppSec Lead"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-background border border-border text-foreground text-[11px] focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-1">
+                        Waiver Justification
+                      </label>
+                      <input
+                        type="text"
+                        value={newWaiverReason}
+                        onChange={(e) => setNewWaiverReason(e.target.value)}
+                        placeholder="e.g. Compensating WAF rule active; vendor patch pending"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-background border border-border text-foreground text-[11px] focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-mono text-muted-foreground mb-1">
+                        Duration
+                      </label>
+                      <select
+                        value={newWaiverDays}
+                        onChange={(e) => setNewWaiverDays(parseInt(e.target.value) || 30)}
+                        className="w-full px-2 py-1.5 rounded-lg bg-background border border-border text-foreground text-[11px] focus:outline-none focus:border-blue-500"
+                      >
+                        <option value={7}>7 Days</option>
+                        <option value={14}>14 Days</option>
+                        <option value={30}>30 Days</option>
+                        <option value={90}>90 Days</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={handleAddWaiver}
+                      className="px-3 py-1.5 rounded-lg bg-accent hover:bg-accent/80 border border-border text-foreground text-xs font-medium transition-colors"
+                    >
+                      Add Exemption Rule
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {(createPolicyMutation.isError || updatePolicyMutation.isError) && (
                 <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
-                  {((createPolicyMutation.error || updatePolicyMutation.error) as Error).message}
+                  {((createPolicyMutation.error as Error)?.message || (updatePolicyMutation.error as Error)?.message || 'An error occurred')}
                 </div>
               )}
             </div>

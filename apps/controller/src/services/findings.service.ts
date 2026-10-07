@@ -4,9 +4,11 @@ import { getDatabase } from './db.js';
 import { findings } from './db/schema.js';
 import { Finding, FindingSeverity, FindingConfidence, FindingStatus } from '@security-lab/domain';
 import { logger } from '@security-lab/logger';
+import { DEFAULT_TENANT_ID } from './tenants.service.js';
 
 export interface CreateFindingInput {
   id?: string;
+  tenantId?: string;
   fingerprint: string;
   title: string;
   category: string;
@@ -248,6 +250,7 @@ export class FindingsService {
       .insert(findings)
       .values({
         id: input.id,
+        tenantId: input.tenantId || DEFAULT_TENANT_ID,
         fingerprint: input.fingerprint,
         title: input.title,
         category: input.category,
@@ -377,10 +380,14 @@ export class FindingsService {
     targetId?: string;
     severity?: FindingSeverity;
     status?: FindingStatus;
+    tenantId?: string;
   }): Promise<Finding[]> {
     const { db } = getDatabase();
     const conditions = [];
 
+    if (filters?.tenantId) {
+      conditions.push(eq(findings.tenantId, filters.tenantId));
+    }
     if (filters?.testRunId) {
       conditions.push(eq(findings.testRunId, filters.testRunId));
     }

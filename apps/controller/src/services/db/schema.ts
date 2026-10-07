@@ -18,8 +18,19 @@ import {
   ReleaseGateDecision,
 } from '@security-lab/domain';
 
+export const tenants = pgTable('tenants', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull(),
+  slug: varchar('slug', { length: 100 }).notNull().unique(),
+  plan: varchar('plan', { length: 50 }).notNull().default('enterprise'),
+  settings: jsonb('settings').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 100 }).notNull().unique(),
   description: text('description'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -49,6 +60,7 @@ export const targets = pgTable(
   'targets',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }),
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
@@ -60,6 +72,7 @@ export const targets = pgTable(
   },
   (table) => [
     index('idx_targets_project_id').on(table.projectId),
+    index('idx_targets_tenant_id').on(table.tenantId),
   ],
 );
 
@@ -157,6 +170,7 @@ export const findings = pgTable(
   'findings',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }),
     fingerprint: varchar('fingerprint', { length: 128 }).notNull(),
     title: varchar('title', { length: 200 }).notNull(),
     category: varchar('category', { length: 100 }).notNull(),
@@ -186,6 +200,7 @@ export const findings = pgTable(
     metadata: jsonb('metadata').notNull().default({}),
   },
   (table) => [
+    index('idx_findings_tenant_id').on(table.tenantId),
     index('idx_findings_test_run_id').on(table.testRunId),
     index('idx_findings_target_id').on(table.targetId),
     index('idx_findings_execution_id').on(table.executionId),
@@ -225,6 +240,7 @@ export const policies = pgTable(
   'policies',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 100 }).notNull(),
     description: text('description'),
     rules: jsonb('rules').notNull().default([]),
@@ -235,6 +251,7 @@ export const policies = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index('idx_policies_tenant_id').on(table.tenantId),
     index('idx_policies_name').on(table.name),
   ],
 );
@@ -372,5 +389,57 @@ export const credentials = pgTable(
   (table) => [
     index('idx_credentials_project_id').on(table.projectId),
     index('idx_credentials_type').on(table.type),
+  ],
+);
+
+export const agents = pgTable(
+  'agents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    status: varchar('status', { length: 30 }).notNull().default('offline'),
+    capabilities: jsonb('capabilities').notNull().default([]),
+    tags: jsonb('tags').notNull().default([]),
+    systemInfo: jsonb('system_info').notNull().default({}),
+    lastHeartbeatAt: timestamp('last_heartbeat_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_agents_tenant_id').on(table.tenantId),
+    index('idx_agents_token_hash').on(table.tokenHash),
+    index('idx_agents_status').on(table.status),
+  ],
+);
+
+export const agentJobs = pgTable(
+  'agent_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    testRunId: uuid('test_run_id')
+      .notNull()
+      .references(() => testRuns.id, { onDelete: 'cascade' }),
+    status: varchar('status', { length: 30 }).notNull().default('pending'),
+    payload: jsonb('payload').notNull().default({}),
+    result: jsonb('result'),
+    error: text('error'),
+    dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_agent_jobs_agent_id').on(table.agentId),
+    index('idx_agent_jobs_tenant_id').on(table.tenantId),
+    index('idx_agent_jobs_test_run_id').on(table.testRunId),
+    index('idx_agent_jobs_status').on(table.status),
   ],
 );

@@ -3,12 +3,15 @@ import { getDatabase } from './db.js';
 import { projects } from './db/schema.js';
 import { CreateProjectInput, Project } from '@security-lab/domain';
 
+import { DEFAULT_TENANT_ID } from './tenants.service.js';
+
 export class ProjectsService {
-  async createProject(input: CreateProjectInput): Promise<Project> {
+  async createProject(input: CreateProjectInput, tenantId?: string): Promise<Project> {
     const { db } = getDatabase();
     const [inserted] = await db
       .insert(projects)
       .values({
+        tenantId: tenantId || DEFAULT_TENANT_ID,
         name: input.name,
         description: input.description,
       })
@@ -27,9 +30,13 @@ export class ProjectsService {
     };
   }
 
-  async listProjects(): Promise<Project[]> {
+  async listProjects(tenantId?: string): Promise<Project[]> {
     const { db } = getDatabase();
-    const rows = await db.select().from(projects).orderBy(projects.name);
+    const query = db.select().from(projects);
+    const rows = tenantId
+      ? await query.where(eq(projects.tenantId, tenantId)).orderBy(projects.name)
+      : await query.orderBy(projects.name);
+
     return rows.map((r) => ({
       id: r.id,
       name: r.name,

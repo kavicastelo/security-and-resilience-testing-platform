@@ -1,0 +1,32 @@
+{
+  "name": "@security-lab/agent",
+  "version": "0.1.0",
+  "description": "Distributed Execution Agent for Security Lab Platform",
+  "type": "module",
+  "bin": {
+    "security-lab-agent": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@security-lab/contracts": "workspace:*",
+    "@security-lab/domain": "workspace:*",
+    "@security-lab/evidence": "workspace:*",
+    "@security-lab/logger": "workspace:*",
+    "@security-lab/test-sdk": "workspace:*",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "typescript": "^5.7.3"
+  }
+}

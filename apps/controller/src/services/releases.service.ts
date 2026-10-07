@@ -7,6 +7,8 @@ import { testRunsService } from './test-runs.service.js';
 import { findingsService } from './findings.service.js';
 import { metricsService } from './metrics.service.js';
 import { policiesService } from './policies.service.js';
+import { reportsService } from './reports.service.js';
+
 import { evaluatePolicy, PolicyEvaluationResult } from '@security-lab/policy-engine';
 import { calculatePostureScore, PostureScoreResult } from '@security-lab/scoring';
 import { logger } from '@security-lab/logger';
@@ -286,8 +288,16 @@ export class ReleasesService {
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
         };
+
+        // Persist reports for this evaluated release
+        try {
+          await reportsService.persistTestRunReports(testRun.id, effectivePolicy.id);
+        } catch (reportErr: unknown) {
+          logger.warn({ reportErr, testRunId: testRun.id }, 'Failed to persist reports on release evaluation');
+        }
       }
     }
+
 
     return {
       decision: gateResult.decision,

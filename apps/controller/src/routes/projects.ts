@@ -18,7 +18,8 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
 
     try {
-      const project = await projectsService.createProject(parseResult.data);
+      const tenantId = request.headers['x-tenant-id'] as string | undefined;
+      const project = await projectsService.createProject(parseResult.data, tenantId);
       return reply.status(201).send({
         success: true,
         data: project,
@@ -36,8 +37,9 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 2. List Projects
-  fastify.get('/api/v1/projects', async (_request, reply) => {
-    const projectsList = await projectsService.listProjects();
+  fastify.get('/api/v1/projects', async (request, reply) => {
+    const tenantId = request.headers['x-tenant-id'] as string | undefined;
+    const projectsList = await projectsService.listProjects(tenantId);
     return reply.send({
       success: true,
       data: projectsList,

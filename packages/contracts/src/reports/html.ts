@@ -1,5 +1,6 @@
 import { ReportInput } from './types.js';
 import { calculatePostureScore } from '@security-lab/scoring';
+import { generateCurlCommand } from './curl-generator.js';
 
 function escapeHtml(unsafe: string): string {
   return unsafe
@@ -14,7 +15,7 @@ function escapeHtml(unsafe: string): string {
  * Generates self-contained, enterprise executive HTML report suitable for browser viewing or PDF printing.
  */
 export function generateHtmlExecutiveReport(input: ReportInput): string {
-  const { testRun, target, executions, findings, metrics = [], releaseGate } = input;
+  const { testRun, target, executions, findings, metrics = [], evidence = [], releaseGate, findingDiff } = input;
   const posture = input.posture || calculatePostureScore(findings);
   const targetUrl = target?.baseUrl || 'N/A';
   const targetName = target?.name || testRun.targetId;
@@ -51,6 +52,23 @@ export function generateHtmlExecutiveReport(input: ReportInput): string {
           ? '#f59e0b'
           : '#ef4444';
 
+  // Build evidence lookup map
+  const evidenceMap = new Map<string, (typeof evidence)[number]>();
+  for (const ev of evidence) {
+    if (ev && ev.id) {
+      evidenceMap.set(ev.id, ev);
+    }
+  }
+
+  // Build diff status lookup map by fingerprint
+  const diffStatusMap = new Map<string, string>();
+  if (findingDiff?.details) {
+    for (const d of findingDiff.details) {
+      diffStatusMap.set(d.fingerprint, d.diffStatus);
+    }
+  }
+
+
   const findingsRows = findings
     .map((f) => {
       const sevColor =
@@ -64,14 +82,33 @@ export function generateHtmlExecutiveReport(input: ReportInput): string {
                 ? '#3b82f6'
                 : '#6b7280';
 
+      const diffStatus =
+        diffStatusMap.get(f.fingerprint) ||
+        (f.occurrenceCount && f.occurrenceCount > 1 ? 'RECURRING' : 'NEW');
+
+      const diffBadge =
+        diffStatus === 'NEW'
+          ? `<span style="display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10px; background-color: #3b82f620; color: #60a5fa; border: 1px solid #3b82f650; margin-left: 6px;">NEW</span>`
+          : `<span style="display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10px; background-color: #f59e0b20; color: #f59e0b; border: 1px solid #f59e0b50; margin-left: 6px;">RECURRING (x${f.occurrenceCount || 1})</span>`;
+
+      // Resolve curl reproduction command
+      const ev = f.evidenceId ? evidenceMap.get(f.evidenceId) : undefined;
+      const meta = (f.metadata || {}) as Record<string, unknown>;
+      const curlCmd =
+        (meta.reproductionCurl as string) ||
+        (meta.curl as string) ||
+        (meta.curlCommand as string) ||
+        (ev?.request ? generateCurlCommand(ev.request) : '');
+
       return `
       <tr>
-        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a;">
+        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; vertical-align: top;">
           <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; text-transform: uppercase; background-color: ${sevColor}22; color: ${sevColor}; border: 1px solid ${sevColor}44;">
             ${f.severity}
           </span>
+          ${diffBadge}
         </td>
-        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-weight: 600; color: #f4f4f5;">
+        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-weight: 600; color: #f4f4f5; vertical-align: top;">
           ${escapeHtml(f.title)}
           <div style="font-weight: 400; font-size: 12px; color: #a1a1aa; margin-top: 4px;">
             ${escapeHtml(f.description)}
@@ -83,16 +120,25 @@ export function generateHtmlExecutiveReport(input: ReportInput): string {
                 </div>`
               : ''
           }
+          ${
+            curlCmd
+              ? `<div style="margin-top: 10px; background: #09090b; border: 1px solid #3f3f46; border-radius: 6px; padding: 10px 12px;">
+                  <div style="font-size: 10px; font-weight: 700; color: #a1a1aa; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Reproduce with cURL:</div>
+                  <pre style="margin: 0; font-family: monospace; font-size: 11px; color: #38bdf8; overflow-x: auto; white-space: pre-wrap; word-break: break-all;"><code>${escapeHtml(curlCmd)}</code></pre>
+                </div>`
+              : ''
+          }
         </td>
-        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-size: 12px; color: #a1a1aa;">
+        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-size: 12px; color: #a1a1aa; vertical-align: top;">
           ${escapeHtml(f.category)}
         </td>
-        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-family: monospace; font-size: 11px; color: #71717a;">
+        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-family: monospace; font-size: 11px; color: #71717a; vertical-align: top;">
           ${f.evidenceId ? escapeHtml(f.evidenceId.slice(0, 8)) + '...' : 'N/A'}
         </td>
       </tr>`;
     })
     .join('');
+
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -230,8 +276,37 @@ export function generateHtmlExecutiveReport(input: ReportInput): string {
             <div style="color: #a1a1aa; font-size: 10px;">LOW</div>
           </div>
         </div>
-      </div>
     </div>
+
+    ${
+      findingDiff
+        ? `
+    <!-- Finding Regression & Diff Intelligence -->
+    <div class="card">
+      <h2 style="font-size: 16px; margin-top: 0; margin-bottom: 16px; border-bottom: 1px solid #27272a; padding-bottom: 8px;">
+        Finding Regression &amp; Diff Intelligence ${findingDiff.previousTestRunId ? `<span style="font-size: 12px; font-weight: 400; color: #71717a;">(vs. Run: ${escapeHtml(findingDiff.previousTestRunId.slice(0, 8))}...)</span>` : ''}
+      </h2>
+      <div class="grid" style="grid-template-columns: repeat(3, 1fr); gap: 12px;">
+        <div class="stat-box" style="border-left: 4px solid #3b82f6;">
+          <div class="stat-label" style="color: #60a5fa;">New Vulnerabilities</div>
+          <div class="stat-val" style="color: #60a5fa; font-size: 24px; font-weight: 800;">${findingDiff.newCount}</div>
+          <div style="font-size: 11px; color: #71717a; margin-top: 4px;">Introduced in this test run</div>
+        </div>
+        <div class="stat-box" style="border-left: 4px solid #f59e0b;">
+          <div class="stat-label" style="color: #f59e0b;">Recurring Vulnerabilities</div>
+          <div class="stat-val" style="color: #f59e0b; font-size: 24px; font-weight: 800;">${findingDiff.recurringCount}</div>
+          <div style="font-size: 11px; color: #71717a; margin-top: 4px;">Persisted from previous test runs</div>
+        </div>
+        <div class="stat-box" style="border-left: 4px solid #10b981;">
+          <div class="stat-label" style="color: #10b981;">Fixed / Remediated</div>
+          <div class="stat-val" style="color: #10b981; font-size: 24px; font-weight: 800;">${findingDiff.fixedCount}</div>
+          <div style="font-size: 11px; color: #71717a; margin-top: 4px;">Resolved since last evaluation</div>
+        </div>
+      </div>
+    </div>`
+        : ''
+    }
+
 
     <!-- Quantitative Latency SLA Telemetry -->
     ${

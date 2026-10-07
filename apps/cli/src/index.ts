@@ -11,8 +11,10 @@ import { gateCommand } from './commands/gate.js';
 import { policyCommand } from './commands/policy.js';
 import { findingsCommand } from './commands/findings.js';
 import { contractCommand } from './commands/contract.js';
+import { runCommand } from './commands/run.js';
 
 const program = new Command();
+
 
 program
   .name('security-lab')
@@ -41,7 +43,9 @@ program.addCommand(gateCommand);
 program.addCommand(policyCommand);
 program.addCommand(findingsCommand);
 program.addCommand(contractCommand);
+program.addCommand(runCommand);
 
 program.parse(process.argv);
+
 
 
