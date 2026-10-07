@@ -188,6 +188,34 @@ importers:
         specifier: ^3.0.7
         version: 3.2.7(@types/node@22.20.5)(jiti@1.21.7)(supports-color@7.2.0)(tsx@4.23.15)(yaml@2.9.1)
 
+  apps/agent:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/evidence':
+        specifier: workspace:*
+        version: link:../../packages/evidence
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/test-sdk':
+        specifier: workspace:*
+        version: link:../../packages/test-sdk
+      commander:
+        specifier: ^13.1.0
+        version: 13.1.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.5
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   apps/cli:
     dependencies:
       '@security-lab/contracts':
@@ -196,6 +224,18 @@ importers:
       '@security-lab/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@security-lab/evidence':
+        specifier: workspace:*
+        version: link:../../packages/evidence
+      '@security-lab/policy-engine':
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
+      '@security-lab/scoring':
+        specifier: workspace:*
+        version: link:../../packages/scoring
+      '@security-lab/test-sdk':
+        specifier: workspace:*
+        version: link:../../packages/test-sdk
       commander:
         specifier: ^13.1.0
         version: 13.1.0
@@ -338,6 +378,9 @@ importers:
       '@security-lab/scoring':
         specifier: workspace:*
         version: link:../scoring
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
       zod:
         specifier: ^3.24.2
         version: 3.25.76

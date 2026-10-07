@@ -1,0 +1,39 @@
+version: "1.0"
+name: "Security Lab Platform"
+
+target:
+  baseUrl: "http://127.0.0.1:4000"
+  name: "Security Lab Controller API"
+  allowedHosts:
+    - "127.0.0.1"
+    - "localhost"
+  allowedPorts:
+    - 4000
+    - 3000
+  excludedPaths:
+    - "/health"
+
+definitions:
+  engines:
+    - headers
+    - cors
+    - tls
+
+policy:
+  name: "Enterprise Baseline Security Policy"
+  maxAllowedSeverity: "high"
+  maxCriticalFindings: 0
+  maxHighFindings: 0
+  minPostureScore: 80
+  failOn: "failed"
+
+reporters:
+  formats:
+    - terminal
+    - sarif
+    - junit
+    - html
+  outputDir: "./reports"
+  sarifFile: "reports/security-lab.sarif"
+  junitFile: "reports/junit.xml"
+  htmlFile: "reports/executive-report.html"

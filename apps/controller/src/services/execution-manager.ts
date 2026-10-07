@@ -1,7 +1,13 @@
+import { EventEmitter } from 'node:events';
 import { logger } from '@security-lab/logger';
 import { TestRun, TestRunSummary } from '@security-lab/domain';
 import { testRunsService } from './test-runs.service.js';
 import { testRunnerService, ExecuteRunOptions, TestRunExecutionResult } from './runner.service.js';
+import {
+  RunLifecycleEvent,
+  EngineLifecycleEvent,
+  ExecutionProgressEvent,
+} from './execution-events.js';
 import { getDatabase } from './db.js';
 import { testExecutions } from './db/schema.js';
 import { eq, and } from 'drizzle-orm';
@@ -33,14 +39,30 @@ export interface CancelResult {
  * centralized AbortController lifecycle tracking, and cancellation controls
  * for asynchronous test run execution.
  */
-export class ExecutionManager {
+export class ExecutionManager extends EventEmitter {
   private readonly concurrency: number;
   private readonly queue: QueuedExecutionJob[] = [];
   private readonly activeRuns = new Map<string, ActiveExecutionEntry>();
   private runningCount = 0;
 
   constructor(concurrency = 2) {
+    super();
     this.concurrency = concurrency;
+
+    testRunnerService.on('run', (event: RunLifecycleEvent) => {
+      this.emit('run', event);
+      this.emit(`run:${event.testRunId}`, event);
+    });
+
+    testRunnerService.on('engine', (event: EngineLifecycleEvent) => {
+      this.emit('engine', event);
+      this.emit(`engine:${event.testRunId}`, event);
+    });
+
+    testRunnerService.on('progress', (event: ExecutionProgressEvent) => {
+      this.emit('progress', event);
+      this.emit(`progress:${event.testRunId}`, event);
+    });
   }
 
   /**
@@ -74,6 +96,14 @@ export class ExecutionManager {
 
     // Update status in database to queued
     await testRunsService.updateTestRunStatus(testRunId, 'queued');
+
+    const queuedEvent: RunLifecycleEvent = {
+      testRunId,
+      status: 'queued',
+      timestamp: new Date().toISOString(),
+    };
+    this.emit('run', queuedEvent);
+    this.emit(`run:${testRunId}`, queuedEvent);
 
     this.queue.push({
       testRunId,
@@ -112,6 +142,14 @@ export class ExecutionManager {
       // Mark as queued in DB
       testRunsService.updateTestRunStatus(testRunId, 'queued').catch(reject);
 
+      const queuedEvent: RunLifecycleEvent = {
+        testRunId,
+        status: 'queued',
+        timestamp: new Date().toISOString(),
+      };
+      this.emit('run', queuedEvent);
+      this.emit(`run:${testRunId}`, queuedEvent);
+
       this.queue.push({
         testRunId,
         options,
@@ -147,6 +185,15 @@ export class ExecutionManager {
 
       await testRunsService.updateTestRunStatus(testRunId, 'cancelled', summary);
 
+      const cancelEvent: RunLifecycleEvent = {
+        testRunId,
+        status: 'cancelled',
+        summary,
+        timestamp: new Date().toISOString(),
+      };
+      this.emit('run', cancelEvent);
+      this.emit(`run:${testRunId}`, cancelEvent);
+
       if (job?.reject) {
         job.reject(new Error(`Test run ${testRunId} cancelled while queued.`));
       }
@@ -172,6 +219,14 @@ export class ExecutionManager {
 
       // Update test run in database
       await testRunsService.updateTestRunStatus(testRunId, 'cancelled');
+
+      const cancelEvent: RunLifecycleEvent = {
+        testRunId,
+        status: 'cancelled',
+        timestamp: new Date().toISOString(),
+      };
+      this.emit('run', cancelEvent);
+      this.emit(`run:${testRunId}`, cancelEvent);
 
       // Update any running executions for this test run
       try {

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { eq } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { testExecutions } from './db/schema.js';
@@ -11,6 +12,13 @@ import {
 } from './findings.service.js';
 import { evidenceService } from './evidence.service.js';
 import { metricsService } from './metrics.service.js';
+import { reportsService } from './reports.service.js';
+import {
+  ExecutionProgressEvent,
+  EngineLifecycleEvent,
+  RunLifecycleEvent,
+} from './execution-events.js';
+
 import {
   validateUrlAgainstScope,
   Finding,
@@ -49,7 +57,11 @@ export interface TestRunExecutionResult {
   findings: Finding[];
 }
 
-export class TestRunnerService {
+export class TestRunnerService extends EventEmitter {
+  constructor() {
+    super();
+  }
+
   async executeTestRun(testRunId: string, options?: ExecuteRunOptions): Promise<TestRunExecutionResult> {
     return this.executeTestRunInternal(testRunId, options);
   }
@@ -86,6 +98,11 @@ export class TestRunnerService {
     // Mark test run as running
     await testRunsService.updateTestRunStatus(testRunId, 'running');
     runLogger.info(`Starting execution for test run ${testRunId} against target ${target.baseUrl}`);
+    this.emit('run', {
+      testRunId,
+      status: 'running',
+      timestamp: new Date().toISOString(),
+    } satisfies RunLifecycleEvent);
 
     // 2. Enforce Security Scope Boundary
     const scopeCheck = validateUrlAgainstScope(target.baseUrl, target.scope);
@@ -117,6 +134,24 @@ export class TestRunnerService {
       };
 
       const updatedRun = await testRunsService.updateTestRunStatus(testRunId, 'failed', failedSummary);
+
+      this.emit('engine', {
+        testRunId,
+        engineId: 'scope-boundary-gate',
+        executionId: failedExec ? failedExec.id : crypto.randomUUID(),
+        status: 'failed',
+        durationMs: 0,
+        findingsCount: 0,
+        error: scopeError,
+        timestamp: new Date().toISOString(),
+      } satisfies EngineLifecycleEvent);
+
+      this.emit('run', {
+        testRunId,
+        status: 'failed',
+        summary: failedSummary,
+        timestamp: new Date().toISOString(),
+      } satisfies RunLifecycleEvent);
 
       return {
         testRun: updatedRun,
@@ -210,6 +245,14 @@ export class TestRunnerService {
         throw new Error(`Failed to initialize execution record for engine ${engine.id}`);
       }
 
+      this.emit('engine', {
+        testRunId,
+        engineId: engine.id,
+        executionId: executionRow.id,
+        status: 'running',
+        timestamp: new Date().toISOString(),
+      } satisfies EngineLifecycleEvent);
+
       const context: ExecutionContext = {
         correlationId: crypto.randomUUID(),
         testRunId,
@@ -223,6 +266,14 @@ export class TestRunnerService {
         abortSignal: abortSignal || new AbortController().signal,
         reportProgress: (percent, msg) => {
           runLogger.debug(`[${engine.id}] Progress ${percent}%: ${msg}`);
+          this.emit('progress', {
+            testRunId,
+            engineId: engine.id,
+            executionId: executionRow.id,
+            percent,
+            message: msg,
+            timestamp: new Date().toISOString(),
+          } satisfies ExecutionProgressEvent);
         },
         logger: runLogger.child({ engineId: engine.id, executionId: executionRow.id }),
       };
@@ -257,6 +308,18 @@ export class TestRunnerService {
           error: errorMsg,
         });
         totalFailedTests++;
+
+        this.emit('engine', {
+          testRunId,
+          engineId: engine.id,
+          executionId: executionRow.id,
+          status: 'failed',
+          durationMs: 0,
+          findingsCount: 0,
+          error: errorMsg,
+          timestamp: new Date().toISOString(),
+        } satisfies EngineLifecycleEvent);
+
         continue;
       }
 
@@ -279,6 +342,16 @@ export class TestRunnerService {
             status: 'cancelled',
             error: 'Execution cancelled',
           });
+
+          this.emit('engine', {
+            testRunId,
+            engineId: engine.id,
+            executionId: executionRow.id,
+            status: 'cancelled',
+            error: 'Execution cancelled',
+            timestamp: new Date().toISOString(),
+          } satisfies EngineLifecycleEvent);
+
           break;
         }
 
@@ -377,6 +450,17 @@ export class TestRunnerService {
           durationMs: result.durationMs,
           error: result.error,
         });
+
+        this.emit('engine', {
+          testRunId,
+          engineId: engine.id,
+          executionId: executionRow.id,
+          status: result.success ? 'completed' : 'failed',
+          durationMs: result.durationMs,
+          findingsCount: result.findings.length,
+          error: result.error,
+          timestamp: new Date().toISOString(),
+        } satisfies EngineLifecycleEvent);
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         const isCancelled = abortSignal?.aborted || errorMsg.toLowerCase().includes('abort');
@@ -397,6 +481,15 @@ export class TestRunnerService {
           status: finalExecStatus,
           error: errorMsg,
         });
+
+        this.emit('engine', {
+          testRunId,
+          engineId: engine.id,
+          executionId: executionRow.id,
+          status: finalExecStatus,
+          error: errorMsg,
+          timestamp: new Date().toISOString(),
+        } satisfies EngineLifecycleEvent);
 
         if (isCancelled) {
           break;
@@ -453,7 +546,24 @@ export class TestRunnerService {
 
     const updatedTestRun = await testRunsService.updateTestRunStatus(testRunId, finalStatus, summary);
 
+    // Automatically generate and persist enterprise reports (JUnit, SARIF, HTML)
+    if (!isCancelled) {
+      try {
+        await reportsService.persistTestRunReports(testRunId);
+      } catch (reportErr: unknown) {
+        runLogger.warn({ reportErr }, 'Failed to automatically persist test run reports upon completion');
+      }
+    }
+
+    this.emit('run', {
+      testRunId,
+      status: finalStatus,
+      summary,
+      timestamp: new Date().toISOString(),
+    } satisfies RunLifecycleEvent);
+
     runLogger.info(`Test run ${testRunId} finished with status ${finalStatus}: ${allFindings.length} findings.`);
+
 
     return {
       testRun: updatedTestRun,

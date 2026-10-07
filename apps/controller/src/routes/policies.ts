@@ -1,10 +1,12 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { PolicyWaiver } from '@security-lab/domain';
 import { policiesService, CreatePolicyInput } from '../services/policies.service.js';
 
 export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. List Policies
-  fastify.get('/api/v1/policies', async (_request, reply) => {
-    const list = await policiesService.listPolicies();
+  fastify.get('/api/v1/policies', async (request, reply) => {
+    const tenantId = request.headers['x-tenant-id'] as string | undefined;
+    const list = await policiesService.listPolicies(tenantId);
     return reply.send({
       success: true,
       data: list,
@@ -42,7 +44,8 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // 4. Create Policy
   fastify.post<{ Body: CreatePolicyInput }>('/api/v1/policies', async (request, reply) => {
     try {
-      const created = await policiesService.createPolicy(request.body);
+      const tenantId = request.headers['x-tenant-id'] as string | undefined;
+      const created = await policiesService.createPolicy(request.body, tenantId);
       return reply.status(201).send({
         success: true,
         data: created,
@@ -98,6 +101,45 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   fastify.put<{ Params: { id: string } }>('/api/v1/policies/:id', handleUpdatePolicy);
   fastify.patch<{ Params: { id: string } }>('/api/v1/policies/:id', handleUpdatePolicy);
+
+  // 5b. Add Waiver to Policy
+  fastify.post<{
+    Params: { id: string };
+    Body: PolicyWaiver;
+  }>('/api/v1/policies/:id/waivers', async (request, reply) => {
+    try {
+      const updated = await policiesService.addWaiver(request.params.id, request.body);
+      return reply.status(200).send({
+        success: true,
+        data: updated,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to add waiver to policy';
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'WAIVER_CREATION_FAILED', message },
+      });
+    }
+  });
+
+  fastify.post<{
+    Body: PolicyWaiver & { policyId?: string };
+  }>('/api/v1/policies/waivers', async (request, reply) => {
+    try {
+      const { policyId, ...waiver } = request.body;
+      const updated = await policiesService.addWaiver(policyId, waiver);
+      return reply.status(200).send({
+        success: true,
+        data: updated,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to add waiver to policy';
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'WAIVER_CREATION_FAILED', message },
+      });
+    }
+  });
 
   // 6. Delete Policy
   fastify.delete<{ Params: { id: string } }>('/api/v1/policies/:id', async (request, reply) => {

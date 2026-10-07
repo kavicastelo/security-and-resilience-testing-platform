@@ -4,4 +4,5 @@ export * from './execution/index.js';
 export * from './findings/index.js';
 export * from './cli/index.js';
 export * from './reports/index.js';
-
+export * from './config/project-config.js';
+export * from './agent/index.js';

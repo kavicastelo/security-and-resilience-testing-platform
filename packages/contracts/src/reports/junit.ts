@@ -1,4 +1,5 @@
 import { ReportInput } from './types.js';
+import { generateCurlCommand } from './curl-generator.js';
 
 function escapeXml(unsafe: string): string {
   return unsafe
@@ -13,9 +14,25 @@ function escapeXml(unsafe: string): string {
  * Generates standard JUnit XML string for CI/CD test reporting.
  */
 export function generateJUnitXml(input: ReportInput): string {
-  const { testRun, target, executions, findings } = input;
+  const { testRun, target, executions, findings, evidence = [], findingDiff } = input;
   const targetName = target?.name || testRun.targetId;
   const totalFindings = findings.length;
+
+  // Build evidence lookup map
+  const evidenceMap = new Map<string, (typeof evidence)[number]>();
+  for (const ev of evidence) {
+    if (ev && ev.id) {
+      evidenceMap.set(ev.id, ev);
+    }
+  }
+
+  // Build diff status lookup map by fingerprint
+  const diffStatusMap = new Map<string, string>();
+  if (findingDiff?.details) {
+    for (const d of findingDiff.details) {
+      diffStatusMap.set(d.fingerprint, d.diffStatus);
+    }
+  }
 
   const totalErrors = executions.filter((e) => e.status === 'failed' && e.errorMessage).length;
   const totalDurationSec =
@@ -44,13 +61,27 @@ export function generateJUnitXml(input: ReportInput): string {
       );
     } else {
       for (const finding of engineFindings) {
+        const diffStatus =
+          diffStatusMap.get(finding.fingerprint) ||
+          (finding.occurrenceCount && finding.occurrenceCount > 1 ? 'RECURRING' : 'NEW');
+
+        const ev = finding.evidenceId ? evidenceMap.get(finding.evidenceId) : undefined;
+        const meta = (finding.metadata || {}) as Record<string, unknown>;
+        const curlCmd =
+          (meta.reproductionCurl as string) ||
+          (meta.curl as string) ||
+          (meta.curlCommand as string) ||
+          (ev?.request ? generateCurlCommand(ev.request) : '');
+
         testCases.push(`    <testcase classname="${escapeXml(exec.engineId)}" name="${escapeXml(finding.title)}" time="0">
       <failure type="${escapeXml(finding.category)}" message="${escapeXml(finding.title)} [${finding.severity.toUpperCase()}]">
 Severity: ${finding.severity.toUpperCase()}
 Category: ${finding.category}
+Diff Status: ${diffStatus}
+Occurrence Count: ${finding.occurrenceCount || 1}
 Description: ${finding.description}
 Recommendation: ${finding.recommendation || 'N/A'}
-Evidence ID: ${finding.evidenceId || 'N/A'}
+Evidence ID: ${finding.evidenceId || 'N/A'}${curlCmd ? `\n\nReproduction Command:\n${curlCmd}` : ''}
       </failure>
     </testcase>`);
       }
@@ -61,8 +92,17 @@ ${testCases.join('\n')}
   </testsuite>`);
   }
 
+  const diffPropertiesXml = findingDiff
+    ? `  <properties>
+    <property name="newFindings" value="${findingDiff.newCount}" />
+    <property name="recurringFindings" value="${findingDiff.recurringCount}" />
+    <property name="fixedFindings" value="${findingDiff.fixedCount}" />
+  </properties>\n`
+    : '';
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="Security Lab: ${escapeXml(targetName)}" tests="${Math.max(totalFindings, 1)}" failures="${totalFindings}" errors="${totalErrors}" time="${totalDurationSec.toFixed(3)}">
-${suitesXml.join('\n')}
+${diffPropertiesXml}${suitesXml.join('\n')}
 </testsuites>`;
 }
+

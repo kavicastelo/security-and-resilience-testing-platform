@@ -32,6 +32,7 @@ export const ConfigSchema = z.object({
   DATA_DIR: z.string().default('./.data'),
   EVIDENCE_DIR: z.string().default('./.data/evidence'),
   REPORTS_DIR: z.string().default('./.data/reports'),
+  ARTIFACTS_DIR: z.string().default('./.data/artifacts'),
   MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(5),
   DEFAULT_RUNNER_TIMEOUT_MS: z.coerce.number().int().positive().default(600000),
   ENFORCE_STRICT_SCOPES: z

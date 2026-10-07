@@ -15,9 +15,17 @@ import {
   Copy,
   Terminal,
   X,
+  AlertOctagon,
+  RotateCw,
+  ShieldCheck,
+  Calendar,
+  UserCheck,
+  Send,
+  Loader2,
 } from 'lucide-react';
 import { Pagination } from './Pagination.js';
 import { useAppStore } from '../store/useAppStore.js';
+import { generateCurlSnippet } from '../lib/curl.js';
 
 interface Finding {
   id: string;
@@ -72,6 +80,13 @@ export const FindingsView: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(6);
 
+  // Triage Dialog States
+  const [activeTriageFinding, setActiveTriageFinding] = useState<Finding | null>(null);
+  const [triageType, setTriageType] = useState<'false_positive' | 'waiver' | null>(null);
+  const [justificationNotes, setJustificationNotes] = useState<string>('');
+  const [waiverApprover, setWaiverApprover] = useState<string>('Lead Security Architect');
+  const [waiverDays, setWaiverDays] = useState<number>(30);
+
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     showToast(`Copied ${label} to clipboard`, 'info');
@@ -90,21 +105,90 @@ export const FindingsView: React.FC = () => {
     },
   });
 
-  // Triage update mutation
-  const updateStatusMutation = useMutation({
-    mutationFn: async ({ findingId, status }: { findingId: string; status: string }) => {
+  // Triage update mutation (supports status, notes, and triggerRetest)
+  const triageMutation = useMutation({
+    mutationFn: async ({
+      findingId,
+      status,
+      notes,
+      triggerRetest,
+    }: {
+      findingId: string;
+      status: string;
+      notes?: string;
+      triggerRetest?: boolean;
+    }) => {
       const res = await fetch(`${apiUrl}/api/v1/findings/${findingId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, notes, triggerRetest }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error?.message || 'Failed to update finding status');
-      return json.data;
+      return json;
     },
-    onSuccess: (data) => {
+    onSuccess: (resData) => {
       queryClient.invalidateQueries({ queryKey: ['findings'] });
-      showToast(`Finding status updated to ${data.status}`);
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
+      if (resData.retestRunId) {
+        showToast(`Finding resolved & automated re-test initiated (Run: ${resData.retestRunId.slice(0, 8)})`);
+      } else {
+        showToast(`Finding status updated to ${resData.data?.status || 'updated'}`);
+      }
+      setTriageType(null);
+      setActiveTriageFinding(null);
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(msg, 'error');
+    },
+  });
+
+  // Assign Waiver mutation (creates policy waiver rule and marks finding suppressed)
+  const assignWaiverMutation = useMutation({
+    mutationFn: async ({
+      finding,
+      reason,
+      approvedBy,
+      days,
+    }: {
+      finding: Finding;
+      reason: string;
+      approvedBy: string;
+      days: number;
+    }) => {
+      const expiresAt = new Date(Date.now() + days * 86400000).toISOString();
+      const waiverRes = await fetch(`${apiUrl}/api/v1/policies/waivers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fingerprint: finding.fingerprint,
+          reason,
+          approvedBy,
+          expiresAt,
+        }),
+      });
+      const waiverJson = await waiverRes.json();
+      if (!waiverRes.ok) throw new Error(waiverJson.error?.message || 'Failed to create policy waiver');
+
+      // Update finding status to suppressed/waived
+      await fetch(`${apiUrl}/api/v1/findings/${finding.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'suppressed',
+          notes: `Temporary waiver active (${days}d): ${reason} (Approved by: ${approvedBy})`,
+        }),
+      });
+
+      return { days, approvedBy };
+    },
+    onSuccess: ({ days, approvedBy }) => {
+      queryClient.invalidateQueries({ queryKey: ['findings'] });
+      queryClient.invalidateQueries({ queryKey: ['policies'] });
+      showToast(`Temporary waiver assigned for ${days} days (Approved by: ${approvedBy})`);
+      setTriageType(null);
+      setActiveTriageFinding(null);
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -503,28 +587,80 @@ export const FindingsView: React.FC = () => {
                   <div className="p-5 border-t border-border bg-background/50 space-y-4 animate-fade-in">
                     {/* Triage & Management Actions */}
                     <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-accent/40 border border-border/70 text-xs">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <span className="text-muted-foreground font-medium flex items-center gap-1.5">
-                          <Tag className="w-3.5 h-3.5 text-blue-400" /> Triage Status:
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-muted-foreground font-medium flex items-center gap-1.5 mr-1">
+                          <Tag className="w-3.5 h-3.5 text-blue-400" /> Triage Action:
                         </span>
+
+                        {/* Button: Mark False Positive */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveTriageFinding(finding);
+                            setTriageType('false_positive');
+                            setJustificationNotes('');
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-750 text-zinc-300 hover:text-white border border-border/80 transition-all font-medium text-xs shadow-sm cursor-pointer"
+                        >
+                          <AlertOctagon className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Mark False Positive</span>
+                        </button>
+
+                        {/* Button: Resolve & Re-test */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            triageMutation.mutate({
+                              findingId: finding.id,
+                              status: 'resolved',
+                              notes: 'Resolved via dashboard triage with automated re-test',
+                              triggerRetest: true,
+                            });
+                          }}
+                          disabled={triageMutation.isPending}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-all font-medium text-xs shadow-sm disabled:opacity-50 cursor-pointer"
+                        >
+                          <RotateCw className={`w-3.5 h-3.5 text-emerald-400 ${triageMutation.isPending ? 'animate-spin' : ''}`} />
+                          <span>Resolve &amp; Re-test</span>
+                        </button>
+
+                        {/* Button: Assign Policy Waiver */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveTriageFinding(finding);
+                            setTriageType('waiver');
+                            setJustificationNotes('');
+                            setWaiverApprover('AppSec Lead');
+                            setWaiverDays(30);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 transition-all font-medium text-xs shadow-sm cursor-pointer"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
+                          <span>Assign Waiver</span>
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
                         <select
                           value={finding.status || 'open'}
                           onChange={(e) => {
                             e.stopPropagation();
-                            updateStatusMutation.mutate({ findingId: finding.id, status: e.target.value });
+                            triageMutation.mutate({ findingId: finding.id, status: e.target.value });
                           }}
-                          disabled={updateStatusMutation.isPending}
-                          className="px-2.5 py-1 rounded-lg bg-background border border-border text-foreground font-mono text-xs focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                          disabled={triageMutation.isPending}
+                          className="px-2.5 py-1.5 rounded-lg bg-background border border-border text-foreground font-mono text-xs focus:ring-1 focus:ring-blue-500 cursor-pointer"
                         >
                           <option value="open">Open</option>
-                          <option value="resolved">Resolved / Fixed</option>
+                          <option value="resolved">Resolved</option>
                           <option value="false_positive">False Positive</option>
                           <option value="risk_accepted">Risk Accepted</option>
-                          <option value="suppressed">Suppressed</option>
+                          <option value="suppressed">Suppressed / Waived</option>
                         </select>
-                      </div>
 
-                      <div className="flex items-center gap-2">
                         <button
                           type="button"
                           onClick={(e) => {
@@ -532,10 +668,10 @@ export const FindingsView: React.FC = () => {
                             copyToClipboard(`security-lab findings triage ${finding.id} --status resolved`, 'CLI triage command');
                           }}
                           title="Copy CLI command to triage finding"
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-accent hover:bg-accent/80 border border-border text-muted-foreground hover:text-foreground text-xs font-mono transition-colors"
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-accent hover:bg-accent/80 border border-border text-muted-foreground hover:text-foreground text-xs font-mono transition-colors"
                         >
                           <Terminal className="w-3.5 h-3.5 text-blue-400" />
-                          <span>CLI Triage</span>
+                          <span>CLI</span>
                         </button>
 
                         <button
@@ -546,12 +682,40 @@ export const FindingsView: React.FC = () => {
                             }
                           }}
                           disabled={deleteFindingMutation.isPending}
-                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-950/30 hover:bg-rose-950/50 border border-rose-800/40 text-rose-400 hover:text-rose-300 transition-colors text-xs disabled:opacity-50"
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-950/30 hover:bg-rose-950/50 border border-rose-800/40 text-rose-400 hover:text-rose-300 transition-colors text-xs disabled:opacity-50"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                           <span>Delete</span>
                         </button>
                       </div>
+                    </div>
+
+                    {/* Reproducible cURL Command Snippet with Syntax Styling */}
+                    <div className="p-3.5 rounded-xl bg-zinc-950 border border-border/80 space-y-2">
+                      <div className="flex items-center justify-between text-xs border-b border-zinc-800/80 pb-2">
+                        <div className="flex items-center gap-2 text-zinc-300 font-semibold font-mono">
+                          <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Reproduction Command (cURL)</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const curlText = generateCurlSnippet(evidence?.request, evidence?.request?.url || 'https://target-endpoint.local');
+                            copyToClipboard(curlText, 'reproduction cURL snippet');
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-300 hover:text-white font-mono text-[11px] transition-colors cursor-pointer"
+                        >
+                          <Copy className="w-3 h-3 text-cyan-400" />
+                          <span>Copy cURL</span>
+                        </button>
+                      </div>
+
+                      <pre className="p-3 rounded-lg bg-black/70 font-mono text-xs overflow-x-auto text-cyan-300 leading-relaxed scrollbar-thin scrollbar-thumb-zinc-700 selection:bg-cyan-500/30">
+                        <code>
+                          {generateCurlSnippet(evidence?.request, evidence?.request?.url || 'https://target-endpoint.local')}
+                        </code>
+                      </pre>
                     </div>
 
                     {/* Recommendation Card */}
@@ -669,6 +833,157 @@ export const FindingsView: React.FC = () => {
           pageSizeOptions={[4, 6, 12, 20]}
         />
       </div>
+
+      {/* Interactive Finding Triage Modal (False Positive / Policy Waiver) */}
+      {triageType && activeTriageFinding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden p-6 space-y-5">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border/70 pb-3">
+              <div className="flex items-center gap-2.5">
+                {triageType === 'false_positive' ? (
+                  <AlertOctagon className="w-5 h-5 text-amber-400" />
+                ) : (
+                  <ShieldCheck className="w-5 h-5 text-purple-400" />
+                )}
+                <div>
+                  <h3 className="text-base font-bold text-foreground">
+                    {triageType === 'false_positive'
+                      ? 'Mark Finding as False Positive'
+                      : 'Assign Security Policy Waiver'}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {triageType === 'false_positive'
+                      ? 'Suppress vulnerability alert with engineering justification comment'
+                      : 'Create temporary compliance exemption with active expiration'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setTriageType(null);
+                  setActiveTriageFinding(null);
+                }}
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Target Finding Metadata Chip */}
+            <div className="p-3 rounded-xl bg-background/80 border border-border/60 text-xs space-y-1">
+              <span className="text-[10px] text-muted-foreground uppercase font-semibold">Target Finding:</span>
+              <div className="font-semibold text-foreground truncate">{activeTriageFinding.title}</div>
+              <div className="text-[11px] font-mono text-muted-foreground truncate">
+                Fingerprint: {activeTriageFinding.fingerprint}
+              </div>
+            </div>
+
+            {/* Form Fields */}
+            <div className="space-y-4 text-xs">
+              {triageType === 'waiver' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-muted-foreground font-medium flex items-center gap-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-purple-400" /> Approved By:
+                    </label>
+                    <input
+                      type="text"
+                      value={waiverApprover}
+                      onChange={(e) => setWaiverApprover(e.target.value)}
+                      placeholder="e.g. Lead AppSec Architect"
+                      className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground font-sans text-xs focus:ring-1 focus:ring-purple-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-muted-foreground font-medium flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-purple-400" /> Expiry Duration:
+                    </label>
+                    <select
+                      value={waiverDays}
+                      onChange={(e) => setWaiverDays(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground font-sans text-xs focus:ring-1 focus:ring-purple-500 cursor-pointer"
+                    >
+                      <option value={7}>7 Days (Short-term grace)</option>
+                      <option value={14}>14 Days (Sprint cycle)</option>
+                      <option value={30}>30 Days (Standard 1 Month)</option>
+                      <option value={60}>60 Days (2 Months)</option>
+                      <option value={90}>90 Days (Quarterly review)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <label className="text-muted-foreground font-medium flex items-center gap-1.5">
+                  <Send className="w-3.5 h-3.5 text-blue-400" />
+                  {triageType === 'false_positive' ? 'Justification Reason (Required):' : 'Waiver Rationale (Required):'}
+                </label>
+                <textarea
+                  rows={3}
+                  value={justificationNotes}
+                  onChange={(e) => setJustificationNotes(e.target.value)}
+                  placeholder={
+                    triageType === 'false_positive'
+                      ? 'e.g. Verified header is stripped at edge CDN; target behavior is by design'
+                      : 'e.g. Legacy service pending migration in Q4; mitigating WAF controls in place'
+                  }
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground font-sans text-xs focus:ring-1 focus:ring-blue-500 resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/70">
+              <button
+                type="button"
+                onClick={() => {
+                  setTriageType(null);
+                  setActiveTriageFinding(null);
+                }}
+                className="px-3.5 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground text-xs font-medium hover:bg-accent transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  !justificationNotes.trim() ||
+                  (triageType === 'waiver' ? assignWaiverMutation.isPending : triageMutation.isPending)
+                }
+                onClick={() => {
+                  if (triageType === 'false_positive') {
+                    triageMutation.mutate({
+                      findingId: activeTriageFinding.id,
+                      status: 'false_positive',
+                      notes: justificationNotes.trim(),
+                    });
+                  } else {
+                    assignWaiverMutation.mutate({
+                      finding: activeTriageFinding,
+                      reason: justificationNotes.trim(),
+                      approvedBy: waiverApprover.trim() || 'AppSec Engineer',
+                      days: waiverDays,
+                    });
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-sm cursor-pointer disabled:opacity-50 ${
+                  triageType === 'false_positive'
+                    ? 'bg-amber-600 hover:bg-amber-500'
+                    : 'bg-purple-600 hover:bg-purple-500'
+                }`}
+              >
+                {(triageType === 'waiver' ? assignWaiverMutation.isPending : triageMutation.isPending) && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                )}
+                <span>
+                  {triageType === 'false_positive' ? 'Confirm False Positive' : 'Assign Policy Waiver'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

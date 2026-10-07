@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { EvaluateReleaseModal } from './EvaluateReleaseModal.js';
 import { Pagination } from './Pagination.js';
+import { LiveRunMonitor } from './LiveRunMonitor.js';
+import { LatencyDistributionChart } from './LatencyDistributionChart.js';
 import { useAppStore } from '../store/useAppStore.js';
 
 interface Target {
@@ -218,6 +220,16 @@ const RunMetricsDetails: React.FC<{ runId: string; apiUrl: string }> = ({ runId,
           </div>
         )}
       </div>
+
+      {(p95 !== undefined || med !== undefined || p99 !== undefined) && (
+        <LatencyDistributionChart
+          p50={med}
+          p90={metricMap['http_req_duration_p90']}
+          p95={p95}
+          p99={p99}
+          slaThresholdMs={500}
+        />
+      )}
     </div>
   );
 };
@@ -248,6 +260,7 @@ export const RunsView: React.FC = () => {
   const [isSimulated, setIsSimulated] = useState<boolean>(true);
   const [declarativeYaml, setDeclarativeYaml] = useState(DEFAULT_DECLARATIVE_YAML);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [activeStreamingRunId, setActiveStreamingRunId] = useState<string | null>(null);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -372,6 +385,7 @@ export const RunsView: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['findings'] });
       if (data?.testRun?.id) {
         setExpandedRunId(data.testRun.id);
+        setActiveStreamingRunId(data.testRun.id);
       }
     },
   });
@@ -930,6 +944,24 @@ export const RunsView: React.FC = () => {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                setActiveStreamingRunId(activeStreamingRunId === run.id ? null : run.id);
+                                if (!isExpanded) setExpandedRunId(run.id);
+                              }}
+                              title="Toggle Real-Time Telemetry Stream"
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono border transition-all cursor-pointer ${
+                                activeStreamingRunId === run.id || run.status === 'running'
+                                  ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm'
+                                  : 'bg-accent/60 hover:bg-accent text-muted-foreground hover:text-foreground border-border/60'
+                              }`}
+                            >
+                              <Activity className={`w-3 h-3 text-blue-400 ${run.status === 'running' ? 'animate-pulse' : ''}`} />
+                              <span>Live Stream</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 copyToClipboard(`security-lab test findings --run ${run.id}`, 'CLI findings command');
                               }}
                               title="Copy CLI command to inspect findings"
@@ -942,7 +974,21 @@ export const RunsView: React.FC = () => {
 
                         {/* Expanded Run Details */}
                         {isExpanded && (
-                          <div className="p-4 border-t border-border bg-background/50 space-y-3 animate-fade-in">
+                          <div className="p-4 border-t border-border bg-background/50 space-y-4 animate-fade-in">
+                            {/* Real-time SSE Telemetry Stream Component */}
+                            {(activeStreamingRunId === run.id || run.status === 'running' || run.status === 'queued') && (
+                              <LiveRunMonitor
+                                runId={run.id}
+                                targetUrl={target?.baseUrl}
+                                initialStatus={run.status}
+                                onComplete={() => {
+                                  queryClient.invalidateQueries({ queryKey: ['test-runs'] });
+                                  queryClient.invalidateQueries({ queryKey: ['findings'] });
+                                  queryClient.invalidateQueries({ queryKey: ['test-run-metrics', run.id] });
+                                }}
+                              />
+                            )}
+
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                               <div className="p-2.5 rounded-xl bg-card border border-border/60">
                                 <span className="text-muted-foreground block text-[11px]">Total Tests</span>

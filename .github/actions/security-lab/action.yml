@@ -1,0 +1,73 @@
+name: 'Security Lab Release Gate'
+description: 'Fast, standalone security & resilience testing gate for CI/CD pipelines without daemon or database dependencies'
+author: 'Security Lab Team'
+
+inputs:
+  target-url:
+    description: 'Target URL to test against'
+    required: false
+  config-file:
+    description: 'Path to .securitylab.yaml configuration file'
+    required: false
+    default: '.securitylab.yaml'
+  sarif-output:
+    description: 'File path to write SARIF report (e.g. security-lab.sarif)'
+    required: false
+    default: 'security-lab.sarif'
+  junit-output:
+    description: 'File path to write JUnit report (e.g. junit.xml)'
+    required: false
+    default: 'junit.xml'
+  fail-on:
+    description: 'Failure decision threshold (failed, warning, never)'
+    required: false
+    default: 'failed'
+  engines:
+    description: 'Specific Class A engines to run (space separated: headers cors tls auth bola contract)'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Execute Security Lab Standalone Gate
+      shell: bash
+      run: |
+        set -e
+        echo "::group::🛡️ Security Lab Standalone Execution"
+
+        CLI_EXEC="node apps/cli/dist/index.js"
+        if [ ! -f "apps/cli/dist/index.js" ]; then
+          if command -v security-lab &> /dev/null; then
+            CLI_EXEC="security-lab"
+          else
+            echo "Building CLI binary..."
+            pnpm --filter @security-lab/cli build
+          fi
+        fi
+
+        CMD="$CLI_EXEC run --local"
+
+        if [ -n "${{ inputs.target-url }}" ]; then
+          CMD="$CMD --target ${{ inputs.target-url }}"
+        fi
+
+        if [ -f "${{ inputs.config-file }}" ]; then
+          CMD="$CMD --config ${{ inputs.config-file }}"
+        fi
+
+        if [ -n "${{ inputs.sarif-output }}" ]; then
+          CMD="$CMD --format sarif --output ${{ inputs.sarif-output }}"
+        fi
+
+        if [ -n "${{ inputs.fail-on }}" ]; then
+          CMD="$CMD --fail-on ${{ inputs.fail-on }}"
+        fi
+
+        if [ -n "${{ inputs.engines }}" ]; then
+          CMD="$CMD --engines ${{ inputs.engines }}"
+        fi
+
+        echo "Running command: $CMD"
+        $CMD
+
+        echo "::endgroup::"

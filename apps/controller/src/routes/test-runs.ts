@@ -6,6 +6,11 @@ import { executionManager } from '../services/execution-manager.js';
 import { findingsService } from '../services/findings.service.js';
 import { evidenceService } from '../services/evidence.service.js';
 import { metricsService } from '../services/metrics.service.js';
+import {
+  RunLifecycleEvent,
+  EngineLifecycleEvent,
+  ExecutionProgressEvent,
+} from '../services/execution-events.js';
 
 export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. Create & Queue TestRun
@@ -69,6 +74,101 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       success: true,
       data: run,
     });
+  });
+
+  // 3b. Real-Time Execution SSE Stream
+  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/stream', async (request, reply) => {
+    const { id } = request.params;
+    const run = await testRunsService.getTestRunById(id);
+    if (!run) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${id}" not found`,
+        },
+      });
+    }
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    const streamLogger = request.log.child({ testRunId: id, sse: true });
+    streamLogger.info('SSE client connected for test-run stream');
+
+    const sendEvent = (event: string, data: unknown) => {
+      try {
+        reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch (err) {
+        streamLogger.warn({ err }, 'Error writing SSE event to stream');
+      }
+    };
+
+    // Initial snapshot
+    sendEvent('init', {
+      testRunId: run.id,
+      status: run.status,
+      summary: run.summary,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (['completed', 'failed', 'cancelled'].includes(run.status)) {
+      sendEvent('run_completed', {
+        testRunId: run.id,
+        status: run.status,
+        summary: run.summary,
+        timestamp: new Date().toISOString(),
+      });
+      reply.raw.end();
+      return;
+    }
+
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      clearInterval(heartbeat);
+      executionManager.off(`run:${id}`, onRun);
+      executionManager.off(`engine:${id}`, onEngine);
+      executionManager.off(`progress:${id}`, onProgress);
+      streamLogger.info('SSE client disconnected, listeners cleaned up');
+    };
+
+    const onRun = (event: RunLifecycleEvent) => {
+      sendEvent('run', event);
+      if (['completed', 'failed', 'cancelled'].includes(event.status)) {
+        sendEvent('run_completed', event);
+        cleanup();
+        reply.raw.end();
+      }
+    };
+
+    const onEngine = (event: EngineLifecycleEvent) => {
+      sendEvent('engine', event);
+    };
+
+    const onProgress = (event: ExecutionProgressEvent) => {
+      sendEvent('progress', event);
+    };
+
+    executionManager.on(`run:${id}`, onRun);
+    executionManager.on(`engine:${id}`, onEngine);
+    executionManager.on(`progress:${id}`, onProgress);
+
+    const heartbeat = setInterval(() => {
+      try {
+        reply.raw.write(': heartbeat\n\n');
+      } catch {
+        clearInterval(heartbeat);
+      }
+    }, 15000);
+
+    request.raw.on('close', cleanup);
+    request.raw.on('error', cleanup);
   });
 
   // 4. Execute TestRun (Asynchronous Queue Decoupled from HTTP Response)
