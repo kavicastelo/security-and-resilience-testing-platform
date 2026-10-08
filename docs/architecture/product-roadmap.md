@@ -128,6 +128,9 @@ Phase 14: Web Dashboard Productization & Real-Time Telemetry
    │
    ▼
 Phase 15: Distributed Agent Architecture & Hybrid Cloud / SaaS Foundation
+   │
+   ▼
+Phase 16: Distributed Agent Trust Boundary & Secure Execution Plane
 ```
 
 ---
@@ -604,6 +607,39 @@ Phase 15: Distributed Agent Architecture & Hybrid Cloud / SaaS Foundation
 
 ---
 
+### Phase 16 — Distributed Agent Trust Boundary & Secure Execution Plane
+* **Objective**: Transform distributed agent execution into a cryptographically verified, tenant-isolated, atomic, and secure execution plane.
+* **Why this phase exists**: Phase 15 proved distributed execution viability, but an architectural audit revealed critical trust boundary vulnerabilities: unauthenticated agent enrollment, client-controlled tenant headers, cross-tenant job completion, non-atomic polling races, unsigned findings, and privileged Docker socket mounts. Phase 16 closes every vulnerability.
+* **Current-state dependencies**: Phase 15 code baseline.
+* **Prerequisites**: Phase 15.
+* **Implementation scope**:
+  - Divided into 11 sub-phases (16.0 to 16.10).
+  - Pre-shared Tenant Enrollment Keys (TEK), token expiration, revocation, and rotation.
+  - Contextual tenant derivation (eliminate client header trust).
+  - Atomic leasing (`FOR UPDATE SKIP LOCKED`), lease timeouts, and background watchdog reaper.
+  - Result attestation HMAC signatures and idempotent completion deduplication.
+  - Cryptographically signed target scopes and in-agent metadata SSRF defenses.
+  - Bidirectional cancellation propagation and rate limiting.
+  - Elimination of Docker socket mounts from deployment manifests.
+  - Protocol versioning headers and capability-based routing.
+  - Append-only security audit event logging.
+  - Comprehensive adversarial penetration testing.
+* **Out of scope**: Public billing, enterprise SSO (SAML/OIDC).
+* **Affected packages**: `@security-lab/contracts`, `@security-lab/domain`, `@security-lab/test-sdk`.
+* **Affected applications**: `apps/controller`, `apps/agent`.
+* **Affected database tables**: `tenant_enrollment_keys`, `agent_audit_events`, alter `agents`, alter `agent_jobs`.
+* **Affected APIs**: All agent endpoints (`/register`, `/heartbeat`, `/poll`, `/jobs/*`).
+* **Affected tests**: `tests/security/distributed-agent-boundaries.test.ts`, `tests/security/distributed-agent-penetration.test.ts`.
+* **Security considerations**: Cryptographic result attestation, CIS benchmark compliance, complete cross-tenant barrier.
+* **Migration considerations**: Forward-only SQL migration `0007_agent_trust_boundary.sql`.
+* **Expected deliverables**: Hardened agent daemon, secure controller dispatcher, 11 sub-phase prompt library, adversarial test battery.
+* **Acceptance criteria**: 100% of 18 threat scenarios demonstrably mitigated in automated tests; zero regressions across existing 269 tests.
+* **Validation commands**: `pnpm test && pnpm run typecheck && pnpm run lint`.
+* **Rollback strategy**: Git revert.
+* **Definition of Done**: A controller can safely dispatch an authorized test job to a remote agent, and the platform can cryptographically and deterministically establish authentic execution without breaking tenant isolation or local-first operation.
+
+---
+
 ## 5. Implementation Roadmap Summary Matrix
 
 | Phase | Phase Name | Primary Objective | Risk Addressed | Target Horizon |
@@ -624,3 +660,4 @@ Phase 15: Distributed Agent Architecture & Hybrid Cloud / SaaS Foundation
 | **13** | CLI Productization | Offline local runner, GitHub Action | High friction for developers | **Enterprise V2** |
 | **14** | Dashboard Productization | Real-time SSE progress, finding triage, charts | Lack of visibility & triage UI | **Enterprise V2** |
 | **15** | Distributed Agent Architecture | Decoupled agent worker for private VPCs | Inability to test internal networks | **SaaS / Hybrid** |
+| **16** | Distributed Agent Trust Boundary | Cryptographic attestation, atomic leases, tenant isolation | **CRITICAL (P0)** Agent Hijack & Forgery | **SaaS Trust Boundary** |

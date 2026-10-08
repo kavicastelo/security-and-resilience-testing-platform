@@ -28,6 +28,7 @@ export interface CreateEvidenceParams {
 import { canonicalizeJson } from './canonical-json.js';
 
 export * from './canonical-json.js';
+export * from './attestation.js';
 
 /**
  * Computes a deterministic SHA-256 fingerprint of the evidence payload
@@ -112,3 +113,7 @@ export class InMemoryEvidenceStore implements EvidenceStore {
       .map((rec) => ({ ...rec }));
   }
 }
+
+export * from './canonical-json.js';
+export * from './attestation.js';
+

@@ -229,7 +229,17 @@ describe('Phase 15: Distributed Agent Architecture & Multi-Tenant SaaS Integrati
     agentAClient = new AgentClient(controllerUrl);
     agentBClient = new AgentClient(controllerUrl);
 
-    // Register Agent A for Tenant Alpha
+    // Provision Master Tenant Enrollment Key (TEK) for Tenant Alpha
+    const tekARes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/tenants/${tenantA.id}/enrollment-keys`,
+      payload: { name: 'Alpha Agent Enrollment Key' },
+    });
+    expect(tekARes.statusCode).toBe(201);
+    const tekA = tekARes.json().data.key;
+    expect(tekA).toMatch(/^tek_/);
+
+    // Register Agent A for Tenant Alpha using TEK
     agentAData = await agentAClient.register(
       {
         name: 'agent-alpha-vpc-01',
@@ -237,24 +247,36 @@ describe('Phase 15: Distributed Agent Architecture & Multi-Tenant SaaS Integrati
         capabilities: ['native-http', 'auth-audit', 'declarative-dsl'],
         systemInfo: { arch: 'x64', platform: 'linux', cpus: 4, memoryMb: 8192 },
       },
-      tenantA.id,
+      tekA,
     );
 
     expect(agentAData.agentId).toBeDefined();
     expect(agentAData.token).toMatch(/^agt_sec_[a-f0-9]{64}$/);
+    expect(agentAData.tokenExpiresAt).toBeDefined();
     expect(agentAData.tenantId).toBe(tenantA.id);
 
     // Verify database token hashing invariant: plaintext token must NEVER exist in DB
     const { sql } = getDatabase();
     const [agentARecord] = await sql`
-      SELECT id, token_hash FROM agents WHERE id = ${agentAData.agentId} LIMIT 1
+      SELECT id, token_hash, expires_at FROM agents WHERE id = ${agentAData.agentId} LIMIT 1
     `;
 
     expect(agentARecord).toBeDefined();
     expect(agentARecord.token_hash).toBe(hashAgentToken(agentAData.token));
     expect(agentARecord.token_hash).not.toBe(agentAData.token);
+    expect(agentARecord.expires_at).toBeDefined();
 
-    // Register Agent B for Tenant Beta
+    // Provision Master Tenant Enrollment Key (TEK) for Tenant Beta
+    const tekBRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/tenants/${tenantB.id}/enrollment-keys`,
+      payload: { name: 'Beta Agent Enrollment Key' },
+    });
+    expect(tekBRes.statusCode).toBe(201);
+    const tekB = tekBRes.json().data.key;
+    expect(tekB).toMatch(/^tek_/);
+
+    // Register Agent B for Tenant Beta using TEK
     agentBData = await agentBClient.register(
       {
         name: 'agent-beta-vpc-01',
@@ -262,11 +284,12 @@ describe('Phase 15: Distributed Agent Architecture & Multi-Tenant SaaS Integrati
         capabilities: ['native-http', 'auth-audit'],
         systemInfo: { arch: 'x64', platform: 'linux', cpus: 8, memoryMb: 16384 },
       },
-      tenantB.id,
+      tekB,
     );
 
     expect(agentBData.agentId).toBeDefined();
     expect(agentBData.token).toMatch(/^agt_sec_[a-f0-9]{64}$/);
+    expect(agentBData.tokenExpiresAt).toBeDefined();
     expect(agentBData.tenantId).toBe(tenantB.id);
 
     // Verify Tenant isolation in Agent listing:

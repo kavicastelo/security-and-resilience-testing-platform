@@ -13,11 +13,12 @@ export class AgentDaemon {
   private heartbeatTimer?: NodeJS.Timeout;
   private pollTimer?: NodeJS.Timeout;
   private activeJobsCount = 0;
+  private readonly activeLeaseIds = new Set<string>();
 
   constructor(config: AgentConfig) {
     this.config = config;
     this.client = new AgentClient(config.controllerUrl, config.agentToken);
-    this.worker = new AgentWorker(this.client);
+    this.worker = new AgentWorker(this.client, { allowLocalTesting: config.allowLocalTesting });
     this.agentId = config.agentId;
   }
 
@@ -45,6 +46,7 @@ export class AgentDaemon {
             hostname: os.hostname(),
           },
         },
+        this.config.enrollmentKey,
         this.config.tenantId,
       );
 
@@ -64,10 +66,17 @@ export class AgentDaemon {
       if (!this.isRunning || !this.agentId) return;
       try {
         const memUsage = process.memoryUsage();
-        await this.client.heartbeat(this.agentId, this.activeJobsCount > 0 ? 'busy' : 'online', {
-          memoryUsageMb: Math.round(memUsage.heapUsed / 1024 / 1024),
-          activeJobsCount: this.activeJobsCount,
-        });
+        const activeLeases = Array.from(this.activeLeaseIds);
+        await this.client.heartbeat(
+          this.agentId,
+          this.activeJobsCount > 0 ? 'busy' : 'online',
+          {
+            memoryUsageMb: Math.round(memUsage.heapUsed / 1024 / 1024),
+            activeJobsCount: this.activeJobsCount,
+          },
+          activeLeases[0],
+          activeLeases,
+        );
       } catch (err: unknown) {
         logger.warn({ err }, 'Agent heartbeat check-in failed');
       }
@@ -92,11 +101,17 @@ export class AgentDaemon {
 
           if (jobs.length > 0) {
             for (const job of jobs) {
+              if (job.leaseId) {
+                this.activeLeaseIds.add(job.leaseId);
+              }
               this.activeJobsCount++;
               try {
                 await this.worker.executeJob(job);
               } finally {
                 this.activeJobsCount--;
+                if (job.leaseId) {
+                  this.activeLeaseIds.delete(job.leaseId);
+                }
               }
             }
           }

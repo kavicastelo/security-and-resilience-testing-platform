@@ -120,8 +120,10 @@ export class TestRunsService {
     id: string,
     status: TestRunStatus,
     summary?: TestRunSummary,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dbClient?: any,
   ): Promise<TestRun> {
-    const { db } = getDatabase();
+    const db = dbClient || getDatabase().db;
     const updateValues: Record<string, unknown> = { status };
 
     if (status === 'running') {

@@ -1,6 +1,8 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { CreateTenantEnrollmentKeySchema } from '@security-lab/contracts';
 import { tenantsService } from '../services/tenants.service.js';
+import { enrollmentKeysService } from '../services/enrollment-keys.service.js';
 
 const CreateTenantSchema = z.object({
   name: z.string().min(2).max(100),
@@ -70,4 +72,75 @@ export async function tenantsRoutes(fastify: FastifyInstance) {
       data: tenant,
     });
   });
+
+  // POST /api/v1/tenants/:tenantId/enrollment-keys
+  fastify.post(
+    '/:tenantId/enrollment-keys',
+    async (request: FastifyRequest<{ Params: { tenantId: string } }>, reply: FastifyReply) => {
+      const { tenantId } = request.params;
+      const parseResult = CreateTenantEnrollmentKeySchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: parseResult.error.errors.map((e) => e.message).join(', '),
+          },
+        });
+      }
+
+      try {
+        const keyResponse = await enrollmentKeysService.createEnrollmentKey(
+          tenantId,
+          parseResult.data,
+        );
+        return reply.status(201).send({
+          success: true,
+          data: keyResponse,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'ENROLLMENT_KEY_CREATION_FAILED', message: msg },
+        });
+      }
+    },
+  );
+
+  // GET /api/v1/tenants/:tenantId/enrollment-keys
+  fastify.get(
+    '/:tenantId/enrollment-keys',
+    async (request: FastifyRequest<{ Params: { tenantId: string } }>, reply: FastifyReply) => {
+      const { tenantId } = request.params;
+      const list = await enrollmentKeysService.listEnrollmentKeys(tenantId);
+      return reply.status(200).send({
+        success: true,
+        data: list,
+      });
+    },
+  );
+
+  // POST /api/v1/tenants/:tenantId/enrollment-keys/:keyId/revoke
+  fastify.post(
+    '/:tenantId/enrollment-keys/:keyId/revoke',
+    async (
+      request: FastifyRequest<{ Params: { tenantId: string; keyId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const { tenantId, keyId } = request.params;
+      const revoked = await enrollmentKeysService.revokeEnrollmentKey(tenantId, keyId);
+      if (!revoked) {
+        return reply.status(404).send({
+          success: false,
+          error: { code: 'NOT_FOUND', message: `Enrollment key "${keyId}" not found or already revoked` },
+        });
+      }
+
+      return reply.status(200).send({
+        success: true,
+        message: 'Tenant enrollment key revoked successfully',
+      });
+    },
+  );
 }

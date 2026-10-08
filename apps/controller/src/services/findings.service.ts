@@ -117,10 +117,10 @@ export class FindingsService {
    * - New finding: inserted with status 'open' and occurrenceCount = 1.
    * - Existing 'open' / 'acknowledged' / 'in_progress': increments occurrenceCount and updates lastDetectedAt.
    * - Existing 'resolved': transitions status to 'regressed', updates lastDetectedAt, logs regression event.
-   * - Existing 'false_positive' / 'accepted_risk' / 'ignored': preserves triaged status while updating timestamps.
    */
-  async saveFinding(input: CreateFindingInput): Promise<Finding> {
-    const { db } = getDatabase();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async saveFinding(input: CreateFindingInput, dbClient?: any): Promise<Finding> {
+    const db = dbClient || getDatabase().db;
 
     // Query existing finding with identical fingerprint for this specific target
     const [existing] = await db

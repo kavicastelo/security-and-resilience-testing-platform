@@ -392,6 +392,30 @@ export const credentials = pgTable(
   ],
 );
 
+export const tenantEnrollmentKeys = pgTable(
+  'tenant_enrollment_keys',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    keyHash: varchar('key_hash', { length: 64 }).notNull(),
+    keyPrefix: varchar('key_prefix', { length: 32 }).notNull(),
+    maxUses: integer('max_uses'),
+    usesCount: integer('uses_count').notNull().default(0),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_tek_tenant_id').on(table.tenantId),
+    index('idx_tek_key_hash').on(table.keyHash),
+    index('idx_tek_expires_at').on(table.expiresAt),
+  ],
+);
+
 export const agents = pgTable(
   'agents',
   {
@@ -406,6 +430,9 @@ export const agents = pgTable(
     tags: jsonb('tags').notNull().default([]),
     systemInfo: jsonb('system_info').notNull().default({}),
     lastHeartbeatAt: timestamp('last_heartbeat_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revocationReason: varchar('revocation_reason', { length: 100 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -413,6 +440,8 @@ export const agents = pgTable(
     index('idx_agents_tenant_id').on(table.tenantId),
     index('idx_agents_token_hash').on(table.tokenHash),
     index('idx_agents_status').on(table.status),
+    index('idx_agents_expires_at').on(table.expiresAt),
+    index('idx_agents_revoked_at').on(table.revokedAt),
   ],
 );
 
@@ -427,7 +456,11 @@ export const agentJobs = pgTable(
     testRunId: uuid('test_run_id')
       .notNull()
       .references(() => testRuns.id, { onDelete: 'cascade' }),
-    status: varchar('status', { length: 30 }).notNull().default('pending'),
+    status: varchar('status', { length: 30 }).notNull().default('queued'),
+    leaseId: uuid('lease_id'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(3),
     payload: jsonb('payload').notNull().default({}),
     result: jsonb('result'),
     error: text('error'),
@@ -441,5 +474,8 @@ export const agentJobs = pgTable(
     index('idx_agent_jobs_tenant_id').on(table.tenantId),
     index('idx_agent_jobs_test_run_id').on(table.testRunId),
     index('idx_agent_jobs_status').on(table.status),
+    index('idx_agent_jobs_reaper').on(table.status, table.leaseExpiresAt),
+    index('idx_agent_jobs_lease_id').on(table.leaseId),
+    index('idx_agent_jobs_claim').on(table.tenantId, table.status, table.attempts),
   ],
 );

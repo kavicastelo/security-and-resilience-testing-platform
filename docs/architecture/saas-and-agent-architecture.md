@@ -113,18 +113,50 @@ Every query in controller services filters by `tenant_id`, guaranteeing cross-te
 
 ## 4. Agent Protocol & Lifecycle
 
-### Step 1: Enrollment & Registration
-The customer generates an agent enrollment request via the dashboard or CLI:
+### Step 1: Tenant Enrollment Key (TEK) Generation & Agent Registration
+
+#### Step 1a: Tenant Admin Provisions TEK
+The organization administrator provisions a cryptographically random, two-tiered Tenant Enrollment Key (TEK) with optional expiration and usage caps:
+```http
+POST /api/v1/tenants/:tenantId/enrollment-keys
+Content-Type: application/json
+
+{
+  "name": "Production VPC CI Key",
+  "maxUses": 10,
+  "expiresInDays": 30
+}
+```
+**Response (`201 Created`)**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "e4a1599f-72d8-4f51-b856-bbba09ec2541",
+    "tenantId": "c1313d63-6e53-47b3-b308-57c99ee3520f",
+    "name": "Production VPC CI Key",
+    "key": "tek_default_e4a1599fa28c...<32 random bytes>",
+    "keyPrefix": "tek_default_e4a1...",
+    "maxUses": 10,
+    "usesCount": 0,
+    "expiresAt": "2026-11-07T07:30:00.000Z",
+    "createdAt": "2026-10-08T02:00:00.000Z"
+  }
+}
+```
+*Security Invariant (Rule 17)*: Plaintext `key` is returned **only once** upon creation. Only its SHA-256 hash is persisted in `tenant_enrollment_keys`.
+
+#### Step 1b: Agent Registration / Enrollment
+The agent daemon initiates registration using the TEK in the `Authorization` header. Tenant identity is derived strictly from the TEK; client `x-tenant-id` headers are ignored:
 ```http
 POST /api/v1/agents/register
-Headers:
-  x-tenant-id: <TENANT_UUID>
+Authorization: Bearer tek_default_e4a1599fa28c...
 Content-Type: application/json
 
 {
   "name": "internal-vpc-agent-01",
   "tags": ["vpc-internal", "staging"],
-  "capabilities": ["native-http", "auth-audit", "docker-sandbox"],
+  "capabilities": ["native-http", "auth-audit", "declarative-dsl"],
   "systemInfo": {
     "arch": "x64",
     "platform": "linux",
@@ -133,16 +165,28 @@ Content-Type: application/json
   }
 }
 ```
-**Response**:
+**Response (`201 Created`)**:
 ```json
 {
-  "agentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "name": "internal-vpc-agent-01",
-  "token": "agt_sec_e8b919...<32 random bytes>",
-  "tenantId": "00000000-0000-0000-0000-000000000000"
+  "success": true,
+  "data": {
+    "agentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "tenantId": "c1313d63-6e53-47b3-b308-57c99ee3520f",
+    "name": "internal-vpc-agent-01",
+    "token": "agt_sec_e8b919...<32 random bytes>",
+    "tokenExpiresAt": "2027-01-06T02:00:00.000Z",
+    "status": "offline",
+    "tags": ["vpc-internal", "staging"],
+    "capabilities": ["native-http", "auth-audit", "declarative-dsl"],
+    "createdAt": "2026-10-08T02:00:00.000Z"
+  }
 }
 ```
-*Security Invariant*: The raw `token` is shown **only once**. The control plane stores only `SHA-256(token)`.
+*Security Invariants*:
+1. The plaintext instance `token` is shown **only once**. The database stores only `SHA-256(token)`.
+2. The agent token is assigned an explicit expiration (`expires_at`), defaulting to 90 days.
+3. If an agent is revoked (`POST /api/v1/agents/:id/revoke`), all subsequent requests immediately return `401 Agent Revoked`.
+4. Active agents can seamlessly rotate tokens via `POST /api/v1/agents/rotate-token`.
 
 ### Step 2: Health Heartbeat & Metrics Telemetry
 The agent sends periodic heartbeats every 10 seconds:
@@ -255,17 +299,26 @@ The control plane:
 
 ## 5. Deployment Guide
 
+### Step 0: Provision Tenant Enrollment Key (TEK)
+Before deploying any agent instance, obtain a TEK from your organization dashboard or via API:
+```bash
+curl -X POST https://securitylab.mycompany.com/api/v1/tenants/$TENANT_ID/enrollment-keys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Cluster-West-Agent-Key", "maxUses": 5, "expiresInDays": 30}'
+# Output contains: "key": "tek_default_a1b2c3..."
+```
+
 ### Option A: Kubernetes (Recommended for Clusters)
 Deploy the agent using the provided manifest:
 ```bash
 kubectl apply -f infrastructure/k8s/agent.yaml
 ```
 
-Update the secret with your enrollment token:
+Update the secret with your enrollment key:
 ```bash
 kubectl create secret generic security-lab-agent-credentials \
   --namespace security-lab \
-  --from-literal=agent-token="agt_sec_YOUR_ENROLLMENT_TOKEN" \
+  --from-literal=agent-enrollment-key="tek_default_YOUR_ENROLLMENT_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
@@ -275,23 +328,19 @@ docker run -d \
   --name security-lab-agent \
   --restart unless-stopped \
   -e SECURITY_LAB_CONTROLLER_URL="https://securitylab.mycompany.com" \
-  -e SECURITY_LAB_AGENT_TOKEN="agt_sec_YOUR_ENROLLMENT_TOKEN" \
+  -e SECURITY_LAB_AGENT_ENROLLMENT_KEY="tek_default_YOUR_ENROLLMENT_KEY" \
   -e SECURITY_LAB_AGENT_NAME="aws-vpc-us-east-1" \
   -e SECURITY_LAB_AGENT_TAGS="vpc,aws,prod" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/kavicastelo/security-lab-agent:latest
 ```
 
 ### Option C: CLI Standalone Daemon (Developer Testing)
 ```bash
-# Register agent
-security-lab-agent register --name "dev-agent" --controller "http://localhost:3000"
-
-# Start agent
-security-lab-agent start \
-  --controller "http://localhost:3000" \
-  --token "agt_sec_..." \
-  --name "dev-agent" \
+# Start agent daemon with enrollment key
+pnpm --filter @security-lab/agent dev \
+  --controller "http://localhost:4000" \
+  --enrollment-key "tek_default_..." \
+  --name "local-dev-agent" \
   --tags "local,dev"
 ```
 
@@ -301,7 +350,11 @@ security-lab-agent start \
 
 | Rule | Requirement | Implementation Status |
 | :--- | :--- | :--- |
+| **Rule 4** | Multi-Tenancy by Design | **Compliant**: Every agent is permanently bound to a verified Tenant ID derived from a validated TEK. |
+| **Rule 5** | No Implicit Trust of Client Headers | **Compliant**: Registration ignores client-provided `x-tenant-id`; tenant is strictly resolved from the authenticated TEK record. |
+| **Rule 17** | No Plaintext Secrets in Persistence or Logs | **Compliant**: Plaintext TEK and Agent Instance Tokens are hashed with SHA-256 before persistence and masked in logs. |
 | **Rule 18** | Future SaaS must reuse local execution contracts | **Compliant**: `apps/agent` directly imports `@security-lab/test-sdk` engines, registries, and normalizers. Zero custom scanning code or divergent contracts. |
 | **Rule 19** | Local offline developer mode must never break | **Compliant**: Default tenant `00000000-0000-0000-0000-000000000000` is automatically provisioned. Controller functions identically without `x-tenant-id` header. Standalone CLI and in-process execution remain 100% operational. |
 | **Outbound Only** | No incoming ports to customer environments | **Compliant**: Agent uses outbound HTTPS polling (`POST /poll`) and heartbeats (`POST /heartbeat`). |
-| **Credential Security** | Agent tokens hashed before storage | **Compliant**: SHA-256 token hashing in database with `agt_sec_` prefix validation. |
+| **Credential Lifecycle** | Mandatory token expiration, revocation, rotation | **Compliant**: Agent tokens expire after 90 days, support instant administrative revocation (`/revoke`), and zero-downtime rotation (`/rotate-token`). |
+

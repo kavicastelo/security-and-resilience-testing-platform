@@ -24,6 +24,8 @@ Security Lab is organized as a **TypeScript monorepo** managed with `pnpm` and T
 | **Authorization / BOLA** | Domain placeholders and documentation READMEs only (`engines/authorization/README.md`). Zero runnable code. | Full BOLA/IDOR matrix testing engine with identity profiles, permission matrix evaluations, and cross-tenant privilege escalation audits. |
 | **Data Persistence** | PostgreSQL via Drizzle ORM. Missing tables for definitions, reports, artifacts, credentials, identities. Missing indexes in Drizzle schema. | Full relational schema with indexes, finding lifecycle tracking (`open`, `resolved`, `regressed`), append-only forensic audit triggers, and artifact metadata. |
 | **Evidence Immutability** | Cryptographic hash computed via `JSON.stringify` (non-canonical key order) and in-memory `Object.freeze`. Database allows arbitrary updates. | Canonical JSON serialization (RFC 8785) with PostgreSQL append-only triggers preventing updates or deletions of evidence records. |
+| **Distributed Agent Execution** | `apps/agent` daemon polls jobs and reports findings via `agentDispatcherService`. Polling is non-atomic; jobs lack leases, timeouts, and result signatures. | Cryptographically attested distributed execution: atomic `SKIP LOCKED` leasing, watchdog reapers, HMAC result signatures, and bidirectional cancellation. |
+| **Multi-Tenancy & Trust** | Tenant tables and foreign keys exist (`0006_saas_multi_tenancy.sql`), but registration is unauthenticated and agent completion endpoints trust any agent token. | Two-tier key hierarchy (TEK), contextual tenant derivation, and strict route-level cross-tenant barriers. |
 
 ---
 
@@ -180,6 +182,20 @@ Two GitHub Actions workflows exist:
 
 ---
 
-## 7. Current Architecture Summary Verdict
+---
 
-The foundation is clean, modular, and well-typed. The TypeScript architecture, Drizzle schemas, Fastify controller, React dashboard, and CLI interfaces establish a strong pattern. However, the execution layer currently relies heavily on simulated fallbacks, in-process fetch loops substituting for heavy workers, string-based scope validation with SSRF bypass vectors, and missing relational models for enterprise features.
+## 7. Distributed Execution & Multi-Tenancy Reality (Phase 15 Baseline)
+
+With the introduction of Phase 15, the monorepo introduced `apps/agent` and SaaS multi-tenancy (`0006_saas_multi_tenancy.sql`). Forensic audit reveals critical trust boundary gaps:
+1. **Agent Registration**: `POST /api/v1/agents/register` allows unauthenticated callers to enroll under arbitrary tenant IDs by passing `x-tenant-id`.
+2. **Cross-Tenant Completion**: Endpoints `/jobs/:jobId/progress`, `/complete`, and `/fail` do not assert that the calling agent owns the job or shares the job's tenant.
+3. **Non-Atomic Polling**: Polling uses an unprotected `SELECT` followed by loop `UPDATE`, creating double-claim race conditions.
+4. **Missing Leases**: Disconnected agents leave jobs in `'dispatched'` indefinitely without timeouts or reapers.
+5. **Docker Socket Exposure**: Deployment manifests mount `/var/run/docker.sock` into the agent container, violating Rule 13.
+6. **Cancellation Failure**: Controller cancellations do not propagate to remote agents, and agent completions overwrite user cancellations.
+
+---
+
+## 8. Current Architecture Summary Verdict
+
+The foundation is clean, modular, and well-typed. The TypeScript architecture, Drizzle schemas, Fastify controller, React dashboard, and CLI interfaces establish a strong pattern. However, the distributed execution layer currently relies heavily on unauthenticated registration, header-based tenant trust, unsigned result payloads, and missing concurrency locking. Phase 16 establishes the hardened trust boundary and secure execution plane.
