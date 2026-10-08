@@ -21,7 +21,7 @@ export const ConfigSchema = z.object({
   PORT: z.coerce.number().int().min(1024).max(65535).default(4000),
   HOST: z.string().default('0.0.0.0'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
-  DATABASE_URL: z.string().url().default('postgresql://postgres:postgres@localhost:5433/security_lab'),
+  DATABASE_URL: z.string().url().default('postgresql://postgres:postgres@localhost:5431/security_lab'),
   DB_MAX_CONNECTIONS: z.coerce.number().int().positive().default(10),
   DB_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
@@ -33,6 +33,7 @@ export const ConfigSchema = z.object({
   EVIDENCE_DIR: z.string().default('./.data/evidence'),
   REPORTS_DIR: z.string().default('./.data/reports'),
   ARTIFACTS_DIR: z.string().default('./.data/artifacts'),
+  BACKUPS_DIR: z.string().default('./.data/backups'),
   MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(5),
   DEFAULT_RUNNER_TIMEOUT_MS: z.coerce.number().int().positive().default(600000),
   ENFORCE_STRICT_SCOPES: z
