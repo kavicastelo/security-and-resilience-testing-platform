@@ -172,7 +172,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobA1Id}/progress`,
-      headers: { authorization: `Bearer ${agentBData.token}` },
+      headers: { authorization: `Bearer ${agentBData.token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: jobA1Id,
         testRunId: testRunA1Id,
@@ -193,7 +193,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobA1Id}/complete`,
-      headers: { authorization: `Bearer ${agentBData.token}` },
+      headers: { authorization: `Bearer ${agentBData.token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: jobA1Id,
         testRunId: testRunA1Id,
@@ -233,7 +233,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobA1Id}/fail`,
-      headers: { authorization: `Bearer ${agentBData.token}` },
+      headers: { authorization: `Bearer ${agentBData.token}`, 'x-protocol-version': '1.0.0' },
       payload: { error: 'Malicious cross-tenant failure injection' },
     });
 
@@ -249,7 +249,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobA1Id}/progress`,
-      headers: { authorization: `Bearer ${agentA2Data.token}` },
+      headers: { authorization: `Bearer ${agentA2Data.token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: jobA1Id,
         testRunId: testRunA1Id,
@@ -270,7 +270,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobA1Id}/complete`,
-      headers: { authorization: `Bearer ${agentA2Data.token}` },
+      headers: { authorization: `Bearer ${agentA2Data.token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: jobA1Id,
         testRunId: testRunA1Id,
@@ -293,7 +293,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobA1Id}/fail`,
-      headers: { authorization: `Bearer ${agentA2Data.token}` },
+      headers: { authorization: `Bearer ${agentA2Data.token}`, 'x-protocol-version': '1.0.0' },
       payload: { error: 'Non-assigned worker trying to fail job' },
     });
 
@@ -312,6 +312,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
       headers: {
         authorization: `Bearer ${agentA1Data.token}`,
         'x-tenant-id': tenantB.id, // Conflict with Agent A1's token tenant!
+        'x-protocol-version': '1.0.0',
       },
       payload: {
         jobId: jobA1Id,
@@ -349,7 +350,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const progRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobA1Id}/progress`,
-      headers: { authorization: `Bearer ${agentA1Data.token}` },
+      headers: { authorization: `Bearer ${agentA1Data.token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: jobA1Id,
         testRunId: testRunA1Id,
@@ -364,7 +365,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const compRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobA1Id}/complete`,
-      headers: { authorization: `Bearer ${agentA1Data.token}` },
+      headers: { authorization: `Bearer ${agentA1Data.token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: jobA1Id,
         testRunId: testRunA1Id,
@@ -434,7 +435,7 @@ describe('Phase 16.2: Tenant Isolation, Contextual Binding & Route Authorization
     const failRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobFailId}/fail`,
-      headers: { authorization: `Bearer ${agentA2Data.token}` },
+      headers: { authorization: `Bearer ${agentA2Data.token}`, 'x-protocol-version': '1.0.0' },
       payload: { error: 'Network timeout to target VPC endpoint' },
     });
 

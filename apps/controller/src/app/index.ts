@@ -1,6 +1,7 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
+import rateLimit from '@fastify/rate-limit';
 import { config } from '../config/index.js';
 import { correlationMiddleware } from '../middleware/correlation.js';
 import { requestLoggerPlugin } from '../plugins/logger.js';
@@ -70,6 +71,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
 
   app.register(sensible);
+  app.register(rateLimit, {
+    global: false,
+  });
 
   // Register Routes
   app.register(healthRoutes);

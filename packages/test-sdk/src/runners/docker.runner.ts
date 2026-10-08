@@ -6,9 +6,10 @@ import {
   MANDATORY_DOCKER_SECURITY_FLAGS,
   VolumeMount,
   ContainerSecurityError,
+  extractImageDigest,
 } from './docker-policy.js';
 
-export { VolumeMount, ContainerSecurityError };
+export { VolumeMount, ContainerSecurityError, extractImageDigest };
 
 export interface DockerRunOptions {
   image: string;
@@ -149,7 +150,17 @@ export class DockerRunner {
       dockerArgs.push(...options.args);
     }
 
-    logger.debug({ image: options.image, containerName }, 'Launching hardened Docker runner container...');
+    logger.debug(
+      {
+        image: options.image,
+        imageDigest: extractImageDigest(options.image),
+        containerName,
+        securityFlags: MANDATORY_DOCKER_SECURITY_FLAGS,
+        network: options.network || 'bridge',
+        user,
+      },
+      'Launching hardened Docker runner container...',
+    );
 
     return new Promise<DockerRunResult>((resolve, reject) => {
       let stdout = '';

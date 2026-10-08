@@ -211,3 +211,27 @@ if (job.leaseId !== report.leaseId || new Date() > job.leaseExpiresAt) {
 - A late completion will **never** resurrect a cancelled test run.
 - A duplicate submission will **never** re-insert findings or duplicate metrics.
 - Stale workers whose leases were reaped cannot corrupt the database.
+
+### 6.3 Cancellation Acknowledgment Protocol
+To prevent continuous transmission of `cancelledJobIds` over heartbeat responses once an agent has handled cancellation:
+1. When the agent daemon receives `cancelledJobIds` in a heartbeat response:
+   - It triggers `abortController.abort()` for the matching active in-flight job.
+   - It fires an immediate acknowledgment: `POST /api/v1/agents/jobs/:jobId/cancel-ack`.
+2. The controller updates the job's `result` column to include `{ cancelledAck: true, acknowledgedAt: "..." }`.
+3. Subsequent heartbeat queries filter out acknowledged jobs (`WHERE (result IS NULL OR result->>'cancelledAck' IS NULL)`), pruning the heartbeat payload.
+4. If an agent calls `/complete` or `/fail` for a job already marked `'cancelled'`, the controller returns `200 OK` with `{ status: 'cancelled', ignored: true }` without updating findings, metrics, or test run status.
+
+### 6.4 Hard Execution Timeouts & Worker Self-Abort
+To prevent runaway execution loops and resource starvation on agents:
+1. Every dispatched job includes `target.scope.limits.maxDuration` (parsed as e.g. `'10m'`, `'15m'`, `'30s'`), defaulting to 15 minutes.
+2. The `AgentWorker` wraps job execution with a timer:
+   - If `maxDuration` is reached before execution completes, a `JobTimeoutError` is raised.
+   - An internal timeout abort signal fires, breaking all engine execution loops and initiating container teardown.
+   - The worker reports failure to the controller with `error: "Job execution exceeded maximum duration timeout: ..."` and `job.timeout_exceeded` is logged.
+
+### 6.5 API Rate Limiting & Resource Governance
+Agent-facing controller endpoints are guarded by `@fastify/rate-limit` and payload body limits to prevent resource exhaustion:
+- `POST /api/v1/agents/heartbeat`: Max 120 requests/minute per agent (keyed by agent ID).
+- `POST /api/v1/agents/poll`: Max 60 requests/minute per agent (keyed by agent ID).
+- `POST /api/v1/agents/jobs/:jobId/complete`: Max body size of 5MB (`bodyLimit: 5242880`), preventing memory exhaustion during massive finding submissions.
+- Excessive requests receive `429 Too Many Requests` with `Retry-After` headers. Payloads exceeding 5MB are rejected with `413 Payload Too Large`.

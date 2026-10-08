@@ -234,13 +234,19 @@ Mounting `/var/run/docker.sock` into an agent container grants effective root on
 ```
 
 ### 6.3 Security Policy for Agent Container Runners
-For the current architecture:
-1. The agent must NEVER expose `/var/run/docker.sock` to third-party network traffic.
-2. In Kubernetes deployments, the agent will execute Class A native engines in-pod. Class B/C scanner containers will be managed via Kubernetes ephemeral jobs rather than hostPath socket mounts.
-3. In Docker deployments, container executions must strictly use `packages/test-sdk/src/runners/docker-policy.ts` rules:
-   - Image allowlist pinned to official repositories (`zaproxy/zaproxy`, `aquasec/trivy`, `grafana/k6`).
-   - Mandatory flags: `--security-opt=no-new-privileges:true`, `--cap-drop=ALL`, `--read-only`, `--user=10001:10001`, `--pids-limit=100`.
-   - Volumes restricted exclusively to temporary scratch paths verified to be subdirectories of `os.tmpdir()`.
+For the ratified architecture (verified in Phase 16.7):
+1. **Zero Socket Exposure**: The agent deployment manifest (`infrastructure/k8s/agent.yaml`) contains zero `/var/run/docker.sock` volume mounts. Pods run unprivileged with `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, and `capabilities.drop: ['ALL']`.
+2. **Execution Profiles**:
+   - **Profile 1: In-Cluster Native Scanning (Kubernetes)**: In-pod execution restricted to Class A native in-process engines (`native-http`, `auth-audit`, `declarative-dsl`).
+   - **Profile 2: Dedicated Execution VM / Bare-Metal Agent (External Runner)**: For running Class B/C container scanners (ZAP, Trivy, k6). The agent runs as a dedicated systemd service under the `securitylab` user on an isolated VM, eliminating container-in-container nesting.
+3. **Runner Policy Hardening (`packages/test-sdk/src/runners/docker-policy.ts`)**:
+   - **Cryptographic Image Digest Pinning**: Allowlist regex accepts SHA-256 image digest pins (`@sha256:[a-fA-F0-9]{64}`) for approved scanner images (`zaproxy/zaproxy`, `aquasec/trivy`, `grafana/k6`). Arbitrary images and command injection attempts are rejected.
+   - **Network Isolation**: `--network=host`, `--net=host`, and `container:...` modes are strictly rejected with `ContainerSecurityError`.
+   - **Volume Traversal Prevention**: Host socket paths (`/var/run/docker.sock`, `/run`, `docker_engine`), host roots (`/`), system directories (`/etc`, `/proc`, `/sys`), and relative traversal paths (`..`) are blocked. Volume mounts are strictly confined to ephemeral subdirectories within `os.tmpdir()`.
+   - **CIS Benchmark Flags**: Mandatory `--security-opt=no-new-privileges:true`, `--cap-drop=ALL`, `--read-only`, `--user=10001:10001`, `--pids-limit=100`, and `--tmpfs=/tmp:rw,noexec,nosuid,size=65536k`.
+4. **Automated Verification**:
+   - `tests/security/platform-security.test.ts` (Section 7: AST audit of `infrastructure/k8s/agent.yaml`, digest pinning, network rejection, volume traversal).
+   - `tests/security/distributed-agent-boundaries.test.ts` (Test 6: SEC-06 verified zero socket exposure).
 
 ---
 

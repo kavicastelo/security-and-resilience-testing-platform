@@ -9,8 +9,8 @@ import {
   ExecutionProgressEvent,
 } from './execution-events.js';
 import { getDatabase } from './db.js';
-import { testExecutions } from './db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { testExecutions, agentJobs } from './db/schema.js';
+import { eq, and, inArray } from 'drizzle-orm';
 
 export interface QueuedExecutionJob {
   testRunId: string;
@@ -228,7 +228,7 @@ export class ExecutionManager extends EventEmitter {
       this.emit('run', cancelEvent);
       this.emit(`run:${testRunId}`, cancelEvent);
 
-      // Update any running executions for this test run
+      // Update any running executions and associated agent_jobs for this test run
       try {
         await db
           .update(testExecutions)
@@ -238,21 +238,75 @@ export class ExecutionManager extends EventEmitter {
             errorMessage: 'Execution aborted by cancellation request',
           })
           .where(and(eq(testExecutions.testRunId, testRunId), eq(testExecutions.status, 'running')));
+
+        await db
+          .update(agentJobs)
+          .set({
+            status: 'cancelled',
+            leaseExpiresAt: null,
+            error: 'Execution cancelled by user',
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(agentJobs.testRunId, testRunId),
+              inArray(agentJobs.status, ['queued', 'leased', 'running']),
+            ),
+          );
       } catch (err) {
-        cancelLogger.error({ err }, 'Failed to update running executions to cancelled');
+        cancelLogger.error({ err }, 'Failed to update running executions or agent_jobs to cancelled');
       }
 
       return { cancelled: true, status: 'cancelled' };
     }
 
-    // 3. Fallback: check database directly
+    // 3. Fallback: check database directly (including remote agent executions)
     const run = await testRunsService.getTestRunById(testRunId);
     if (!run) {
       return { cancelled: false, status: 'not_found', reason: `Test run "${testRunId}" not found` };
     }
 
-    if (run.status === 'pending' || run.status === 'queued') {
+    if (run.status === 'pending' || run.status === 'queued' || run.status === 'running') {
       await testRunsService.updateTestRunStatus(testRunId, 'cancelled');
+
+      try {
+        await db
+          .update(testExecutions)
+          .set({
+            status: 'cancelled',
+            completedAt: new Date(),
+            errorMessage: 'Execution aborted by cancellation request',
+          })
+          .where(and(eq(testExecutions.testRunId, testRunId), eq(testExecutions.status, 'running')));
+
+        await db
+          .update(agentJobs)
+          .set({
+            status: 'cancelled',
+            leaseExpiresAt: null,
+            error: 'Execution cancelled by user',
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(agentJobs.testRunId, testRunId),
+              inArray(agentJobs.status, ['queued', 'leased', 'running']),
+            ),
+          );
+      } catch (err) {
+        cancelLogger.error({ err }, 'Failed to update database records to cancelled');
+      }
+
+      const cancelEvent: RunLifecycleEvent = {
+        testRunId,
+        status: 'cancelled',
+        timestamp: new Date().toISOString(),
+      };
+      this.emit('run', cancelEvent);
+      this.emit(`run:${testRunId}`, cancelEvent);
+
       return { cancelled: true, status: 'cancelled' };
     }
 

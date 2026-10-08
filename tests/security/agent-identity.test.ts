@@ -59,7 +59,7 @@ describe('Phase 16.1: Agent Identity, Enrollment Keys & Authentication Hardening
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/agents/register',
-      headers: { 'x-tenant-id': tenantA.id },
+      headers: { 'x-tenant-id': tenantA.id, 'x-protocol-version': '1.0.0' },
       payload: {
         name: 'unauthorized-anon-agent',
         tags: ['test'],
@@ -79,6 +79,7 @@ describe('Phase 16.1: Agent Identity, Enrollment Keys & Authentication Hardening
       url: '/api/v1/agents/register',
       headers: {
         authorization: 'Bearer tek_forged_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        'x-protocol-version': '1.0.0',
       },
       payload: {
         name: 'fake-tek-agent',
@@ -187,7 +188,7 @@ describe('Phase 16.1: Agent Identity, Enrollment Keys & Authentication Hardening
     const res2 = await app.inject({
       method: 'POST',
       url: '/api/v1/agents/register',
-      headers: { authorization: `Bearer ${tek}` },
+      headers: { authorization: `Bearer ${tek}`, 'x-protocol-version': '1.0.0' },
       payload: { name: 'ephemeral-agent-2', tags: [], capabilities: [] },
     });
 
@@ -221,7 +222,7 @@ describe('Phase 16.1: Agent Identity, Enrollment Keys & Authentication Hardening
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/agents/register',
-      headers: { authorization: `Bearer ${tekData.key}` },
+      headers: { authorization: `Bearer ${tekData.key}`, 'x-protocol-version': '1.0.0' },
       payload: { name: 'expired-key-agent', tags: [], capabilities: [] },
     });
 
@@ -251,7 +252,7 @@ describe('Phase 16.1: Agent Identity, Enrollment Keys & Authentication Hardening
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/agents/register',
-      headers: { authorization: `Bearer ${tekData.key}` },
+      headers: { authorization: `Bearer ${tekData.key}`, 'x-protocol-version': '1.0.0' },
       payload: { name: 'revoked-key-agent', tags: [], capabilities: [] },
     });
 
@@ -300,7 +301,7 @@ describe('Phase 16.1: Agent Identity, Enrollment Keys & Authentication Hardening
     const hbOld = await app.inject({
       method: 'POST',
       url: '/api/v1/agents/heartbeat',
-      headers: { authorization: `Bearer ${initialToken}` },
+      headers: { authorization: `Bearer ${initialToken}`, 'x-protocol-version': '1.0.0' },
       payload: { agentId: reg.agentId, status: 'online' },
     });
     expect(hbOld.statusCode).toBe(401);
@@ -338,7 +339,7 @@ describe('Phase 16.1: Agent Identity, Enrollment Keys & Authentication Hardening
     const hb2Res = await app.inject({
       method: 'POST',
       url: '/api/v1/agents/heartbeat',
-      headers: { authorization: `Bearer ${reg.token}` },
+      headers: { authorization: `Bearer ${reg.token}`, 'x-protocol-version': '1.0.0' },
       payload: { agentId: reg.agentId, status: 'online' },
     });
 
@@ -376,7 +377,7 @@ describe('Phase 16.1: Agent Identity, Enrollment Keys & Authentication Hardening
     const hbRes = await app.inject({
       method: 'POST',
       url: '/api/v1/agents/heartbeat',
-      headers: { authorization: `Bearer ${reg.token}` },
+      headers: { authorization: `Bearer ${reg.token}`, 'x-protocol-version': '1.0.0' },
       payload: { agentId: reg.agentId, status: 'online' },
     });
 

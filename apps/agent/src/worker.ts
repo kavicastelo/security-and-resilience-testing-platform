@@ -34,6 +34,40 @@ export class SecurityBoundaryError extends Error {
   }
 }
 
+export class JobTimeoutError extends Error {
+  readonly code = 'JOB_TIMEOUT_EXCEEDED';
+  constructor(message: string) {
+    super(message);
+    this.name = 'JobTimeoutError';
+  }
+}
+
+export class JobCancelledError extends Error {
+  readonly code = 'JOB_CANCELLED';
+  constructor(message: string) {
+    super(message);
+    this.name = 'JobCancelledError';
+  }
+}
+
+export function parseDurationMs(duration: string | number | undefined, defaultMs = 15 * 60 * 1000): number {
+  if (typeof duration === 'number') {
+    return duration > 1000 ? duration : duration * 1000;
+  }
+  if (typeof duration === 'string') {
+    const match = duration.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/i);
+    if (match && match[1]) {
+      const val = parseFloat(match[1]);
+      const unit = (match[2] || 's').toLowerCase();
+      if (unit === 'ms') return Math.round(val);
+      if (unit === 's') return Math.round(val * 1000);
+      if (unit === 'm') return Math.round(val * 60 * 1000);
+      if (unit === 'h') return Math.round(val * 3600 * 1000);
+    }
+  }
+  return defaultMs;
+}
+
 export interface AgentWorkerOptions {
   allowLocalTesting?: boolean;
   masterKey?: string;
@@ -55,9 +89,46 @@ export class AgentWorker {
     this.masterKey = options.masterKey;
   }
 
-  async executeJob(job: AgentJobDispatch): Promise<void> {
+  async executeJob(job: AgentJobDispatch, abortSignal?: AbortSignal): Promise<void> {
     const workerLogger = logger.child({ jobId: job.jobId, testRunId: job.testRunId });
     workerLogger.info(`Agent worker starting execution for target ${job.target.baseUrl}`);
+
+    if (abortSignal?.aborted) {
+      workerLogger.warn(
+        { event: 'job.cancelled_propagated', jobId: job.jobId },
+        'Job was already cancelled prior to execution start; aborting',
+      );
+      throw new JobCancelledError(`Job "${job.jobId}" cancelled before execution started`);
+    }
+
+    const executionController = new AbortController();
+    let isTimedOut = false;
+    let isCancelled = false;
+
+    const onExternalAbort = () => {
+      isCancelled = true;
+      workerLogger.warn(
+        { event: 'job.cancelled_propagated', jobId: job.jobId },
+        'Cancellation signal received; aborting in-flight execution and active containers',
+      );
+      executionController.abort(abortSignal?.reason || new Error(`Job execution was cancelled`));
+    };
+
+    if (abortSignal) {
+      abortSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+
+    const maxDurationLimit = (job.target.scope as { limits?: { maxDuration?: string | number } })?.limits?.maxDuration;
+    const timeoutMs = parseDurationMs(maxDurationLimit, 15 * 60 * 1000);
+
+    const timeoutTimer = setTimeout(() => {
+      isTimedOut = true;
+      workerLogger.warn(
+        { event: 'job.timeout_exceeded', jobId: job.jobId, timeoutMs },
+        `Job execution exceeded maximum duration of ${timeoutMs}ms; aborting`,
+      );
+      executionController.abort(new JobTimeoutError(`Job execution timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     try {
       // 1. Verify Scope Attestation Signature (Rule 4, Rule 9, Rule 10)
@@ -228,6 +299,11 @@ export class AgentWorker {
       const totalEngines = enginesToRun.length;
 
       for (const engineId of enginesToRun) {
+        if (executionController.signal.aborted) {
+          workerLogger.info({ engineId, jobId: job.jobId }, 'Execution aborted; breaking engine loop');
+          break;
+        }
+
         const percent = Math.round((executedCount / totalEngines) * 90);
         await this.client.reportProgress(
           job.jobId,
@@ -261,7 +337,7 @@ export class AgentWorker {
             scope: job.target.scope as unknown as ExecutionContext['target']['scope'],
           },
           logger: workerLogger,
-          abortSignal: new AbortController().signal,
+          abortSignal: executionController.signal,
           reportProgress: (_percentage: number, _stepMessage: string) => {},
         };
 
@@ -303,6 +379,10 @@ export class AgentWorker {
             }
           }
         } catch (engineErr: unknown) {
+          if (executionController.signal.aborted) {
+            workerLogger.info({ engineId, jobId: job.jobId }, 'Engine execution interrupted by abort signal');
+            break;
+          }
           const errMsg = engineErr instanceof Error ? engineErr.message : String(engineErr);
           workerLogger.error({ err: engineErr, engineId }, `Engine execution error`);
           executionSummaries.push({
@@ -314,6 +394,29 @@ export class AgentWorker {
         }
 
         executedCount++;
+
+        if (executionController.signal.aborted) {
+          break;
+        }
+      }
+
+      // Check aborted state before reporting completion
+      if (executionController.signal.aborted) {
+        if (isTimedOut) {
+          const timeoutErr = new JobTimeoutError(
+            `Job execution timed out after exceeding maximum duration of ${timeoutMs}ms`,
+          );
+          await this.client.reportFailure(job.jobId, timeoutErr.message);
+          throw timeoutErr;
+        }
+        if (isCancelled || abortSignal?.aborted) {
+          workerLogger.info(
+            { event: 'job.cancelled_propagated', jobId: job.jobId },
+            'Job execution aborted due to cancellation; skipping completion submission',
+          );
+          throw new JobCancelledError(`Job "${job.jobId}" cancelled during execution`);
+        }
+        throw new JobCancelledError(`Job "${job.jobId}" execution was aborted`);
       }
 
       await this.client.reportProgress(
@@ -348,10 +451,20 @@ export class AgentWorker {
     } catch (jobErr: unknown) {
       const msg = jobErr instanceof Error ? jobErr.message : String(jobErr);
       workerLogger.error({ err: jobErr }, 'Job execution failed');
-      if (!(jobErr instanceof ScopeTamperingError) && !(jobErr instanceof SecurityBoundaryError)) {
+      if (
+        !(jobErr instanceof ScopeTamperingError) &&
+        !(jobErr instanceof SecurityBoundaryError) &&
+        !(jobErr instanceof JobCancelledError) &&
+        !(jobErr instanceof JobTimeoutError)
+      ) {
         await this.client.reportFailure(job.jobId, msg);
       }
       throw jobErr;
+    } finally {
+      clearTimeout(timeoutTimer);
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', onExternalAbort);
+      }
     }
   }
 }
