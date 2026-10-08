@@ -642,22 +642,22 @@ Phase 16: Distributed Agent Trust Boundary & Secure Execution Plane
 
 ## 5. Implementation Roadmap Summary Matrix
 
-| Phase | Phase Name | Primary Objective | Risk Addressed | Target Horizon |
-| :---: | :--- | :--- | :---: | :---: |
-| **00** | Codebase Baseline Correction | Reconcile docs with actual code reality | Deceptive completion claims | **Local MVP** |
-| **01** | Security Boundary Hardening | Eliminate SSRF, DNS rebinding, redirect escapes | **CRITICAL (P0)** SSRF | **Local MVP** |
-| **02** | Container Runner Hardening | Secure Docker execution, drop caps, no root | **CRITICAL (P0)** Host Takeover | **Local MVP** |
-| **03** | Engine Registry & Queue | Pluggable registry, async queue, cancellation | Server blocking & lack of control | **Local MVP** |
-| **04** | Real Scanner Runners | Host-volume report transport for ZAP & Trivy | Misleading mock fallbacks | **Local MVP** |
-| **05** | Real k6 Resilience Runner | True containerized k6 load generator | Inaccurate fetch concurrency | **Local MVP** |
-| **06** | Declarative DSL v2 | Request bodies, path vars, multi-step chains | Expressiveness limitations | **Team V1** |
-| **07** | Authentication Testing | Dedicated JWT, cookie, session security engine | Missing auth vulnerability checks | **Team V1** |
-| **08** | Authorization & BOLA | Identity profiles, permission matrix, IDOR | Critical API vuln blindspot | **Team V1** |
-| **09** | Security Contracts | Automated OpenAPI specification auditing | Unaligned API security standards | **Enterprise V2** |
-| **10** | Database & Finding Lifecycle | Indexes, triggers, regression state machine | Duplicate findings & data collisions | **Enterprise V2** |
-| **11** | Policy Engine v2 | Required test enforcement & waiver auditing | Gating compliance gaps | **Enterprise V2** |
-| **12** | Enterprise Reporting | Artifact persistence, reproduction curl commands | Ephemeral reports & lost logs | **Enterprise V2** |
-| **13** | CLI Productization | Offline local runner, GitHub Action | High friction for developers | **Enterprise V2** |
-| **14** | Dashboard Productization | Real-time SSE progress, finding triage, charts | Lack of visibility & triage UI | **Enterprise V2** |
-| **15** | Distributed Agent Architecture | Decoupled agent worker for private VPCs | Inability to test internal networks | **SaaS / Hybrid** |
-| **16** | Distributed Agent Trust Boundary | Cryptographic attestation, atomic leases, tenant isolation | **CRITICAL (P0)** Agent Hijack & Forgery | **SaaS Trust Boundary** |
+| Phase | Phase Name | Status | Primary Objective | Risk Addressed | Target Horizon |
+| :---: | :--- | :---: | :--- | :---: | :---: |
+| **00** | Codebase Baseline Correction | `VERIFIED` | Reconcile docs with actual code reality | Deceptive completion claims | **Local MVP** |
+| **01** | Security Boundary Hardening | `VERIFIED` | Eliminate SSRF, DNS rebinding, redirect escapes | **CRITICAL (P0)** SSRF | **Local MVP** |
+| **02** | Container Runner Hardening | `VERIFIED` | Secure Docker execution, drop caps, no root | **CRITICAL (P0)** Host Takeover | **Local MVP** |
+| **03** | Engine Registry & Queue | `VERIFIED` | Pluggable registry, async queue, cancellation | Server blocking & lack of control | **Local MVP** |
+| **04** | Real Scanner Runners | `VERIFIED` | Host-volume report transport for ZAP & Trivy | Misleading mock fallbacks | **Local MVP** |
+| **05** | Real k6 Resilience Runner | `VERIFIED` | True containerized k6 load generator | Inaccurate fetch concurrency | **Local MVP** |
+| **06** | Declarative DSL v2 | `VERIFIED` | Request bodies, path vars, multi-step chains | Expressiveness limitations | **Team V1** |
+| **07** | Authentication Testing | `VERIFIED` | Dedicated JWT, cookie, session security engine | Missing auth vulnerability checks | **Team V1** |
+| **08** | Authorization & BOLA | `VERIFIED` | Identity profiles, permission matrix, IDOR | Critical API vuln blindspot | **Team V1** |
+| **09** | Security Contracts | `VERIFIED` | Automated OpenAPI specification auditing | Unaligned API security standards | **Enterprise V2** |
+| **10** | Database & Finding Lifecycle | `VERIFIED` | Indexes, triggers, regression state machine | Duplicate findings & data collisions | **Enterprise V2** |
+| **11** | Policy Engine v2 | `VERIFIED` | Required test enforcement & waiver auditing | Gating compliance gaps | **Enterprise V2** |
+| **12** | Enterprise Reporting | `VERIFIED` | Artifact persistence, reproduction curl commands | Ephemeral reports & lost logs | **Enterprise V2** |
+| **13** | CLI Productization | `VERIFIED` | Offline local runner, GitHub Action | High friction for developers | **Enterprise V2** |
+| **14** | Dashboard Productization | `VERIFIED` | Real-time SSE progress, finding triage, charts | Lack of visibility & triage UI | **Enterprise V2** |
+| **15** | Distributed Agent Architecture | `VERIFIED` | Decoupled agent worker for private VPCs | Inability to test internal networks | **SaaS / Hybrid** |
+| **16** | Distributed Agent Trust Boundary | `VERIFIED` | Cryptographic attestation, atomic leases, tenant isolation | **CRITICAL (P0)** Agent Hijack & Forgery | **SaaS Trust Boundary** |

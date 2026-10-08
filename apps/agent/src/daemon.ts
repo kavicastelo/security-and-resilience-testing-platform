@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { AgentConfig } from './config.js';
-import { AgentClient } from './client.js';
+import { AgentClient, IncompatibleProtocolError } from './client.js';
 import { AgentWorker } from './worker.js';
 import { logger } from '@security-lab/logger';
 
@@ -14,6 +14,7 @@ export class AgentDaemon {
   private pollTimer?: NodeJS.Timeout;
   private activeJobsCount = 0;
   private readonly activeLeaseIds = new Set<string>();
+  private readonly activeJobControllers = new Map<string, AbortController>();
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -30,28 +31,40 @@ export class AgentDaemon {
     logger.info(`Target Control Plane URL: ${this.config.controllerUrl}`);
 
     // 1. Ensure Agent is Registered and has a valid Token
-    if (!this.client.getToken() || !this.agentId) {
-      logger.info('No agent token provided; enrolling agent dynamically with control plane...');
-      const registration = await this.client.register(
-        {
-          name: this.config.name,
-          tags: this.config.tags,
-          capabilities: this.config.capabilities,
-          systemInfo: {
-            os: os.platform(),
-            arch: os.arch(),
-            nodeVersion: process.version,
-            cpuCount: os.cpus().length,
-            totalMemoryMb: Math.round(os.totalmem() / 1024 / 1024),
-            hostname: os.hostname(),
+    try {
+      if (!this.client.getToken() || !this.agentId) {
+        logger.info('No agent token provided; enrolling agent dynamically with control plane...');
+        const registration = await this.client.register(
+          {
+            name: this.config.name,
+            tags: this.config.tags,
+            capabilities: this.config.capabilities,
+            systemInfo: {
+              os: os.platform(),
+              arch: os.arch(),
+              nodeVersion: process.version,
+              cpuCount: os.cpus().length,
+              totalMemoryMb: Math.round(os.totalmem() / 1024 / 1024),
+              hostname: os.hostname(),
+            },
           },
-        },
-        this.config.enrollmentKey,
-        this.config.tenantId,
-      );
+          this.config.enrollmentKey,
+          this.config.tenantId,
+        );
 
-      this.agentId = registration.agentId;
-      logger.info(`Agent enrolled successfully. Agent ID: ${this.agentId}`);
+        this.agentId = registration.agentId;
+        logger.info(`Agent enrolled successfully. Agent ID: ${this.agentId}`);
+      }
+    } catch (regErr: unknown) {
+      if (regErr instanceof IncompatibleProtocolError) {
+        logger.error(
+          { err: regErr.message, code: regErr.code, statusCode: regErr.statusCode },
+          'Fatal: Agent protocol version is incompatible with controller. Shutting down daemon gracefully.',
+        );
+        await this.stop();
+        return;
+      }
+      throw regErr;
     }
 
     // 2. Start Periodic Heartbeat
@@ -67,7 +80,7 @@ export class AgentDaemon {
       try {
         const memUsage = process.memoryUsage();
         const activeLeases = Array.from(this.activeLeaseIds);
-        await this.client.heartbeat(
+        const hbResponse = await this.client.heartbeat(
           this.agentId,
           this.activeJobsCount > 0 ? 'busy' : 'online',
           {
@@ -77,7 +90,31 @@ export class AgentDaemon {
           activeLeases[0],
           activeLeases,
         );
+
+        // Process bidirectional cancellation signals from controller
+        if (hbResponse.cancelledJobIds && hbResponse.cancelledJobIds.length > 0) {
+          for (const cancelledId of hbResponse.cancelledJobIds) {
+            const controller = this.activeJobControllers.get(cancelledId);
+            if (controller) {
+              logger.warn(
+                { event: 'job.cancelled_propagated', jobId: cancelledId },
+                'Controller signaled job cancellation; aborting worker execution',
+              );
+              controller.abort(new Error(`Job "${cancelledId}" was cancelled by the controller`));
+            }
+            // Send cancellation acknowledgment to controller
+            await this.client.acknowledgeCancellation(cancelledId);
+          }
+        }
       } catch (err: unknown) {
+        if (err instanceof IncompatibleProtocolError) {
+          logger.error(
+            { err: err.message, code: err.code, statusCode: err.statusCode },
+            'Fatal: Agent protocol version is incompatible with controller during heartbeat. Shutting down daemon gracefully.',
+          );
+          await this.stop();
+          return;
+        }
         logger.warn({ err }, 'Agent heartbeat check-in failed');
       }
     };
@@ -105,9 +142,12 @@ export class AgentDaemon {
                 this.activeLeaseIds.add(job.leaseId);
               }
               this.activeJobsCount++;
+              const abortController = new AbortController();
+              this.activeJobControllers.set(job.jobId, abortController);
               try {
-                await this.worker.executeJob(job);
+                await this.worker.executeJob(job, abortController.signal);
               } finally {
+                this.activeJobControllers.delete(job.jobId);
                 this.activeJobsCount--;
                 if (job.leaseId) {
                   this.activeLeaseIds.delete(job.leaseId);
@@ -117,6 +157,14 @@ export class AgentDaemon {
           }
         }
       } catch (pollErr: unknown) {
+        if (pollErr instanceof IncompatibleProtocolError) {
+          logger.error(
+            { err: pollErr.message, code: pollErr.code, statusCode: pollErr.statusCode },
+            'Fatal: Agent protocol version is incompatible with controller during polling. Shutting down daemon gracefully.',
+          );
+          await this.stop();
+          return;
+        }
         logger.warn({ pollErr }, 'Job polling iteration encountered an error');
       }
 

@@ -393,7 +393,7 @@ describe('Phase 16.3: Atomic Job Leasing, Watchdog Reaper & State Machine', () =
     const progressRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobId}/progress`,
-      headers: { authorization: `Bearer ${agents[5].token}` },
+      headers: { authorization: `Bearer ${agents[5].token}`, 'x-protocol-version': '1.0.0' },
       payload: { jobId, testRunId, percent: 50, message: 'Executing...' },
     });
     expect([403, 409]).toContain(progressRes.statusCode);
@@ -403,7 +403,7 @@ describe('Phase 16.3: Atomic Job Leasing, Watchdog Reaper & State Machine', () =
     const completeRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobId}/complete`,
-      headers: { authorization: `Bearer ${agents[5].token}` },
+      headers: { authorization: `Bearer ${agents[5].token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId,
         leaseId: dispatched.leaseId,
@@ -421,7 +421,7 @@ describe('Phase 16.3: Atomic Job Leasing, Watchdog Reaper & State Machine', () =
     const failRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobId}/fail`,
-      headers: { authorization: `Bearer ${agents[5].token}` },
+      headers: { authorization: `Bearer ${agents[5].token}`, 'x-protocol-version': '1.0.0' },
       payload: { error: 'Should be rejected due to expired lease' },
     });
     expect([403, 409]).toContain(failRes.statusCode);
@@ -440,7 +440,7 @@ describe('Phase 16.3: Atomic Job Leasing, Watchdog Reaper & State Machine', () =
     const mismatchRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobId}/complete`,
-      headers: { authorization: `Bearer ${agents[6].token}` },
+      headers: { authorization: `Bearer ${agents[6].token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId,
         leaseId: '00000000-0000-0000-0000-000000000000', // Stale or wrong lease ID
@@ -458,7 +458,7 @@ describe('Phase 16.3: Atomic Job Leasing, Watchdog Reaper & State Machine', () =
     const validRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobId}/complete`,
-      headers: { authorization: `Bearer ${agents[6].token}` },
+      headers: { authorization: `Bearer ${agents[6].token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId,
         leaseId: dispatched.leaseId,

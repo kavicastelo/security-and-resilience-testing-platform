@@ -7,6 +7,10 @@ import { validateUrlAgainstScope, TargetScope, Finding } from '@security-lab/dom
 import { computeEvidenceHash } from '@security-lab/evidence';
 import { evaluatePolicy } from '@security-lab/policy-engine';
 import { ENTERPRISE_DEFAULT_POLICY } from '../../apps/controller/src/services/policies.service.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import YAML from 'yaml';
 import {
   safeFetch,
   SecurityBoundaryError,
@@ -15,6 +19,14 @@ import {
   RateLimitResilienceEngine,
   DeclarativeTestEngine,
   ExecutionContext,
+  isApprovedImage,
+  extractImageDigest,
+  PINNED_SCANNER_DIGESTS,
+  validateVolumePath,
+  validateNetworkMode,
+  enforceContainerSecurityPolicy,
+  ContainerSecurityError,
+  MANDATORY_DOCKER_SECURITY_FLAGS,
 } from '@security-lab/test-sdk';
 import { logger } from '@security-lab/logger';
 
@@ -513,6 +525,181 @@ tests:
       expect(result.decision).toBe('failed');
       expect(result.passed).toBe(false);
       expect(result.violations.some((v) => v.ruleName.includes('Latency') || v.reason.includes('750ms'))).toBe(true);
+    });
+  });
+
+  describe('7. Docker Sandbox & Host Boundary Hardening (Phase 16.7)', () => {
+    it('validates Kubernetes deployment manifest enforces zero Docker socket exposure and strict least-privilege', () => {
+      const manifestPath = path.resolve(__dirname, '../../infrastructure/k8s/agent.yaml');
+      expect(fs.existsSync(manifestPath)).toBe(true);
+
+      const content = fs.readFileSync(manifestPath, 'utf8');
+      const docs = YAML.parseAllDocuments(content).map((doc) => doc.toJSON());
+
+      // 1. Textual audit
+      expect(content).not.toContain('/var/run/docker.sock');
+      expect(content).not.toContain('docker.sock');
+      expect(content).not.toContain('docker_engine');
+
+      // 2. Structural AST audit of Deployment spec
+      interface K8sPodSpec {
+        securityContext?: { runAsNonRoot?: boolean; runAsUser?: number };
+        volumes?: Array<{ name?: string; hostPath?: unknown; emptyDir?: unknown }>;
+        containers?: Array<{
+          securityContext?: {
+            readOnlyRootFilesystem?: boolean;
+            allowPrivilegeEscalation?: boolean;
+            privileged?: boolean;
+            capabilities?: { drop?: string[] };
+          };
+          volumeMounts?: Array<{ name?: string; mountPath?: string }>;
+        }>;
+      }
+      interface K8sDeployment {
+        kind?: string;
+        spec?: { template?: { spec?: K8sPodSpec } };
+      }
+
+      const deployment = (docs as unknown[]).find(
+        (d): d is K8sDeployment => (d as K8sDeployment)?.kind === 'Deployment',
+      );
+      expect(deployment).toBeDefined();
+
+      const podSpec = deployment?.spec?.template?.spec;
+      expect(podSpec).toBeDefined();
+
+      // Pod securityContext checks
+      expect(podSpec.securityContext?.runAsNonRoot).toBe(true);
+      expect(podSpec.securityContext?.runAsUser).toBe(10001);
+
+      // Volume checks: no hostPath socket mounts
+      const volumes = podSpec.volumes || [];
+      for (const vol of volumes) {
+        expect(vol.hostPath).toBeUndefined();
+      }
+      expect(volumes.length).toBeGreaterThan(0);
+      expect(volumes[0].name).toBe('tmp-dir');
+      expect(volumes[0].emptyDir).toBeDefined();
+
+      // Container securityContext checks
+      const container = podSpec.containers?.[0];
+      expect(container).toBeDefined();
+      expect(container.securityContext?.readOnlyRootFilesystem).toBe(true);
+      expect(container.securityContext?.allowPrivilegeEscalation).toBe(false);
+      expect(container.securityContext?.privileged).toBe(false);
+      expect(container.securityContext?.capabilities?.drop).toContain('ALL');
+
+      // Container volumeMounts checks
+      const volumeMounts = container.volumeMounts || [];
+      for (const vm of volumeMounts) {
+        expect(vm.name).not.toContain('docker');
+        expect(vm.mountPath).not.toContain('docker');
+      }
+      expect(volumeMounts.some((vm: Record<string, unknown>) => vm.mountPath === '/tmp')).toBe(true);
+    });
+
+    it('enforces OCI image allowlist and cryptographic SHA-256 digest pinning', () => {
+      // Approved scanner images with standard tags
+      expect(isApprovedImage('zaproxy/zaproxy:2.14.0')).toBe(true);
+      expect(isApprovedImage('owasp/zap2docker-stable:latest')).toBe(true);
+      expect(isApprovedImage('aquasec/trivy:0.49.1')).toBe(true);
+      expect(isApprovedImage('grafana/k6:0.50.0')).toBe(true);
+
+      // Approved scanner images with SHA-256 digest pinning
+      expect(isApprovedImage(`zaproxy/zaproxy@${PINNED_SCANNER_DIGESTS['zaproxy/zaproxy']}`)).toBe(true);
+      expect(isApprovedImage(`aquasec/trivy:0.49.1@${PINNED_SCANNER_DIGESTS['aquasec/trivy']}`)).toBe(true);
+      expect(isApprovedImage(`grafana/k6@${PINNED_SCANNER_DIGESTS['grafana/k6']}`)).toBe(true);
+      expect(isApprovedImage('ghcr.io/zaproxy/zaproxy:latest@sha256:4d603a1184ff5d9e5b53d463d12d4d5e277636e2f170f3f619730592e3ca914a')).toBe(true);
+
+      // Unapproved images must be rejected
+      expect(isApprovedImage('ubuntu:latest')).toBe(false);
+      expect(isApprovedImage('alpine:3.19')).toBe(false);
+      expect(isApprovedImage('attacker/custom-miner:latest')).toBe(false);
+      expect(isApprovedImage('evil-zaproxy/zaproxy:latest')).toBe(false);
+
+      // Injection and malformed characters must be rejected
+      expect(isApprovedImage('zaproxy/zaproxy; rm -rf /')).toBe(false);
+      expect(isApprovedImage('zaproxy/zaproxy || bash')).toBe(false);
+      expect(isApprovedImage('zaproxy/zaproxy$(whoami)')).toBe(false);
+      expect(isApprovedImage('aquasec/trivy@sha256:shortdigest')).toBe(false);
+
+      // Digest extractor verification
+      const sampleDigest = '4d603a1184ff5d9e5b53d463d12d4d5e277636e2f170f3f619730592e3ca914a';
+      expect(extractImageDigest(`zaproxy/zaproxy@sha256:${sampleDigest}`)).toBe(sampleDigest);
+      expect(extractImageDigest(`zaproxy/zaproxy:2.14.0@sha256:${sampleDigest.toUpperCase()}`)).toBe(sampleDigest);
+      expect(extractImageDigest('zaproxy/zaproxy:2.14.0')).toBeNull();
+    });
+
+    it('enforces network isolation and strictly rejects host networking', () => {
+      expect(() => validateNetworkMode('host')).toThrow(ContainerSecurityError);
+      expect(() => validateNetworkMode('--network=host')).toThrow(ContainerSecurityError);
+      expect(() => validateNetworkMode('--net host')).toThrow(ContainerSecurityError);
+      expect(() => validateNetworkMode('container:target-victim')).toThrow(ContainerSecurityError);
+
+      // Isolated bridge networks are permitted
+      expect(() => validateNetworkMode('bridge')).not.toThrow();
+      expect(() => validateNetworkMode('custom-isolated-net')).not.toThrow();
+      expect(() => validateNetworkMode(undefined)).not.toThrow();
+    });
+
+    it('strictly rejects volume mounts attempting Docker socket or host directory escape', () => {
+      // Direct Docker socket paths
+      expect(validateVolumePath('/var/run/docker.sock').valid).toBe(false);
+      expect(validateVolumePath('/run/docker.sock').valid).toBe(false);
+      expect(validateVolumePath('//./pipe/docker_engine').valid).toBe(false);
+
+      // Directory traversal attempts toward Docker socket or host roots
+      expect(validateVolumePath('/tmp/../var/run/docker.sock').valid).toBe(false);
+      expect(validateVolumePath('/tmp/../../etc').valid).toBe(false);
+      expect(validateVolumePath('/etc').valid).toBe(false);
+      expect(validateVolumePath('/root').valid).toBe(false);
+      expect(validateVolumePath('/').valid).toBe(false);
+
+      // Valid scratch directory inside os.tmpdir()
+      const validScratch = path.join(os.tmpdir(), `security-lab-test-${Date.now()}`);
+      expect(validateVolumePath(validScratch).valid).toBe(true);
+    });
+
+    it('enforces full container security policy validation with enforceContainerSecurityPolicy', () => {
+      const validScratch = path.join(os.tmpdir(), 'valid-scratch-dir');
+
+      // Valid policy options
+      expect(() =>
+        enforceContainerSecurityPolicy({
+          image: 'zaproxy/zaproxy:2.14.0',
+          network: 'bridge',
+          volumes: [{ hostPath: validScratch, containerPath: '/zap/wrk', mode: 'rw' }],
+        }),
+      ).not.toThrow();
+
+      // Policy violation: unapproved image
+      expect(() =>
+        enforceContainerSecurityPolicy({
+          image: 'ubuntu:22.04',
+        }),
+      ).toThrow(ContainerSecurityError);
+
+      // Policy violation: host network
+      expect(() =>
+        enforceContainerSecurityPolicy({
+          image: 'aquasec/trivy:0.49.1',
+          network: 'host',
+        }),
+      ).toThrow(ContainerSecurityError);
+
+      // Policy violation: Docker socket volume mount
+      expect(() =>
+        enforceContainerSecurityPolicy({
+          image: 'grafana/k6:0.50.0',
+          volumes: [{ hostPath: '/var/run/docker.sock', containerPath: '/var/run/docker.sock' }],
+        }),
+      ).toThrow(ContainerSecurityError);
+
+      // Verify mandatory CIS benchmark flags are present
+      expect(MANDATORY_DOCKER_SECURITY_FLAGS).toContain('--security-opt=no-new-privileges:true');
+      expect(MANDATORY_DOCKER_SECURITY_FLAGS).toContain('--cap-drop=ALL');
+      expect(MANDATORY_DOCKER_SECURITY_FLAGS).toContain('--read-only');
+      expect(MANDATORY_DOCKER_SECURITY_FLAGS).toContain('--pids-limit=100');
     });
   });
 });

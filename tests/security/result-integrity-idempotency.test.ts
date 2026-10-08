@@ -228,7 +228,7 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     const completeRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${job.jobId}/complete`,
-      headers: { authorization: `Bearer ${agentToken}` },
+      headers: { authorization: `Bearer ${agentToken}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: job.jobId,
         testRunId,
@@ -304,7 +304,7 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     const firstRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${job.jobId}/complete`,
-      headers: { authorization: `Bearer ${agentToken}` },
+      headers: { authorization: `Bearer ${agentToken}`, 'x-protocol-version': '1.0.0' },
       payload,
     });
     expect(firstRes.statusCode).toBe(200);
@@ -320,7 +320,7 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     const duplicateRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${job.jobId}/complete`,
-      headers: { authorization: `Bearer ${agentToken}` },
+      headers: { authorization: `Bearer ${agentToken}`, 'x-protocol-version': '1.0.0' },
       payload,
     });
     expect(duplicateRes.statusCode).toBe(200);
@@ -376,7 +376,7 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     const tamperedRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${job.jobId}/complete`,
-      headers: { authorization: `Bearer ${agentToken}` },
+      headers: { authorization: `Bearer ${agentToken}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: job.jobId,
         testRunId,
@@ -440,7 +440,7 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${job.jobId}/complete`,
-      headers: { authorization: `Bearer ${agentToken}` },
+      headers: { authorization: `Bearer ${agentToken}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: job.jobId,
         testRunId,
@@ -467,7 +467,7 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${job.jobId}/complete`,
-      headers: { authorization: `Bearer ${agentToken}` },
+      headers: { authorization: `Bearer ${agentToken}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: job.jobId,
         testRunId,
@@ -497,7 +497,7 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     const mismatchRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${job.jobId}/complete`,
-      headers: { authorization: `Bearer ${agentToken}` },
+      headers: { authorization: `Bearer ${agentToken}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: job.jobId,
         testRunId,
@@ -535,7 +535,7 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     const expiredRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${job.jobId}/complete`,
-      headers: { authorization: `Bearer ${agentToken}` },
+      headers: { authorization: `Bearer ${agentToken}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId: job.jobId,
         testRunId,
@@ -550,14 +550,21 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
 
     expect(expiredRes.statusCode).toBe(409);
     expect(expiredRes.json().error.code).toBe('LEASE_EXPIRED');
+
+    // Prevent background watchdog reaper from recycling test 8's expired job
+    await sql`UPDATE agent_jobs SET status = 'failed' WHERE id = ${job.jobId}`;
   });
 
   it('9. End-to-end: AgentWorker automatically signs results and completes job idempotently', async () => {
+    const { sql } = getDatabase();
+    await sql`UPDATE agent_jobs SET status = 'failed' WHERE tenant_id = ${tenant.id} AND status IN ('queued', 'leased')`;
+
     const testRunId = await createTestRun();
     await dispatchJob(testRunId);
 
     const [dispatchedJob] = await agentClient.poll(agentId, ['engine-native-headers'], [], 1);
     expect(dispatchedJob).toBeDefined();
+    expect(dispatchedJob.testRunId).toBe(testRunId);
     expect(dispatchedJob.jobDispatchSecret).toBeDefined();
 
     const worker = new AgentWorker(agentClient);
@@ -577,7 +584,6 @@ describe('Phase 16.4: Result Authenticity, Evidence HMAC & Idempotent Ingestion'
     await expect(worker.executeJob(dispatchedJob)).resolves.not.toThrow();
 
     // Verify database job is still marked completed
-    const { sql } = getDatabase();
     const [jobRow] = await sql`SELECT status FROM agent_jobs WHERE id = ${dispatchedJob.jobId}`;
     expect(jobRow.status).toBe('completed');
   });

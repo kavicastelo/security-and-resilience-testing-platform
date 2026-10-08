@@ -29,7 +29,12 @@ data:
   CONTROLLER_URL: "https://cloud.securitylab.internal"
   AGENT_NAME: "k8s-cluster-agent"
   AGENT_TAGS: "k8s,vpc-internal,staging,on-premise"
-  AGENT_CAPABILITIES: "native-http,auth-audit,declarative-dsl,docker-sandbox"
+  # Approved Execution Profiles:
+  # Profile 1 (Default / In-Cluster): Native In-Process Scanning (Class A engines: native-http, auth-audit, declarative-dsl).
+  #            Runs strictly unprivileged without host socket mounts or container breakout vectors.
+  # Profile 2 (External Runner): Dedicated Execution Worker Node / VM for container scanners (Class B/C: ZAP, Trivy, k6).
+  #            Run externally via systemd/daemon rather than mounting the Docker daemon socket into in-cluster pods.
+  AGENT_CAPABILITIES: "native-http,auth-audit,declarative-dsl"
   POLL_INTERVAL_MS: "3000"
   HEARTBEAT_INTERVAL_MS: "10000"
   MAX_CONCURRENT_JOBS: "2"
@@ -108,22 +113,16 @@ spec:
               cpu: 1000m
               memory: 1024Mi
           securityContext:
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
+            privileged: false
             capabilities:
               drop:
                 - ALL
           volumeMounts:
-            # Mount Docker socket if containerized scanning (Class B/C) is enabled
-            - name: docker-socket
-              mountPath: /var/run/docker.sock
-              readOnly: true
+            # Ephemeral scratch volume for temporary files
             - name: tmp-dir
               mountPath: /tmp
       volumes:
-        - name: docker-socket
-          hostPath:
-            path: /var/run/docker.sock
-            type: Socket
         - name: tmp-dir
           emptyDir: {}

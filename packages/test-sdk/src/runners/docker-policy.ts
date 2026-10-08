@@ -10,19 +10,38 @@ export class ContainerSecurityError extends Error {
 
 /**
  * Approved OCI image patterns for Class B container scanners and Class C workers.
+ * Supports explicit tags (:tag) and cryptographic SHA-256 digest pins (@sha256:64hex).
  * Arbitrary images (e.g. ubuntu, alpine, unverified third-party registries) are rejected.
  */
 export const APPROVED_IMAGE_PATTERNS: RegExp[] = [
   // OWASP ZAP (GHCR and Docker Hub)
-  /^(ghcr\.io\/|docker\.io\/)?zaproxy\/zaproxy(:[a-zA-Z0-9_.-]+)?$/i,
-  /^(docker\.io\/)?owasp\/zap2docker-(stable|weekly|live)(:[a-zA-Z0-9_.-]+)?$/i,
+  /^(ghcr\.io\/|docker\.io\/)?zaproxy\/zaproxy(:[a-zA-Z0-9_.-]+)?(@sha256:[a-fA-F0-9]{64})?$/i,
+  /^(docker\.io\/)?owasp\/zap2docker-(stable|weekly|live)(:[a-zA-Z0-9_.-]+)?(@sha256:[a-fA-F0-9]{64})?$/i,
 
   // Aqua Trivy (Docker Hub and GHCR)
-  /^(docker\.io\/|ghcr\.io\/)?aquasec(urity)?\/trivy(:[a-zA-Z0-9_.-]+)?$/i,
+  /^(docker\.io\/|ghcr\.io\/)?aquasec(urity)?\/trivy(:[a-zA-Z0-9_.-]+)?(@sha256:[a-fA-F0-9]{64})?$/i,
 
   // Grafana k6 (Docker Hub and GHCR)
-  /^(docker\.io\/|ghcr\.io\/)?grafana\/k6(:[a-zA-Z0-9_.-]+)?$/i,
+  /^(docker\.io\/|ghcr\.io\/)?grafana\/k6(:[a-zA-Z0-9_.-]+)?(@sha256:[a-fA-F0-9]{64})?$/i,
 ];
+
+/**
+ * Curated cryptographic SHA-256 digest pins for approved scanner images.
+ * Useful for immutable, reproducible builds and CIS-hardened execution.
+ */
+export const PINNED_SCANNER_DIGESTS: Record<string, string> = {
+  'zaproxy/zaproxy': 'sha256:4d603a1184ff5d9e5b53d463d12d4d5e277636e2f170f3f619730592e3ca914a',
+  'aquasec/trivy': 'sha256:7b1d9bf5df762699e1c4cb1855e906c28f09074092b74070a2a5146be54dd4cb',
+  'grafana/k6': 'sha256:91ef233c411fa05fb7936a2818c7d3dbff06aa4c0e5a6fefdc950a7c93e4e9bb',
+};
+
+/**
+ * Extracts the SHA-256 digest if present in an image reference.
+ */
+export function extractImageDigest(image: string): string | null {
+  const match = image.match(/@sha256:([a-fA-F0-9]{64})/i);
+  return match && match[1] ? match[1].toLowerCase() : null;
+}
 
 /**
  * Validates whether a container image is on the approved allowlist.
@@ -55,19 +74,41 @@ const FORBIDDEN_SUBSTRINGS = [
 
 /**
  * Validates whether a host path is safe for volume mounting into a container.
- * Strictly forbids Docker sockets, host roots, and system directories.
+ * Strictly forbids Docker sockets, host roots, system directories, and directory traversal.
  * Volume mounts must be restricted to ephemeral temporary scratch directories.
  */
 export function validateVolumePath(hostPath: string): { valid: boolean; reason?: string } {
+  if (!hostPath || typeof hostPath !== 'string') {
+    return { valid: false, reason: 'Invalid host volume path: path must be a non-empty string.' };
+  }
+
+  // Pre-resolution check for raw traversal or socket patterns
+  const rawLower = hostPath.toLowerCase().replace(/\\/g, '/');
+  if (
+    rawLower.includes('docker.sock') ||
+    rawLower.includes('docker_engine') ||
+    rawLower.includes('dockershim') ||
+    rawLower.includes('containerd.sock')
+  ) {
+    return {
+      valid: false,
+      reason: 'Mounting Docker socket or container runtime socket is strictly prohibited.',
+    };
+  }
+
   const resolved = path.resolve(hostPath);
   const normalized = resolved.toLowerCase().replace(/\\/g, '/');
 
-  // Check for Docker daemon socket escape
+  // Check for Docker daemon socket escape post-resolution
   if (
     normalized.includes('docker.sock') ||
     normalized.includes('docker_engine') ||
+    normalized.includes('dockershim') ||
+    normalized.includes('containerd.sock') ||
     normalized === '/var/run' ||
-    normalized === '/run'
+    normalized === '/run' ||
+    normalized.startsWith('/var/run/') ||
+    normalized.startsWith('/run/')
   ) {
     return {
       valid: false,
@@ -77,7 +118,7 @@ export function validateVolumePath(hostPath: string): { valid: boolean; reason?:
 
   // Check for root directory mount
   const root = path.parse(resolved).root.toLowerCase().replace(/\\/g, '/');
-  if (normalized === root || normalized === '/' || /^[a-z]:\/$/i.test(normalized)) {
+  if (normalized === root || normalized === '/' || /^[a-z]:\/?$/i.test(normalized)) {
     return {
       valid: false,
       reason: 'Mounting host filesystem root is strictly prohibited.',
@@ -96,7 +137,8 @@ export function validateVolumePath(hostPath: string): { valid: boolean; reason?:
 
   // Verify the directory resides inside OS temp dir or authorized scratch folder
   const tempDir = path.resolve(os.tmpdir()).toLowerCase().replace(/\\/g, '/');
-  const isInsideTemp = normalized.startsWith(tempDir);
+  const tempWithSlash = tempDir.endsWith('/') ? tempDir : `${tempDir}/`;
+  const isInsideTemp = normalized === tempDir || normalized.startsWith(tempWithSlash);
 
   if (!isInsideTemp) {
     return {
@@ -115,7 +157,16 @@ export function validateVolumePath(hostPath: string): { valid: boolean; reason?:
 export function validateNetworkMode(network?: string): void {
   if (!network) return;
   const cleanNet = network.trim().toLowerCase();
-  if (cleanNet === 'host' || cleanNet.startsWith('container:')) {
+  if (
+    cleanNet === 'host' ||
+    cleanNet === '--network=host' ||
+    cleanNet === '--network host' ||
+    cleanNet === '--net=host' ||
+    cleanNet === '--net host' ||
+    cleanNet.startsWith('host:') ||
+    cleanNet.startsWith('container:') ||
+    /^(-{1,2}(network|net)[=\s]+)?host$/i.test(cleanNet)
+  ) {
     throw new ContainerSecurityError(
       `Network mode "${network}" is strictly prohibited. Containers must run on an isolated bridge network.`,
     );

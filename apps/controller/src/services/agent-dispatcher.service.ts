@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and, inArray } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { agents, agentJobs, targets, testExecutions } from './db/schema.js';
 import {
@@ -22,6 +22,7 @@ import { reportsService } from './reports.service.js';
 import { executionManager } from './execution-manager.js';
 import { logger } from '@security-lab/logger';
 import { DEFAULT_TENANT_ID } from './tenants.service.js';
+import { agentAuditService } from './agent-audit.service.js';
 
 export const agentStateMetrics = {
   jobs_leased_total: 0,
@@ -104,6 +105,20 @@ export class AgentDispatcherService {
       'Registered new distributed execution agent',
     );
 
+    await agentAuditService.recordAuditEvent({
+      tenantId: inserted.tenantId,
+      agentId: inserted.id,
+      eventType: 'agent.enrolled',
+      actorType: 'admin',
+      actorId: 'tek_enrollment',
+      metadata: {
+        agentName: inserted.name,
+        tags: inserted.tags,
+        capabilities: inserted.capabilities,
+        tokenExpiresAt: inserted.expiresAt?.toISOString(),
+      },
+    });
+
     return {
       agentId: inserted.id,
       tenantId: inserted.tenantId,
@@ -180,6 +195,18 @@ export class AgentDispatcherService {
     }
 
     logger.warn({ agentId, reason }, 'Agent revoked by administrator');
+
+    await agentAuditService.recordAuditEvent({
+      tenantId: updated.tenantId,
+      agentId: updated.id,
+      eventType: 'agent.revoked',
+      actorType: 'admin',
+      actorId: 'admin',
+      metadata: {
+        reason,
+        revokedAt: updated.revokedAt!.toISOString(),
+      },
+    });
     return {
       agentId: updated.id,
       revokedAt: updated.revokedAt!.toISOString(),
@@ -213,6 +240,17 @@ export class AgentDispatcherService {
     }
 
     logger.info({ agentId }, 'Agent token rotated successfully');
+
+    await agentAuditService.recordAuditEvent({
+      tenantId: updated.tenantId,
+      agentId: updated.id,
+      eventType: 'agent.token_rotated',
+      actorType: 'agent',
+      actorId: updated.id,
+      metadata: {
+        tokenExpiresAt: tokenExpiresAt.toISOString(),
+      },
+    });
     return {
       agentId: updated.id,
       token: newToken,
@@ -230,9 +268,9 @@ export class AgentDispatcherService {
     metrics?: Record<string, unknown>,
     leaseId?: string,
     activeLeaseIds?: string[],
-  ): Promise<{ acknowledged: boolean; renewedLeases: string[] }> {
+  ): Promise<{ acknowledged: boolean; renewedLeases: string[]; cancelledJobIds: string[] }> {
     const { db, sql } = getDatabase();
-    if (!db) return { acknowledged: false, renewedLeases: [] };
+    if (!db) return { acknowledged: false, renewedLeases: [], cancelledJobIds: [] };
 
     const updateData: Record<string, unknown> = {
       status,
@@ -277,7 +315,23 @@ export class AgentDispatcherService {
       }
     }
 
-    return { acknowledged: !!updated, renewedLeases };
+    const cancelledJobIds: string[] = [];
+    if (sql) {
+      const cancelledRows = await sql`
+        SELECT id
+        FROM agent_jobs
+        WHERE agent_id = ${agentId}
+          AND status = 'cancelled'
+          AND (result IS NULL OR result->>'cancelledAck' IS NULL)
+        ORDER BY updated_at DESC
+        LIMIT 50;
+      `;
+      for (const row of cancelledRows) {
+        cancelledJobIds.push(row.id);
+      }
+    }
+
+    return { acknowledged: !!updated, renewedLeases, cancelledJobIds };
   }
 
   /**
@@ -310,6 +364,38 @@ export class AgentDispatcherService {
   }
 
   /**
+   * Retrieves a single agent by ID.
+   */
+  async getAgentById(agentId: string): Promise<AgentSummary | null> {
+    const { db } = getDatabase();
+    if (!db || !agentId) return null;
+
+    const [r] = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+
+    if (!r) return null;
+
+    return {
+      id: r.id,
+      tenantId: r.tenantId,
+      name: r.name,
+      status: r.status as 'online' | 'busy' | 'draining' | 'offline',
+      tags: (r.tags as string[]) || [],
+      capabilities: (r.capabilities as string[]) || [],
+      systemInfo: (r.systemInfo as Record<string, unknown>) || {},
+      lastHeartbeatAt: r.lastHeartbeatAt ? r.lastHeartbeatAt.toISOString() : null,
+      expiresAt: r.expiresAt ? r.expiresAt.toISOString() : null,
+      revokedAt: r.revokedAt ? r.revokedAt.toISOString() : null,
+      revocationReason: r.revocationReason || null,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    };
+  }
+
+  /**
    * Enqueues an execution task into the agent dispatch queue.
    */
   async enqueueAgentJob(
@@ -317,6 +403,8 @@ export class AgentDispatcherService {
     tenantId: string = DEFAULT_TENANT_ID,
     engineIds: string[] = [],
     options?: Record<string, unknown>,
+    requiredCapabilities: string[] = [],
+    requiredTags: string[] = [],
   ): Promise<string> {
     const { db } = getDatabase();
     if (!db) throw new Error('Database unavailable');
@@ -354,6 +442,8 @@ export class AgentDispatcherService {
       },
       engineIds,
       options,
+      requiredCapabilities,
+      requiredTags,
     };
 
     const [job] = await db
@@ -365,6 +455,8 @@ export class AgentDispatcherService {
         status: 'queued',
         attempts: 0,
         maxAttempts: 3,
+        requiredCapabilities,
+        requiredTags,
         payload: payload as unknown as Record<string, unknown>,
       })
       .returning();
@@ -374,7 +466,7 @@ export class AgentDispatcherService {
     }
 
     logger.info(
-      { jobId: job.id, testRunId, tenantId },
+      { jobId: job.id, testRunId, tenantId, requiredCapabilities, requiredTags },
       'Enqueued distributed agent execution task',
     );
 
@@ -384,17 +476,20 @@ export class AgentDispatcherService {
   /**
    * Polls for pending/queued jobs matching agent tenant atomically.
    * Employs PostgreSQL row-level locking (SELECT ... FOR UPDATE SKIP LOCKED)
-   * to guarantee at-most-once atomic leasing across concurrent worker agents.
+   * with JSONB array containment filtering on capabilities and tags.
    */
   async pollJobs(
     agentId: string,
     tenantId: string,
-    _capabilities: string[] = [],
-    _tags: string[] = [],
+    capabilities: string[] = [],
+    tags: string[] = [],
     maxJobs = 1,
   ): Promise<AgentJobDispatch[]> {
     const { sql } = getDatabase();
     if (!sql) return [];
+
+    const capsJson = JSON.stringify(capabilities || []);
+    const tagsJson = JSON.stringify(tags || []);
 
     const claimedRows = await sql`
       WITH claimable AS (
@@ -403,6 +498,8 @@ export class AgentDispatcherService {
         WHERE tenant_id = ${tenantId}
           AND status IN ('queued', 'pending')
           AND attempts < max_attempts
+          AND (required_capabilities <@ ${capsJson}::jsonb OR required_capabilities = '[]'::jsonb)
+          AND (required_tags <@ ${tagsJson}::jsonb OR required_tags = '[]'::jsonb)
         ORDER BY created_at ASC
         LIMIT ${maxJobs}
         FOR UPDATE SKIP LOCKED
@@ -427,6 +524,8 @@ export class AgentDispatcherService {
         agent_jobs.lease_expires_at,
         agent_jobs.attempts,
         agent_jobs.max_attempts,
+        agent_jobs.required_capabilities,
+        agent_jobs.required_tags,
         agent_jobs.payload,
         agent_jobs.created_at,
         agent_jobs.updated_at;
@@ -435,6 +534,25 @@ export class AgentDispatcherService {
     if (!claimedRows || claimedRows.length === 0) return [];
 
     agentStateMetrics.jobs_leased_total += claimedRows.length;
+
+    for (const row of claimedRows) {
+      await agentAuditService.recordAuditEvent({
+        tenantId: row.tenant_id,
+        agentId,
+        eventType: 'job.leased',
+        actorType: 'agent',
+        actorId: agentId,
+        metadata: {
+          jobId: row.id,
+          testRunId: row.test_run_id,
+          leaseId: row.lease_id,
+          leaseExpiresAt: row.lease_expires_at,
+          attempts: row.attempts,
+          requiredCapabilities: row.required_capabilities,
+          requiredTags: row.required_tags,
+        },
+      });
+    }
 
     const dispatched: AgentJobDispatch[] = [];
     for (const row of claimedRows) {
@@ -456,6 +574,8 @@ export class AgentDispatcherService {
       dispatched.push({
         ...payload,
         target: targetPayload,
+        requiredCapabilities: (row.required_capabilities as string[]) || payload.requiredCapabilities || [],
+        requiredTags: (row.required_tags as string[]) || payload.requiredTags || [],
         leaseId: row.lease_id,
         leaseExpiresAt: row.lease_expires_at ? new Date(row.lease_expires_at).toISOString() : undefined,
         jobDispatchSecret,
@@ -513,6 +633,19 @@ export class AgentDispatcherService {
         },
         'Blocked unauthorized cross-tenant job progress update',
       );
+      await agentAuditService.recordAuditEvent({
+        tenantId: job.tenantId,
+        agentId: agent.id,
+        eventType: 'security.tenant_mismatch',
+        actorType: 'agent',
+        actorId: agent.id,
+        metadata: {
+          action: 'progress',
+          jobId,
+          callerTenantId: agent.tenantId,
+          targetTenantId: job.tenantId,
+        },
+      });
       throw new AuthorizationError(
         `Tenant mismatch: agent "${agent.id}" cannot update job belonging to tenant "${job.tenantId}"`,
         'TENANT_MISMATCH',
@@ -610,6 +743,19 @@ export class AgentDispatcherService {
         },
         'Blocked unauthorized cross-tenant job completion attempt',
       );
+      await agentAuditService.recordAuditEvent({
+        tenantId: job.tenantId,
+        agentId: agent.id,
+        eventType: 'security.tenant_mismatch',
+        actorType: 'agent',
+        actorId: agent.id,
+        metadata: {
+          action: 'complete',
+          jobId,
+          callerTenantId: agent.tenantId,
+          targetTenantId: job.tenantId,
+        },
+      });
       throw new AuthorizationError(
         `Tenant mismatch: agent "${agent.id}" cannot complete job belonging to tenant "${job.tenantId}"`,
         'TENANT_MISMATCH',
@@ -647,6 +793,21 @@ export class AgentDispatcherService {
         'Duplicate job completion report deduplicated; returning cached completed status without database mutation',
       );
       return { status: 'completed', deduplicated: true };
+    }
+
+    // 3b. Late Completion Shielding (Rule 8 & Phase 16.6)
+    if (job.status === 'cancelled') {
+      logger.info(
+        {
+          event: 'result.ignored_cancelled',
+          jobId,
+          testRunId: job.testRunId,
+          tenantId: job.tenantId,
+          agentId: agent.id,
+        },
+        'Rejecting completion report: job was cancelled by user; returning status: cancelled with ignored: true without database mutation',
+      );
+      return { status: 'cancelled', ignored: true, success: true };
     }
 
     // 4. Lease ID validation (Finding SEC-05 & Rule 21)
@@ -711,6 +872,20 @@ export class AgentDispatcherService {
           },
           'Agent result signature verification failed; potential finding tampering detected',
         );
+        await agentAuditService.recordAuditEvent({
+          tenantId: job.tenantId,
+          agentId: agent.id,
+          eventType: 'security.scope_tampering',
+          actorType: 'agent',
+          actorId: agent.id,
+          metadata: {
+            action: 'complete',
+            jobId,
+            testRunId: job.testRunId,
+            leaseId: job.leaseId,
+            reason: 'SIGNATURE_MISMATCH',
+          },
+        });
         throw new AuthorizationError(
           'Cryptographic signature verification failed for job findings',
           'SIGNATURE_INVALID',
@@ -875,6 +1050,21 @@ export class AgentDispatcherService {
       'Agent execution job completed and ingested into control plane',
     );
 
+    await agentAuditService.recordAuditEvent({
+      tenantId: job.tenantId,
+      agentId: agent.id,
+      eventType: 'job.completed',
+      actorType: 'agent',
+      actorId: agent.id,
+      metadata: {
+        jobId,
+        testRunId: job.testRunId,
+        leaseId: job.leaseId,
+        findingsCount: report.findings.length,
+        executionsCount: report.executions.length,
+      },
+    });
+
     return { status: 'completed', deduplicated: false };
   }
 
@@ -888,7 +1078,7 @@ export class AgentDispatcherService {
     error: string,
   ) {
     const { db } = getDatabase();
-    if (!db) return;
+    if (!db) throw new Error('Database unavailable');
 
     const [job] = await db
       .select()
@@ -913,6 +1103,19 @@ export class AgentDispatcherService {
         },
         'Blocked unauthorized cross-tenant job failure attempt',
       );
+      await agentAuditService.recordAuditEvent({
+        tenantId: job.tenantId,
+        agentId: agent.id,
+        eventType: 'security.tenant_mismatch',
+        actorType: 'agent',
+        actorId: agent.id,
+        metadata: {
+          action: 'fail',
+          jobId,
+          callerTenantId: agent.tenantId,
+          targetTenantId: job.tenantId,
+        },
+      });
       throw new AuthorizationError(
         `Tenant mismatch: agent "${agent.id}" cannot fail job belonging to tenant "${job.tenantId}"`,
         'TENANT_MISMATCH',
@@ -956,6 +1159,21 @@ export class AgentDispatcherService {
       );
     }
 
+    // 3b. Ignore failure report if job was already cancelled (Rule 8)
+    if (job.status === 'cancelled') {
+      logger.info(
+        {
+          event: 'result.ignored_cancelled',
+          jobId,
+          testRunId: job.testRunId,
+          tenantId: job.tenantId,
+          agentId: agent.id,
+        },
+        'Ignoring failure report: job was already cancelled by user',
+      );
+      return { status: 'cancelled', ignored: true, success: true };
+    }
+
     await db
       .update(agentJobs)
       .set({
@@ -974,6 +1192,22 @@ export class AgentDispatcherService {
       status: 'failed',
       timestamp: new Date().toISOString(),
     });
+
+    await agentAuditService.recordAuditEvent({
+      tenantId: job.tenantId,
+      agentId: agent.id,
+      eventType: 'job.failed',
+      actorType: 'agent',
+      actorId: agent.id,
+      metadata: {
+        jobId,
+        testRunId: job.testRunId,
+        leaseId: job.leaseId,
+        error,
+      },
+    });
+
+    return { status: 'failed', success: true };
   }
 
   /**
@@ -1065,6 +1299,150 @@ export class AgentDispatcherService {
     }
 
     return { reaped: reapedCount, exhausted: exhaustedCount };
+  }
+
+  /**
+   * Acknowledges that an agent has received and executed cancellation for a job.
+   */
+  async acknowledgeJobCancellation(
+    jobId: string,
+    agent: { id: string; tenantId: string },
+  ): Promise<{ success: boolean; jobId: string; acknowledgedAt: string }> {
+    const { db } = getDatabase();
+    if (!db) throw new Error('Database unavailable');
+
+    const [job] = await db
+      .select()
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId))
+      .limit(1);
+
+    if (!job) {
+      throw new NotFoundError(`Agent job "${jobId}" not found`);
+    }
+
+    if (job.tenantId !== agent.tenantId) {
+      logger.warn(
+        {
+          event: 'security.cross_tenant_attempt',
+          attemptedJobId: jobId,
+          callerAgentId: agent.id,
+          action: 'cancel-ack',
+        },
+        'Blocked unauthorized cross-tenant job cancel acknowledgement',
+      );
+      await agentAuditService.recordAuditEvent({
+        tenantId: job.tenantId,
+        agentId: agent.id,
+        eventType: 'security.tenant_mismatch',
+        actorType: 'agent',
+        actorId: agent.id,
+        metadata: {
+          action: 'cancel-ack',
+          jobId,
+          callerTenantId: agent.tenantId,
+          targetTenantId: job.tenantId,
+        },
+      });
+      throw new AuthorizationError(
+        `Tenant mismatch: agent "${agent.id}" cannot acknowledge job belonging to tenant "${job.tenantId}"`,
+        'TENANT_MISMATCH',
+      );
+    }
+
+    if (job.agentId !== agent.id) {
+      logger.warn(
+        {
+          event: 'security.cross_agent_attempt',
+          attemptedJobId: jobId,
+          callerAgentId: agent.id,
+          assignedAgentId: job.agentId,
+          action: 'cancel-ack',
+        },
+        'Blocked unauthorized job cancel acknowledgement by non-assigned agent',
+      );
+      throw new AuthorizationError(
+        `Agent mismatch: job "${jobId}" is not assigned to agent "${agent.id}"`,
+        'AGENT_MISMATCH',
+      );
+    }
+
+    const currentResult = (job.result as Record<string, unknown>) || {};
+    const now = new Date();
+    await db
+      .update(agentJobs)
+      .set({
+        result: { ...currentResult, cancelledAck: true, acknowledgedAt: now.toISOString() },
+        updatedAt: now,
+      })
+      .where(eq(agentJobs.id, jobId));
+
+    logger.info(
+      { event: 'job.cancelled_propagated', jobId, agentId: agent.id, testRunId: job.testRunId },
+      'Agent successfully acknowledged job cancellation',
+    );
+
+    await agentAuditService.recordAuditEvent({
+      tenantId: job.tenantId,
+      agentId: agent.id,
+      eventType: 'job.cancelled',
+      actorType: 'agent',
+      actorId: agent.id,
+      metadata: {
+        jobId,
+        testRunId: job.testRunId,
+        acknowledged: true,
+      },
+    });
+
+    return {
+      success: true,
+      jobId,
+      acknowledgedAt: now.toISOString(),
+    };
+  }
+
+  /**
+   * Cancels all pending, leased, or running jobs for a test run.
+   */
+  async cancelJobsForTestRun(testRunId: string, reason = 'Execution cancelled by user'): Promise<number> {
+    const { db } = getDatabase();
+    if (!db) return 0;
+
+    const now = new Date();
+    const updated = await db
+      .update(agentJobs)
+      .set({
+        status: 'cancelled',
+        error: reason,
+        leaseExpiresAt: null,
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(agentJobs.testRunId, testRunId),
+          inArray(agentJobs.status, ['queued', 'leased', 'running']),
+        ),
+      )
+      .returning();
+
+    for (const job of updated) {
+      await agentAuditService.recordAuditEvent({
+        tenantId: job.tenantId,
+        agentId: job.agentId,
+        eventType: 'job.cancelled',
+        actorType: 'admin',
+        actorId: 'admin',
+        metadata: {
+          jobId: job.id,
+          testRunId: job.testRunId,
+          reason,
+        },
+      });
+    }
+
+    return updated.length;
   }
 }
 

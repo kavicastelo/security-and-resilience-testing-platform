@@ -284,3 +284,69 @@ Phase 16.10: End-to-End Adversarial Security & Penetration Verification
 ## 10. Audit Conclusion & Sign-Off
 
 The Security Lab distributed agent architecture has completed initial scaffolding, but requires rigorous trust boundary engineering before it can be deployed in production or hybrid-cloud environments. The blueprint set forth in Phase 16 addresses every identified vulnerability in dependency order.
+
+---
+
+## 11. Security Audit Logging & Compliance Event Subsystem (Phase 16.9)
+
+### 11.1 Architecture & Objectives
+Phase 16.9 establishes an enterprise-grade, append-only, tamper-evident audit logging subsystem satisfying SOC 2 Type II and ISO 27001 requirements across all distributed agent interactions.
+
+### 11.2 Database Schema (`agent_audit_events`)
+Created in Migration `0010_agent_audit_events.sql`:
+```sql
+CREATE TABLE IF NOT EXISTS agent_audit_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  event_type VARCHAR(50) NOT NULL,
+  actor_type VARCHAR(30) NOT NULL,
+  actor_id VARCHAR(100) NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ip_address VARCHAR(45),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_audit_events_tenant_created ON agent_audit_events(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_audit_events_agent_created ON agent_audit_events(agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_audit_events_event_type ON agent_audit_events(event_type);
+```
+
+### 11.3 Database Immutability & Append-Only Trigger (Rule 20)
+To prevent rogue insiders or SQL injection attacks from tampering with audit trails, a database-level trigger prohibits all `UPDATE` and `DELETE` operations on `agent_audit_events`:
+```sql
+CREATE OR REPLACE FUNCTION prevent_agent_audit_event_tamper()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'AUDIT_LOG_IMMUTABLE: Audit events are append-only. UPDATE and DELETE operations are forbidden.';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_agent_audit_events_immutable
+BEFORE UPDATE OR DELETE ON agent_audit_events
+FOR EACH ROW EXECUTE FUNCTION prevent_agent_audit_event_tamper();
+```
+
+### 11.4 Automated Secret Scrubbing (Rule 17)
+The `AgentAuditService` enforces strict recursive secret sanitization prior to database persistence:
+- Sensitive key names (`token`, `secret`, `password`, `key`, `authorization`, `apiKey`, `auth_header`, etc.) are masked with `***REDACTED***`.
+- Raw credential values starting with `Bearer `, `tek_`, or `agt_sec_` are automatically detected and masked.
+- Object traversal is protected against circular references.
+- Zero raw secrets or plaintext tokens appear in audit payloads.
+
+### 11.5 Event Taxonomy
+| Event Type | Actor Type | Trigger Point | Payload Metadata |
+| :--- | :--- | :--- | :--- |
+| `agent.enrolled` | `admin` | TEK-authorized agent registration | Agent name, tags, capabilities, expiration |
+| `agent.token_rotated` | `agent` | Instance token rotation | Token expiration timestamp |
+| `agent.revoked` | `admin` | Administrative revocation | Reason, revokedAt timestamp |
+| `job.leased` | `agent` | Atomic `SELECT FOR UPDATE SKIP LOCKED` poll | JobId, testRunId, leaseId, leaseExpiresAt, attempts |
+| `job.completed` | `agent` | Signed completion ingestion | JobId, testRunId, leaseId, findingsCount, executionsCount |
+| `job.failed` | `agent` | Failure report or timeout reap | JobId, testRunId, leaseId, error message |
+| `job.cancelled` | `admin`/`agent` | User cancellation / cancel-ack | JobId, testRunId, reason |
+| `security.tenant_mismatch` | `agent`/`admin` | Header spoofing / cross-tenant job access | Action, callerTenantId, targetTenantId, request IP |
+| `security.scope_tampering` | `agent` | HMAC result signature verification failure | JobId, testRunId, leaseId, reason: SIGNATURE_MISMATCH |
+| `security.protocol_violation` | `agent` | Missing or outdated protocol handshake | ClientVersion, minSupportedVersion, errorCode, request IP |
+
+### 11.6 Admin Query API
+- `GET /api/v1/agents/:id/audit-events`: Returns paginated audit trail for a specific agent scoped strictly to the authenticated tenant. Cross-tenant access is rejected with `403 TENANT_MISMATCH`. Non-existent agents return `404 AGENT_NOT_FOUND`.

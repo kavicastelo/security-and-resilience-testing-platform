@@ -29,15 +29,31 @@ The Security Lab Agent Protocol is a resilient, outbound-only, REST/JSON and Ser
 - `X-Agent-Version`: Semantic version of agent daemon (e.g. `0.2.0`).
 - `X-Controller-Version`: Semantic version of controller (e.g. `0.2.0`).
 
-### Compatibility Matrix
+### Active Protocol Constants (Phase 16.8)
+- `CURRENT_PROTOCOL_VERSION`: `'1.0.0'`
+- `MIN_SUPPORTED_PROTOCOL_VERSION`: `'1.0.0'`
+- `CONTROLLER_VERSION`: `'0.2.0'`
+- `AGENT_VERSION`: `'0.2.0'`
 
-| Client Protocol | Controller Protocol | Handshake Result | Action Taken |
-| :--- | :--- | :--- | :--- |
-| `1.0.0` | `1.0.0` | `COMPATIBLE` | Normal operation. |
-| `1.0.x` | `1.1.0` | `COMPATIBLE_MINOR` | Backward-compatible operation; controller ignores unknown agent fields. |
-| `0.9.x` | `1.0.0` | `DEPRECATED_SUPPORTED` | Accepted with warning; heartbeat response includes `upgrade_recommended` command. |
-| `< 0.9.0` | `1.0.0` | `UNSUPPORTED_OUTDATED` | Rejected with `426 Upgrade Required`. Agent shuts down and logs upgrade instruction. |
-| `2.0.0` | `1.0.0` | `INCOMPATIBLE_MAJOR` | Rejected with `400 Bad Request: Incompatible Protocol Version`. |
+### Compatibility & Negotiation Matrix
+
+| Client Protocol | Controller Protocol | Handshake Result | HTTP Status | Error Code | Action Taken |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `1.0.0` | `1.0.0` | `COMPATIBLE` | `200/201` | None | Normal operation. All responses carry `X-Protocol-Version` and `X-Controller-Version`. |
+| Missing | `1.0.0` | `UNSUPPORTED_MISSING` | `426 Upgrade Required` | `PROTOCOL_INCOMPATIBLE` | Rejected. Agent shuts down cleanly. |
+| `< 1.0.0` (e.g. `0.8.0`) | `1.0.0` | `UNSUPPORTED_OUTDATED` | `426 Upgrade Required` | `PROTOCOL_INCOMPATIBLE` | Rejected. Agent shuts down cleanly. |
+| `2.0.0` (major mismatch) | `1.0.0` | `INCOMPATIBLE_MAJOR` | `400 Bad Request` | `INCOMPATIBLE_MAJOR` | Rejected with diagnostic mismatch error. |
+
+### Capability & Tag Negotiation in Job Leasing
+Pending jobs specify required execution capabilities and network zone tags. The controller enforces array containment at the database engine level using PostgreSQL JSONB containment (`<@`):
+```sql
+AND (required_capabilities <@ ${capsJson}::jsonb OR required_capabilities = '[]'::jsonb)
+AND (required_tags <@ ${tagsJson}::jsonb OR required_tags = '[]'::jsonb)
+```
+- An agent without `engine-zap` will never be leased a job requiring ZAP scanning.
+- An agent in `vpc-dev` will never be leased a job targeted strictly to `vpc-prod`.
+- Jobs with empty requirement arrays remain 100% backward-compatible and claimable by any agent in the tenant.
+
 
 ---
 

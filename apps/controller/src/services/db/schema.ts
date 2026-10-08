@@ -461,6 +461,8 @@ export const agentJobs = pgTable(
     leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
     attempts: integer('attempts').notNull().default(0),
     maxAttempts: integer('max_attempts').notNull().default(3),
+    requiredCapabilities: jsonb('required_capabilities').notNull().default([]),
+    requiredTags: jsonb('required_tags').notNull().default([]),
     payload: jsonb('payload').notNull().default({}),
     result: jsonb('result'),
     error: text('error'),
@@ -477,5 +479,27 @@ export const agentJobs = pgTable(
     index('idx_agent_jobs_reaper').on(table.status, table.leaseExpiresAt),
     index('idx_agent_jobs_lease_id').on(table.leaseId),
     index('idx_agent_jobs_claim').on(table.tenantId, table.status, table.attempts),
+  ],
+);
+
+export const agentAuditEvents = pgTable(
+  'agent_audit_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
+    eventType: varchar('event_type', { length: 50 }).notNull(),
+    actorType: varchar('actor_type', { length: 30 }).notNull(),
+    actorId: varchar('actor_id', { length: 100 }).notNull(),
+    metadata: jsonb('metadata').notNull().default({}),
+    ipAddress: varchar('ip_address', { length: 45 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_agent_audit_events_tenant_created').on(table.tenantId, table.createdAt),
+    index('idx_agent_audit_events_agent_created').on(table.agentId, table.createdAt),
+    index('idx_agent_audit_events_event_type').on(table.eventType),
   ],
 );

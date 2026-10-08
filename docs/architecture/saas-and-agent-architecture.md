@@ -297,7 +297,18 @@ The control plane:
 
 ---
 
-## 5. Deployment Guide
+## 5. Deployment Guide & Host Hardening
+
+### The Docker Socket Mounting Anti-Pattern
+> [!CAUTION]
+> **Never mount `/var/run/docker.sock` into Kubernetes Pods or Execution Containers.**
+> Mounting the host Docker daemon socket into a container grants effective root access to the entire host node, completely undermining container sandboxing, namespace isolation, and CIS benchmarks. If a scanner (e.g. ZAP, Trivy) or agent process were exploited, an attacker could spawn a privileged container with the host root filesystem mounted (`-v /:/host`) and achieve immediate cluster node compromise.
+
+Security Lab enforces two approved execution profiles:
+1. **Profile 1: In-Cluster Native Scanning (Kubernetes)**: Runs unprivileged within the cluster (`readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, capabilities dropped to `ALL`) to execute Class A native in-process engines (`native-http`, `auth-audit`, `declarative-dsl`).
+2. **Profile 2: Dedicated Execution VM / Bare-Metal Agent (External Runner)**: For running Class B/C container scanners (OWASP ZAP, Aqua Trivy, Grafana k6). The agent runs as a dedicated system service (`systemd`) under a restricted system user (`securitylab`) on an isolated VM, eliminating container-in-container nesting and socket exposure.
+
+---
 
 ### Step 0: Provision Tenant Enrollment Key (TEK)
 Before deploying any agent instance, obtain a TEK from your organization dashboard or via API:
@@ -308,8 +319,10 @@ curl -X POST https://securitylab.mycompany.com/api/v1/tenants/$TENANT_ID/enrollm
 # Output contains: "key": "tek_default_a1b2c3..."
 ```
 
-### Option A: Kubernetes (Recommended for Clusters)
-Deploy the agent using the provided manifest:
+---
+
+### Option A: Kubernetes In-Cluster Agent (Profile 1: Native In-Process Scanning)
+Deploy the agent using the hardened manifest with a read-only root filesystem and zero host socket mounts:
 ```bash
 kubectl apply -f infrastructure/k8s/agent.yaml
 ```
@@ -322,17 +335,67 @@ kubectl create secret generic security-lab-agent-credentials \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-### Option B: Docker Container (Standalone VM / EC2)
-```bash
-docker run -d \
-  --name security-lab-agent \
-  --restart unless-stopped \
-  -e SECURITY_LAB_CONTROLLER_URL="https://securitylab.mycompany.com" \
-  -e SECURITY_LAB_AGENT_ENROLLMENT_KEY="tek_default_YOUR_ENROLLMENT_KEY" \
-  -e SECURITY_LAB_AGENT_NAME="aws-vpc-us-east-1" \
-  -e SECURITY_LAB_AGENT_TAGS="vpc,aws,prod" \
-  ghcr.io/kavicastelo/security-lab-agent:latest
-```
+---
+
+### Option B: Dedicated VM Execution Worker (Profile 2: Container Scanners via systemd)
+For running containerized scanners (ZAP, Trivy, k6) on an isolated Linux VM / EC2 instance:
+
+1. **Create dedicated unprivileged system user**:
+   ```bash
+   sudo useradd -r -s /usr/sbin/nologin -d /opt/security-lab securitylab
+   sudo usermod -aG docker securitylab
+   ```
+
+2. **Install and configure agent**:
+   ```bash
+   sudo mkdir -p /opt/security-lab /etc/security-lab
+   sudo chown -R securitylab:securitylab /opt/security-lab
+
+   cat << 'EOF' | sudo tee /etc/security-lab/agent.env
+   SECURITY_LAB_CONTROLLER_URL="https://securitylab.mycompany.com"
+   SECURITY_LAB_AGENT_ENROLLMENT_KEY="tek_default_YOUR_ENROLLMENT_KEY"
+   SECURITY_LAB_AGENT_NAME="dedicated-scanner-worker-01"
+   SECURITY_LAB_AGENT_TAGS="vm,dedicated-worker,zap,trivy,k6"
+   SECURITY_LAB_AGENT_CAPABILITIES="native-http,auth-audit,declarative-dsl,zap,trivy,k6,docker-sandbox"
+   EOF
+   sudo chmod 600 /etc/security-lab/agent.env
+   sudo chown securitylab:securitylab /etc/security-lab/agent.env
+   ```
+
+3. **Deploy systemd service unit (`/etc/systemd/system/security-lab-agent.service`)**:
+   ```ini
+   [Unit]
+   Description=Security Lab Distributed Execution Agent
+   After=network.target docker.service
+   Requires=docker.service
+
+   [Service]
+   Type=simple
+   User=securitylab
+   Group=securitylab
+   WorkingDirectory=/opt/security-lab
+   EnvironmentFile=/etc/security-lab/agent.env
+   ExecStart=/usr/bin/node /opt/security-lab/dist/index.js
+   Restart=always
+   RestartSec=5s
+
+   # Sandboxing & Hardening
+   ProtectSystem=strict
+   ProtectHome=true
+   NoNewPrivileges=true
+   PrivateTmp=true
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+4. **Enable and start service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now security-lab-agent
+   ```
+
+---
 
 ### Option C: CLI Standalone Daemon (Developer Testing)
 ```bash
@@ -352,6 +415,10 @@ pnpm --filter @security-lab/agent dev \
 | :--- | :--- | :--- |
 | **Rule 4** | Multi-Tenancy by Design | **Compliant**: Every agent is permanently bound to a verified Tenant ID derived from a validated TEK. |
 | **Rule 5** | No Implicit Trust of Client Headers | **Compliant**: Registration ignores client-provided `x-tenant-id`; tenant is strictly resolved from the authenticated TEK record. |
+| **Rule 12** | Docker Execution Security Boundary | **Compliant**: All container executions drop all capabilities (`--cap-drop=ALL`), run as non-root (`10001:10001`), enforce read-only root filesystems, and strict PID/resource limits. |
+| **Rule 13** | No Unrestricted Docker Socket Exposure | **Compliant**: Removed `/var/run/docker.sock` from Kubernetes manifests and docs. Prohibited Docker socket volume mounts in container runners. Container scanners run on dedicated systemd VMs. |
+| **Rule 14** | No Privileged Containers | **Compliant**: `--privileged` is strictly prohibited. Mandatory `--security-opt=no-new-privileges:true` on all container invocations. |
+| **Rule 15** | No Arbitrary Host Filesystem Mounts | **Compliant**: Volume mounts are restricted strictly to validated scratch subdirectories under OS temp directory (`os.tmpdir()`). Path traversal, system directories, and socket files are blocked. |
 | **Rule 17** | No Plaintext Secrets in Persistence or Logs | **Compliant**: Plaintext TEK and Agent Instance Tokens are hashed with SHA-256 before persistence and masked in logs. |
 | **Rule 18** | Future SaaS must reuse local execution contracts | **Compliant**: `apps/agent` directly imports `@security-lab/test-sdk` engines, registries, and normalizers. Zero custom scanning code or divergent contracts. |
 | **Rule 19** | Local offline developer mode must never break | **Compliant**: Default tenant `00000000-0000-0000-0000-000000000000` is automatically provisioned. Controller functions identically without `x-tenant-id` header. Standalone CLI and in-process execution remain 100% operational. |

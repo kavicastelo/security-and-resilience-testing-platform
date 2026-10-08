@@ -181,7 +181,7 @@ describe('Phase 16.0: Distributed Agent Trust Boundary & Security Baseline Audit
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/agents/register',
-      headers: { 'x-tenant-id': hijackedTenantId },
+      headers: { 'x-tenant-id': hijackedTenantId, 'x-protocol-version': '1.0.0' },
       payload: {
         name: 'rogue-unauthorized-agent',
         tags: ['hijacked'],
@@ -216,6 +216,7 @@ describe('Phase 16.0: Distributed Agent Trust Boundary & Security Baseline Audit
       url: `/api/v1/agents/jobs/${jobAId}/complete`,
       headers: {
         authorization: `Bearer ${agentBData.token}`, // Agent Beta credentials!
+        'x-protocol-version': '1.0.0',
       },
       payload: {
         jobId: jobAId,
@@ -262,6 +263,7 @@ describe('Phase 16.0: Distributed Agent Trust Boundary & Security Baseline Audit
       url: `/api/v1/agents/jobs/${jobAId}/complete`,
       headers: {
         authorization: `Bearer ${agentAData.token}`,
+        'x-protocol-version': '1.0.0',
       },
       payload: {
         jobId: jobAId,
@@ -291,6 +293,7 @@ describe('Phase 16.0: Distributed Agent Trust Boundary & Security Baseline Audit
       url: `/api/v1/agents/jobs/${jobAId}/complete`,
       headers: {
         authorization: `Bearer ${agentAData.token}`,
+        'x-protocol-version': '1.0.0',
       },
       payload: {
         jobId: jobAId,
@@ -365,7 +368,7 @@ describe('Phase 16.0: Distributed Agent Trust Boundary & Security Baseline Audit
     const completeRes = await app.inject({
       method: 'POST',
       url: `/api/v1/agents/jobs/${jobId}/complete`,
-      headers: { authorization: `Bearer ${agentAData.token}` },
+      headers: { authorization: `Bearer ${agentAData.token}`, 'x-protocol-version': '1.0.0' },
       payload: {
         jobId,
         testRunId: runId,
@@ -383,23 +386,29 @@ describe('Phase 16.0: Distributed Agent Trust Boundary & Security Baseline Audit
       url: `/api/v1/test-runs/${runId}`,
     });
 
-    // Vulnerability confirmed: Test run was silently overwritten from 'cancelled' back to 'completed'!
-    expect(checkRun2.json().data.status).toBe('completed');
+    // Phase 16.6 Resolution: Late completion is ignored and test run remains 'cancelled'
+    expect(completeRes.json().ignored).toBe(true);
+    expect(checkRun2.json().data.status).toBe('cancelled');
   });
 
-  it('6. [GAP SEC-06 Proof] Verifies Docker socket exposure in Kubernetes deployment manifest', () => {
+  it('6. [SEC-06 Verified] Verifies zero Docker socket exposure and hardened security context in Kubernetes deployment manifest', () => {
     // Audit of infrastructure/k8s/agent.yaml
     const manifestPath = path.resolve(__dirname, '../../infrastructure/k8s/agent.yaml');
     expect(fs.existsSync(manifestPath)).toBe(true);
 
     const manifestContent = fs.readFileSync(manifestPath, 'utf8');
 
-    // Rule 13 Violation check: Manifest contains hostPath /var/run/docker.sock
+    // Rule 13 & Rule 14 Verification: Manifest must NOT contain /var/run/docker.sock or hostPath socket
     const hasDockerSocketMount = manifestContent.includes('/var/run/docker.sock');
     const hasHostPathSocket = manifestContent.includes('path: /var/run/docker.sock');
 
-    // Vulnerability confirmed: Kubernetes manifest mounts host Docker daemon socket into agent container!
-    expect(hasDockerSocketMount).toBe(true);
-    expect(hasHostPathSocket).toBe(true);
+    // Phase 16.7 Resolution: Zero Docker socket exposure in Kubernetes deployment!
+    expect(hasDockerSocketMount).toBe(false);
+    expect(hasHostPathSocket).toBe(false);
+
+    // Hardened Security Context checks
+    expect(manifestContent.includes('readOnlyRootFilesystem: true')).toBe(true);
+    expect(manifestContent.includes('allowPrivilegeEscalation: false')).toBe(true);
+    expect(manifestContent.includes('runAsNonRoot: true')).toBe(true);
   });
 });
