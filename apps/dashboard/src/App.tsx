@@ -7,6 +7,7 @@ import { TargetsView } from './components/TargetsView.js';
 import { RunsView } from './components/RunsView.js';
 import { FindingsView } from './components/FindingsView.js';
 import { PoliciesView } from './components/PoliciesView.js';
+import { ManagementView } from './components/ManagementView.js';
 import { ToastNotification } from './components/ToastNotification.js';
 import { useAppStore } from './store/useAppStore.js';
 
@@ -45,6 +46,7 @@ export const AppContent: React.FC = () => {
           {activeTab === 'runs' && <RunsView />}
           {activeTab === 'findings' && <FindingsView />}
           {activeTab === 'policies' && <PoliciesView />}
+          {activeTab === 'management' && <ManagementView />}
         </main>
       </div>
       <ToastNotification />

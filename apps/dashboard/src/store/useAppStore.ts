@@ -7,7 +7,7 @@ export interface ToastMessage {
 }
 
 export interface AppState {
-  activeTab: 'overview' | 'targets' | 'runs' | 'findings' | 'policies';
+  activeTab: 'overview' | 'targets' | 'runs' | 'findings' | 'policies' | 'management';
   setActiveTab: (tab: AppState['activeTab']) => void;
   controllerStatus: 'checking' | 'connected' | 'disconnected';
   setControllerStatus: (status: AppState['controllerStatus']) => void;

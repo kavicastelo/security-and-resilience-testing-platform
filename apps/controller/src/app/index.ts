@@ -17,6 +17,7 @@ import { policiesRoutes } from '../routes/policies.js';
 import { contractsRoutes } from '../routes/contracts.js';
 import { tenantsRoutes } from '../routes/tenants.js';
 import { agentsRoutes } from '../routes/agents.js';
+import { managementRoutes } from '../routes/management.js';
 import { agentJobReaper } from '../services/agent-dispatcher.service.js';
 import { logger } from '@security-lab/logger';
 
@@ -88,6 +89,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(contractsRoutes);
   app.register(tenantsRoutes, { prefix: '/api/v1/tenants' });
   app.register(agentsRoutes, { prefix: '/api/v1/agents' });
+  app.register(managementRoutes, { prefix: '/api/v1/management' });
 
   // Background Reaper Lifecycle
   app.addHook('onReady', async () => {

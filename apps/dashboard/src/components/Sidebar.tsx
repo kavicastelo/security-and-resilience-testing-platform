@@ -8,6 +8,7 @@ import {
   Scale,
   FileCode,
   X,
+  Sliders,
 } from 'lucide-react';
 
 interface NavItem {
@@ -23,6 +24,7 @@ const navItems: NavItem[] = [
   { id: 'runs', label: 'Test Executions', icon: PlayCircle },
   { id: 'findings', label: 'Findings & Risks', icon: AlertOctagon },
   { id: 'policies', label: 'Release Gates', icon: Scale },
+  { id: 'management', label: 'Universal Hub', icon: Sliders, badge: 'Admin' },
 ];
 
 export const Sidebar: React.FC = () => {
