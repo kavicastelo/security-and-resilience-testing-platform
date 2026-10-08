@@ -26,6 +26,7 @@ program
   .option('-n, --name <name>', 'Agent name identifier')
   .option('--tags <tags>', 'Comma-separated tags (e.g. vpc-production,on-premise)')
   .option('--tenant <tenantId>', 'Tenant ID for multi-tenant SaaS control plane')
+  .option('--allow-local-testing', 'Allow scanning the host local loopback (localhost/127.0.0.1)')
   .action(async (options) => {
     const config = loadAgentConfig({
       controllerUrl: options.url,
@@ -34,6 +35,7 @@ program
       name: options.name,
       tags: options.tags ? options.tags.split(',').map((t: string) => t.trim()) : undefined,
       tenantId: options.tenant,
+      allowLocalTesting: options.allowLocalTesting,
     });
 
     const daemon = new AgentDaemon(config);

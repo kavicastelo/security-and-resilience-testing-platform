@@ -19,8 +19,9 @@ export interface CreateMetricInput {
 }
 
 export class MetricsService {
-  async saveMetric(input: CreateMetricInput): Promise<Metric> {
-    const { db } = getDatabase();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async saveMetric(input: CreateMetricInput, dbClient?: any): Promise<Metric> {
+    const db = dbClient || getDatabase().db;
 
     const [inserted] = await db
       .insert(metrics)

@@ -1,75 +1,87 @@
-# Architectural Rules & Tenets
+# Master Architecture Rules
 
-These 12 architectural rules govern the design, implementation, and evolution of the Security Lab platform. Every module, contributor, and agent must adhere to them.
+```text
+DOCUMENT: docs/architecture/architecture-rules.md
+PROJECT: Security Lab — Application Security & Resilience Testing Platform
+STATUS: RATIFIED SPECIFICATION
+REVISION: 2.0.0
+```
 
----
-
-### Rule 1: Orchestration Separation
-**The controller orchestrates tests; it does not become the scanner implementation.**
-The controller application coordinates test planning, schedules runs, enforces scopes, ingests results, and evaluates release gates. It must never embed ad-hoc attack payloads or bloated third-party scanning engines into its process space.
-
----
-
-### Rule 2: Contract-Driven Testing Engines
-**Security engines must communicate through stable test-engine contracts.**
-Every testing capability—whether native or external—must interface exclusively through the standardized `TestEngine` contract defined in `@security-lab/test-sdk`.
+Every AI agent and software engineer working on this repository must strictly obey the following **25 architectural rules**:
 
 ---
 
-### Rule 3: Replaceable Scanners
-**External scanners are replaceable implementation details.**
-Tools such as OWASP ZAP, Aqua Trivy, and Grafana k6 are wrapped behind standardized adapters. The core platform must never couple to vendor-specific APIs or schemas.
+### Rule 1: Local-First Execution Must Continue Working Without SaaS
+Local-first developer workflows are foundational to Security Lab. The CLI and local controller must remain 100% operational offline without external cloud dependencies, internet access, or SaaS subscriptions.
 
----
+### Rule 2: Distributed Execution Must Reuse Local Execution Contracts
+When executing tests on distributed agents, the platform must reuse the exact same domain contracts, DTOs, `EngineRegistry`, and `TestEngine` interfaces implemented for local execution. Never create divergent or incompatible execution contracts.
 
-### Rule 4: Unified Finding Normalization
-**Findings must be normalized into the platform's own domain model.**
-Regardless of whether an alert is detected by a native header check, a containerized ZAP scan, or a future scanner, it must be mapped into the canonical `Finding` entity schema defined in `@security-lab/domain`.
+### Rule 3: Controller Owns Authorization and Orchestration
+The controller is the sole authority for tenant isolation, target scopes, policy evaluation, and release gating. The agent is an execution worker, not an authorization authority.
 
----
+### Rule 4: Agent Executes Only Authenticated, Authorized Jobs
+An agent must never accept or execute arbitrary URLs, commands, or jobs without validating that the dispatch originates from an authenticated, authorized controller and holds an active, unexpired lease.
 
-### Rule 5: Immutable Forensic Evidence
-**Evidence must be reproducible and immutable.**
-Evidence captured during test runs constitutes a forensic audit record. Evidence objects are hashed with SHA-256 upon creation and sealed against modification. Re-testing generates a new test run; previous records are never altered.
+### Rule 5: Tenant Identity Must Never Be Trusted From an Arbitrary Request Header Alone
+Client-supplied headers such as `x-tenant-id` are untrusted and must never serve as authorization authority. Tenant identity must be derived strictly from authenticated credentials (e.g. database-backed Agent Token or Tenant Enrollment Key).
 
----
+### Rule 6: Job Ownership Must Be Cryptographically and Logically Bound to the Authenticated Agent
+Only the agent holding the active, unexpired lease on a job may submit progress, completion, or failure reports for that job. Cross-tenant or cross-agent job modifications must be rejected with 403 Forbidden.
 
-### Rule 6: Mandatory Target Scoping
-**Targets must have explicit scopes.**
-Testing requires a registered `Target` record defining an allowed host list and port boundaries. Passing arbitrary, unverified URLs to execution engines is strictly prohibited.
+### Rule 7: Job Completion Must Be Idempotent
+Submitting a job completion report multiple times must produce identical results without duplicating test executions, duplicating findings, or corrupting metrics. Terminal states are immutable.
 
----
+### Rule 8: Expired or Revoked Jobs Must Not Execute
+If an agent lease expires or a job is cancelled, the agent must immediately abort execution. The controller must reject late completion reports for expired or cancelled jobs.
 
-### Rule 7: Safety Limits on Disruptive Tests
-**Potentially disruptive testing requires explicit enablement and safety limits.**
-Active fuzzing, load testing, or state-mutating requests require explicit target capability flags (`activeScanning: true`, `loadTesting: true`) and rate clamps (`maxRps`, `maxConcurrency`, `maxDuration`).
+### Rule 9: Target Scope is a Hard Security Boundary
+No network request or container run may ever be initiated without being validated against a verified, registered `TargetScope`. The platform must never accept arbitrary target URLs on the fly.
 
----
+### Rule 10: Agent Cannot Expand Target Scope
+An agent must never widen, alter, or bypass the target scope issued by the controller. All outbound HTTP requests and redirects must undergo continuous scope validation and SSRF filtering.
 
-### Rule 8: Modular Monolith Foundation
-**The MVP is a modular monolith.**
-All controller subsystems reside within a single, cohesive, well-modularized codebase. This ensures low operational complexity, high velocity, and straightforward local execution.
+### Rule 11: Capability Does Not Equal Authorization
+An agent having the technical capability to execute an engine (e.g. Docker, k6, ZAP) does not grant it authorization to run that engine against all targets or tenants. The controller enforces routing permissions.
 
----
+### Rule 12: Docker Execution is an Explicit Security Boundary
+Running third-party container scanners (ZAP, Trivy, k6) is an explicit attack surface. Containers must run with dropped Linux capabilities (`--cap-drop=ALL`), non-root users (`--user=10001:10001`), read-only root filesystems, and strict PID/resource limits.
 
-### Rule 9: No Premature Microservices
-**Do not introduce microservices until a demonstrated scaling requirement exists.**
-Do not decompose controller modules into independent network services without empirical operational necessity.
+### Rule 13: No Unrestricted Docker Socket Exposure
+Under no circumstances may `/var/run/docker.sock` be mounted directly into untrusted containers or exposed without an explicit threat-model-approved architecture. Host socket access is equivalent to root host takeover.
 
----
+### Rule 14: No Privileged Containers
+Scanner and worker containers must never run with `--privileged` or with elevated security options. `--security-opt=no-new-privileges:true` is mandatory on all container invocations.
 
-### Rule 10: Ubiquitous Contract Reusability
-**The SaaS architecture must eventually reuse the same test-engine and execution contracts.**
-Future enterprise agents and cloud-hosted control planes must utilize the exact same domain entities, DTOs, and test engine contracts initialized in this foundation.
+### Rule 15: No Arbitrary Host Filesystem Mounts
+Container volume mounts must never point to host root (`/`), `/etc`, `/var/run`, or sensitive system paths. Mounts are restricted strictly to ephemeral temporary scratch directories under the OS temp directory, destroyed immediately post-execution.
 
----
+### Rule 16: No Unrestricted Target URLs (SSRF Shielding)
+All outbound URLs must undergo IP normalization and DNS verification. Probing private RFC 1918 subnets, cloud metadata endpoints (`169.254.169.254`), or loopback addresses is strictly forbidden unless explicitly authorized in the target scope. HTTP redirects must be intercepted and re-validated on every hop.
 
-### Rule 11: AI Positioning
-**AI is an analysis/remediation layer, not the primary vulnerability detector.**
-Deterministic protocol checks, verified assertions, and established scanners identify security findings. AI assistance is reserved for triage, root-cause explanation, code remediation suggestions, and policy synthesis.
+### Rule 17: No Raw Secrets in Logs
+API tokens, Bearer headers, passwords, and private keys must never appear in plaintext in application logs, database payloads, error messages, or reports. All logging layers must enforce automated redaction.
 
----
+### Rule 18: No Silent Fallback from Real Execution to Simulated Execution
+Never silently fall back to simulated, mock, or hardcoded findings when an external tool or Docker daemon fails. Mocks are permitted only when explicitly requested via test flags. Real failures must fail fast and truthfully.
 
-### Rule 12: Deterministic Machine-Readable Outputs
-**Every test must eventually produce deterministic machine-readable results.**
-All test executions must generate structured, machine-parsable JSON/SARIF/JUnit outputs that can be evaluated deterministically in automated CI/CD release gates.
+### Rule 19: Resource Limits Are Mandatory
+Every execution must enforce hard caps on requests per second (`maxRps`), concurrent connections (`maxConcurrency`), test duration (`maxDuration`), output size, and container memory/CPU.
+
+### Rule 20: Every Distributed Execution Must Be Auditable
+Every state transition, registration, lease claim, heartbeat, cancellation, and finding ingestion must be captured in an append-only, tamper-evident audit log with structured timestamps and actor IDs.
+
+### Rule 21: Deterministic State Transitions
+Job states must follow an explicit, mathematically sound finite state machine (`queued -> leased -> running -> completed/failed/cancelled/expired`). Invalid or undefined state transitions must fail closed.
+
+### Rule 22: Machine-Readable Failure Semantics
+All API endpoints and CLI commands must emit standardized error envelopes with explicit, machine-readable error codes (e.g. `LEASE_EXPIRED`, `TENANT_MISMATCH`, `SCOPE_VIOLATION`) and standard exit codes.
+
+### Rule 23: Future SaaS Must Not Force Cloud Dependencies Into Local Mode
+Enhancements designed for multi-tenant cloud operations (e.g. mTLS, object storage, distributed queues) must remain modular plugins. Local offline mode must never require cloud infrastructure.
+
+### Rule 24: Do Not Introduce Kubernetes Prematurely
+Do not force complex Kubernetes operators, custom resource definitions (CRDs), or multi-cluster meshes into the core platform when simple, hardened container execution satisfies requirements.
+
+### Rule 25: Do Not Introduce Microservices Merely for Architectural Appearance
+The platform is organized as a modular monolith. Do not split services into independent microservices without an approved Architecture Decision Record (ADR). Keep the operational footprint minimal.

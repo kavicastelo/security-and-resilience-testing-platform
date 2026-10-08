@@ -4,6 +4,7 @@ import {
   AgentHeartbeatResponse,
   AgentJobDispatch,
   AgentJobCompletionReport,
+  RotateAgentTokenResponse,
 } from '@security-lab/contracts';
 import { logger } from '@security-lab/logger';
 
@@ -39,17 +40,54 @@ export class AgentClient {
 
   async register(
     input: AgentRegistrationRequest,
+    enrollmentKey?: string,
     tenantId?: string,
   ): Promise<AgentRegistrationResponse> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (enrollmentKey) {
+      headers['Authorization'] = `Bearer ${enrollmentKey}`;
+    } else if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    if (tenantId) {
+      headers['x-tenant-id'] = tenantId;
+    }
+
     const res = await fetch(`${this.baseUrl}/api/v1/agents/register`, {
       method: 'POST',
-      headers: this.getHeaders(tenantId),
+      headers,
       body: JSON.stringify(input),
     });
 
-    const json = (await res.json()) as { success: boolean; data?: AgentRegistrationResponse; error?: { message: string } };
+    const json = (await res.json()) as {
+      success: boolean;
+      data?: AgentRegistrationResponse;
+      error?: { code?: string; message: string };
+    };
     if (!res.ok || !json.success || !json.data) {
       throw new Error(json.error?.message || `Registration failed with status ${res.status}`);
+    }
+
+    this.token = json.data.token;
+    return json.data;
+  }
+
+  async rotateToken(): Promise<RotateAgentTokenResponse> {
+    const res = await fetch(`${this.baseUrl}/api/v1/agents/rotate-token`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({}),
+    });
+
+    const json = (await res.json()) as {
+      success: boolean;
+      data?: RotateAgentTokenResponse;
+      error?: { code?: string; message: string };
+    };
+    if (!res.ok || !json.success || !json.data) {
+      throw new Error(json.error?.message || `Token rotation failed with status ${res.status}`);
     }
 
     this.token = json.data.token;
@@ -60,16 +98,18 @@ export class AgentClient {
     agentId: string,
     status: 'online' | 'busy' | 'draining' | 'offline' = 'online',
     metrics?: { cpuUsagePercent?: number; memoryUsageMb?: number; activeJobsCount: number },
+    leaseId?: string,
+    activeLeaseIds?: string[],
   ): Promise<AgentHeartbeatResponse> {
     const res = await fetch(`${this.baseUrl}/api/v1/agents/heartbeat`, {
       method: 'POST',
       headers: this.getHeaders(),
-      body: JSON.stringify({ agentId, status, metrics }),
+      body: JSON.stringify({ agentId, status, metrics, leaseId, activeLeaseIds }),
     });
 
     if (!res.ok) {
       logger.warn(`Heartbeat rejected with status ${res.status}`);
-      return { acknowledged: false, timestamp: new Date().toISOString(), command: 'continue' };
+      return { acknowledged: false, timestamp: new Date().toISOString(), command: 'continue', renewedLeases: [] };
     }
 
     return (await res.json()) as AgentHeartbeatResponse;

@@ -4,12 +4,14 @@ export interface AgentConfig {
   controllerUrl: string;
   agentId?: string;
   agentToken?: string;
+  enrollmentKey?: string;
   tenantId?: string;
   name: string;
   tags: string[];
   capabilities: string[];
   pollIntervalMs: number;
   heartbeatIntervalMs: number;
+  allowLocalTesting?: boolean;
 }
 
 export function loadAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
@@ -53,6 +55,10 @@ export function loadAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConf
     ).replace(/\/+$/, ''),
     agentId: overrides.agentId || env.AGENT_ID || env.SECURITY_LAB_AGENT_ID,
     agentToken: overrides.agentToken || env.AGENT_TOKEN || env.SECURITY_LAB_AGENT_TOKEN,
+    enrollmentKey:
+      overrides.enrollmentKey ||
+      env.AGENT_ENROLLMENT_KEY ||
+      env.SECURITY_LAB_AGENT_ENROLLMENT_KEY,
     tenantId: overrides.tenantId || env.TENANT_ID || env.SECURITY_LAB_TENANT_ID,
     name:
       overrides.name ||
@@ -64,5 +70,11 @@ export function loadAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConf
     pollIntervalMs: overrides.pollIntervalMs || (rawPoll ? parseInt(rawPoll, 10) : 2000),
     heartbeatIntervalMs:
       overrides.heartbeatIntervalMs || (rawHeartbeat ? parseInt(rawHeartbeat, 10) : 10000),
+    allowLocalTesting:
+      overrides.allowLocalTesting ??
+      (env.ALLOW_LOCAL_TESTING === 'true' ||
+        env.SECURITY_LAB_ALLOW_LOCAL_TESTING === 'true' ||
+        env.NODE_ENV === 'test' ||
+        env.VITEST === 'true'),
   };
 }
