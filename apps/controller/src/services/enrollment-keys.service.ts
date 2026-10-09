@@ -7,6 +7,9 @@ import {
   TenantEnrollmentKeyResponse,
 } from '@security-lab/contracts';
 import { logger } from '@security-lab/logger';
+import { config } from '../config/index.js';
+import { timingSafeCompare } from '../plugins/auth.js';
+import { DEFAULT_TENANT_ID } from './tenants.service.js';
 
 export function hashEnrollmentKey(rawKey: string): string {
   return crypto.createHash('sha256').update(rawKey.trim()).digest('hex');
@@ -164,12 +167,37 @@ export class EnrollmentKeysService {
       .limit(1);
 
     if (!tek) {
+      // Local development or single-tenant workstation mode: allow enrollment using API key or Admin key
+      if (
+        (config.NODE_ENV !== 'production' || process.env.SECURITY_LAB_SINGLE_TENANT_MODE === 'true') &&
+        (timingSafeCompare(rawKey, config.SECURITY_LAB_API_KEY) ||
+          (config.SECURITY_LAB_ADMIN_KEY && timingSafeCompare(rawKey, config.SECURITY_LAB_ADMIN_KEY)))
+      ) {
+        return {
+          valid: true,
+          tek: {
+            id: 'dev-default-tek',
+            tenantId: DEFAULT_TENANT_ID,
+            name: 'Local Dev Default TEK',
+            keyHash: keyHash,
+            keyPrefix: 'tek_dev...',
+            maxUses: null,
+            usesCount: 0,
+            expiresAt: null,
+            revokedAt: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        };
+      }
+
       return {
         valid: false,
         errorCode: 'INVALID_ENROLLMENT_KEY',
         error: 'Provided Tenant Enrollment Key is invalid or not registered.',
       };
     }
+
 
     if (tek.revokedAt) {
       return {

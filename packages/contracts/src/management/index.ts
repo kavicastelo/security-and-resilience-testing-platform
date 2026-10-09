@@ -52,6 +52,7 @@ export interface SystemOverviewStats {
   system: {
     nodeVersion: string;
     platform: string;
+    environment?: string;
     uptimeSeconds: number;
     pid: number;
     memoryUsage: {
@@ -86,6 +87,12 @@ export interface PurgeDataResult {
   message: string;
   timestamp: string;
 }
+
+export const SeedDataRequestSchema = z.object({
+  force: z.boolean().optional().default(false),
+});
+
+export type SeedDataRequest = z.infer<typeof SeedDataRequestSchema>;
 
 export interface SeedDataResult {
   success: boolean;

@@ -29,6 +29,7 @@ import { Pagination } from './Pagination.js';
 import { LiveRunMonitor } from './LiveRunMonitor.js';
 import { LatencyDistributionChart } from './LatencyDistributionChart.js';
 import { useAppStore } from '../store/useAppStore.js';
+import { getStoredApiKey } from '../api/client.js';
 
 interface Target {
   id: string;
@@ -237,7 +238,9 @@ const RunMetricsDetails: React.FC<{ runId: string; apiUrl: string }> = ({ runId,
 export const RunsView: React.FC = () => {
   const queryClient = useQueryClient();
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-  const { showToast } = useAppStore();
+  const { showToast, apiKey } = useAppStore();
+  const effectiveApiKey = apiKey || getStoredApiKey();
+  const authQueryParam = effectiveApiKey ? `&apiKey=${encodeURIComponent(effectiveApiKey)}` : '';
 
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
   const [evaluatingRunId, setEvaluatingRunId] = useState<string | null>(null);
@@ -1026,7 +1029,7 @@ export const RunsView: React.FC = () => {
                                   <FileText className="w-3.5 h-3.5 text-blue-400" /> Export Reports:
                                 </span>
                                 <a
-                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=html`}
+                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=html${authQueryParam}`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="px-2.5 py-1 rounded-lg bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
@@ -1034,7 +1037,7 @@ export const RunsView: React.FC = () => {
                                   <ExternalLink className="w-3 h-3 text-blue-400" /> HTML Report
                                 </a>
                                 <a
-                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=junit`}
+                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=junit${authQueryParam}`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="px-2.5 py-1 rounded-lg bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"
@@ -1042,7 +1045,7 @@ export const RunsView: React.FC = () => {
                                   <Download className="w-3 h-3 text-emerald-400" /> JUnit XML
                                 </a>
                                 <a
-                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=sarif`}
+                                  href={`${apiUrl}/api/v1/test-runs/${run.id}/report?format=sarif${authQueryParam}`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="px-2.5 py-1 rounded-lg bg-accent/60 hover:bg-accent border border-border text-foreground transition-colors font-mono text-[11px] flex items-center gap-1"

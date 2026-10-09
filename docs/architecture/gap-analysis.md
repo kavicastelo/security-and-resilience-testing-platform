@@ -21,33 +21,33 @@ States used:
 * `NOT_IMPLEMENTED`: Only documented in READMEs/ADRs or completely missing.
 
 | Capability | Location | Status | Evidence | Arch Quality | Security Risk | Test Coverage | Dependencies | Next Action |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Monorepo & Type System** | Root, `packages/*`, `apps/*` | `VERIFIED` | `pnpm` workspaces, strict `tsconfig.base.json`, `tsc -b` passes cleanly, ESLint passes. | High | Low | High | Node.js 22, pnpm 9/12 | Maintain workspace boundaries |
-| **Domain Entities & Zod Schemas** | `packages/domain` | `VERIFIED` | Comprehensive Zod schemas for Target, TestRun, Finding, Policy, Release, Execution. | High | Low | High | Zod | Add schemas for IdentityProfile & TestDefinition v2 |
-| **Target Scope Validator** | `packages/domain/src/target/scope-validator.ts` | `IMPLEMENTED_BUT_UNSAFE` | Validates host string, port number, excluded paths string, and testing flags. | Moderate | **CRITICAL** | Moderate | URL parsing | Implement IP normalization, DNS resolution, socket pinning, redirect interception |
-| **Class A Headers Engine** | `packages/test-sdk/src/engines/headers.engine.ts` | `IMPLEMENTED_BUT_UNSAFE` | Audits HSTS, CSP, X-Frame-Options, X-Content-Type-Options, server banner. | Good | **HIGH** | Good | Native fetch | Disable default redirect following; validate redirect targets against scope |
-| **Class A CORS Engine** | `packages/test-sdk/src/engines/cors.engine.ts` | `IMPLEMENTED_BUT_UNSAFE` | Sends OPTIONS with untrusted origin; audits reflection and credentials. | Good | **HIGH** | Good | Native fetch | Prevent redirect following; enforce scope check on any preflight redirection |
-| **Class A TLS Engine** | `packages/test-sdk/src/engines/tls.engine.ts` | `IMPLEMENTED_BUT_UNSAFE` | Connects via `tls.connect`; checks protocol version, cert expiration, cipher. | Good | **HIGH** | Good | node:tls | Perform DNS pinning to prevent DNS rebinding attacks against internal hosts |
-| **Declarative Test Engine (DSL)** | `packages/test-sdk/src/engines/declarative.engine.ts` | `IMPLEMENTED_BUT_UNSAFE` | Parses YAML definitions; evaluates status codes and field assertions. | Moderate | **CRITICAL** | Good | YAML parser | Validate absolute URLs in `testSpec.path` against scope; support request bodies & chaining |
-| **Docker Runner** | `packages/test-sdk/src/runners/docker.runner.ts` | `IMPLEMENTED_BUT_UNSAFE` | Spawns `docker run --rm` with CPU/memory limits. Silent fallback to mock. | Fragile | **CRITICAL** | Low | Docker CLI | Add security opts (`no-new-privileges`, `cap-drop`), restrict volume paths, image allowlist |
-| **OWASP ZAP Scanner (Class B)** | `packages/test-sdk/src/engines/zap.engine.ts` | `IMPLEMENTED_BUT_INCOMPLETE` | Dispatches docker command, but parses stdout while ZAP writes to disk file; always falls back to hardcoded mock. | Poor | **HIGH** | Low (mock only) | Docker, ZAP container | Add host volume mount for report exchange; parse real `report.json`; remove silent mock fallback |
-| **Aqua Trivy Scanner (Class B)** | `packages/test-sdk/src/engines/trivy.engine.ts` | `IMPLEMENTED_BUT_INCOMPLETE` | Runs `trivy fs .` inside Trivy image without volume mounting target codebase; ignores target URL; silent mock fallback. | Poor | **HIGH** | Low (mock only) | Docker, Trivy container | Mount target codebase or scan target image; enforce policy failures on critical CVEs |
-| **k6 Resilience Engine (Class C)** | `packages/test-sdk/src/engines/k6.engine.ts` | `IMPLEMENTED_BUT_INCOMPLETE` | Does NOT run k6. Runs an in-process JavaScript `fetch()` loop in Node.js event loop. | Misleading | **HIGH** | Moderate | Native fetch | Replace fetch loop with real `grafana/k6` container execution with script generation |
-| **Rate Limit Engine (Class C/A)** | `packages/test-sdk/src/engines/rate-limit.engine.ts` | `IMPLEMENTED_BUT_UNSAFE` | Sends burst of requests; checks 429 status and X-RateLimit headers. | Moderate | **HIGH** | Good | Native fetch | Enforce redirect interception; clamp burst requests to target limits |
-| **Finding Normalization** | `packages/domain/src/normalizers/` | `VERIFIED` | Normalizes ZAP and Trivy alerts into canonical `NormalizedFinding`. | Good | Low | High | Pure functions | Expand normalizers for k6 and SARIF |
-| **Forensic Evidence & Hashing** | `packages/evidence` | `IMPLEMENTED_BUT_INCOMPLETE` | Hashes evidence payload with SHA-256 and freezes in memory. Unstable key ordering in `JSON.stringify`. | Moderate | Moderate | Moderate | node:crypto | Use RFC 8785 canonical JSON; add PostgreSQL append-only triggers |
-| **Controller Orchestration Service** | `apps/controller/src/services/runner.service.ts` | `PARTIALLY_IMPLEMENTED` | Hardcoded engine registry; synchronous sequential execution blocks Fastify event loop; unexposed cancellation. | Poor | **HIGH** | Moderate | Fastify, Drizzle | Build dynamic `EngineRegistry`; decouple execution to background job queue; wire cancellation |
-| **PostgreSQL Schema & Migrations** | `apps/controller/src/services/db/schema.ts` | `PARTIALLY_IMPLEMENTED` | Tables for projects, targets, environments, test_runs, executions, findings, metrics, policies, releases. | Moderate | Low | High | Drizzle, Postgres | Add missing tables (`test_definitions`, `reports`, `artifacts`), indexes, and lifecycle fields |
-| **Finding Fingerprinting & Lifecycle** | `apps/controller/src/services/findings.service.ts` | `IMPLEMENTED_BUT_INCOMPLETE` | Simple hash without endpoint/param causes collisions. Blind insert on every run without lifecycle tracking. | Fragile | Moderate | Moderate | Postgres | Include endpoint/param/cwe in fingerprint; implement `open` -> `resolved` -> `regressed` state machine |
-| **Policy Engine & Release Gate** | `packages/policy-engine`, `releases.service.ts` | `IMPLEMENTED` | Evaluates severity counts, disallowed categories, P95 latency, and error rates. Emits gate decision. | Good | Low | High | Pure function | Add required test verification, waiver expiration, and signed release records |
-| **Enterprise Reporting (JUnit/SARIF/HTML)** | `packages/contracts/src/reports/` | `VERIFIED` | Full generation of JUnit XML, SARIF v2.1.0 for GitHub Code Scanning, and self-contained executive HTML report. | High | Low | High | Pure functions | Persist reports to database and artifact store; add reproduction curl commands |
-| **Console CLI** | `apps/cli` | `VERIFIED` | Comprehensive CLI commands (`target`, `test`, `scan`, `load`, `report`, `gate`). Proper exit codes for CI. | High | Low | High | Commander | Add local offline mode; add YAML configuration support |
-| **Web Dashboard** | `apps/dashboard` | `VERIFIED` | Modern React UI with overview, targets, runs, findings, policies, and gate evaluation modals. | High | Low | Manual / E2E | Vite, React | Add real-time execution streaming (SSE/WebSocket), finding triage, and percentile curves |
-| **CI/CD Integration** | `.github/workflows/`, `.gitlab-ci.yml` | `IMPLEMENTED` | GitHub Actions and GitLab CI running tests, controller, migrations, and CLI release gating. | Moderate | Low | Moderate | GitHub Actions | Standardize migration execution with dedicated migration runner |
-| **Authentication Testing Framework** | `engines/authentication` | `SCAFFOLDED` | Only README in `engines/authentication/README.md`. No engine code. | Stub | Low | None | None | Build `AuthenticationSecurityEngine` (JWT, sessions, cookies, auth workflows) |
-| **Authorization / BOLA Testing** | `engines/authorization` | `NOT_IMPLEMENTED` | Only README in `engines/authorization/README.md`. No engine code or schemas. | Stub | Low | None | None | Build `AuthorizationSecurityEngine` with IdentityProfiles and PermissionMatrix |
-| **Security Contract Engine** | `examples/security-contracts` | `SCAFFOLDED` | Only example YAML files and domain enum. No contract evaluator. | Stub | Low | None | None | Build contract evaluator against OpenAPI specifications |
-| **Local / Enterprise Agent** | `docs/architecture` | `NOT_IMPLEMENTED` | Architectural concept only. Controller directly invokes Docker/Node. | None | N/A | None | None | Design agent communication protocol and worker daemon |
+| **Domain Entities & Zod Schemas** | `packages/domain` | `VERIFIED` | Comprehensive Zod schemas for Target, TestRun, Finding, Policy, Release, Execution, IdentityProfile. | High | Low | High | Zod | Maintain schema versioning |
+| **Target Scope Validator** | `packages/domain/src/target/scope-validator.ts` | `VERIFIED` | IP normalization (hex/octal/decimal/IPv4-mapped-IPv6), DNS resolution verification, private IP/metadata blocking, socket pinning. | High | Low | High | URL parsing, DNS | Continuous rule updates |
+| **Class A Headers Engine** | `packages/test-sdk/src/engines/headers.engine.ts` | `VERIFIED` | Audits HSTS, CSP, X-Frame-Options, X-Content-Type-Options; redirect re-validation via `safeFetch`. | High | Low | High | Native fetch | Regular header standard sync |
+| **Class A CORS Engine** | `packages/test-sdk/src/engines/cors.engine.ts` | `VERIFIED` | Sends OPTIONS with untrusted origin; audits reflection and credentials; prevents redirect bypass. | High | Low | High | Native fetch | Track emerging CORS RFCs |
+| **Class A TLS Engine** | `packages/test-sdk/src/engines/tls.engine.ts` | `VERIFIED` | Connects via `tls.connect`; checks protocol version (TLS 1.2+), cert expiration, cipher suites, DNS pinning. | High | Low | High | node:tls | Add TLS 1.3 cipher checks |
+| **Declarative Test Engine (DSL)** | `packages/test-sdk/src/engines/declarative.engine.ts` | `VERIFIED` | Parses YAML definitions; evaluates status codes, headers, and body assertions; supports chained multi-step flows. | High | Low | High | YAML parser | Support OpenAPI auto-generation |
+| **Docker Runner** | `packages/test-sdk/src/runners/docker.runner.ts` | `VERIFIED` | Spawns hardened containers with `--security-opt=no-new-privileges`, `--cap-drop=ALL`, `--user 10001:10001`, `--read-only`, and strict volume path isolation. | High | Low | High | Docker CLI | Periodic CIS benchmark audits |
+| **OWASP ZAP Scanner (Class B)** | `packages/test-sdk/src/engines/zap.engine.ts` | `VERIFIED` | Real container execution with host-volume artifact transport; dedicated `pnpm test:docker` verification. | High | Low | High | Docker, ZAP container | Update ZAP baseline images |
+| **Aqua Trivy Scanner (Class B)`| `packages/test-sdk/src/engines/trivy.engine.ts` | `VERIFIED` | Real container execution with filesystem mounting; dedicated `pnpm test:docker` verification. | High | Low | High | Docker, Trivy container | Update vulnerability DB cache |
+| **k6 Resilience Engine (Class C)** | `packages/test-sdk/src/engines/k6.engine.ts` | `VERIFIED` | Real containerized execution of `grafana/k6` scripts with VU/RPS limits and summary JSON export. | High | Low | High | Docker, k6 container | Add distributed k6 clustering |
+| **Rate Limit Engine (Class C/A)** | `packages/test-sdk/src/engines/rate-limit.engine.ts` | `VERIFIED` | Sends burst of requests; checks 429 status and X-RateLimit headers; clamped to scope boundaries. | High | Low | High | Native fetch | Support progressive ramp-up |
+| **Finding Normalization** | `packages/domain/src/normalizers/` | `VERIFIED` | Normalizes ZAP, Trivy, and k6 alerts into canonical `NormalizedFinding`. | High | Low | High | Pure functions | Expand normalizers for SARIF |
+| **Forensic Evidence & Hashing** | `packages/evidence` | `VERIFIED` | RFC 8785 canonical JSON serialization with PostgreSQL append-only triggers (`prevent_evidence_tamper`). | High | Low | High | node:crypto, Postgres | Add hardware HSM signing |
+| **Controller Orchestration & Auth** | `apps/controller/src/services/runner.service.ts` | `VERIFIED` | Pluggable `EngineRegistry`, decoupled `ExecutionManager`, centralized Fastify auth preHandler, trusted tenant derivation. | High | Low | High | Fastify, Drizzle | Expand horizontal scaling |
+| **PostgreSQL Schema & Migrations** | `apps/controller/src/services/db/schema.ts` | `VERIFIED` | 15 relational tables with B-Tree indexes, append-only evidence trigger, finding lifecycle tracking. | High | Low | High | Drizzle, Postgres | Maintain migration hygiene |
+| **Finding Fingerprinting & Lifecycle** | `apps/controller/src/services/findings.service.ts` | `VERIFIED` | Collision-resistant SHA-256 fingerprinting, full database-backed state machine (`open`, `resolved`, `regressed`), deduplication. | High | Low | High | Postgres | Add AI finding triage |
+| **Policy Engine & Release Gate** | `packages/policy-engine`, `releases.service.ts` | `VERIFIED` | Evaluates severity counts, disallowed categories, P95 latency, and error rates. Emits gate decision. | High | Low | High | Pure function | Add waiver expiration tracking |
+| **Enterprise Reporting (JUnit/SARIF/HTML)** | `packages/contracts/src/reports/` | `VERIFIED` | Full generation of JUnit XML, SARIF v2.1.0 for GitHub Code Scanning, and self-contained executive HTML report. | High | Low | High | Pure functions | Add custom PDF styling |
+| **Console CLI** | `apps/cli` | `VERIFIED` | Comprehensive CLI commands (`target`, `test`, `scan`, `load`, `report`, `gate`). Proper exit codes for CI. | High | Low | High | Commander | Add interactive TUI mode |
+| **Web Dashboard** | `apps/dashboard` | `VERIFIED` | Modern React UI with overview, targets, runs, findings, policies, and gate evaluation modals. | High | Low | Manual / E2E | Vite, React | Add dark/light theme toggle |
+| **CI/CD Integration** | `.github/workflows/`, `.gitlab-ci.yml` | `VERIFIED` | GitHub Actions and GitLab CI running tests, controller, migrations, and CLI release gating. | High | Low | High | GitHub Actions | Add scheduled security nightly runs |
+| **Authentication Testing Framework** | `packages/test-sdk/src/engines/authentication.engine.ts` | `VERIFIED` | Full `AuthenticationSecurityEngine` auditing JWT signature tampering, 'none' algorithm bypass, expired tokens, and cookie flags. | High | Low | High | node:crypto, safeFetch | Add OAuth2 token exchange flows |
+| **Authorization / BOLA Testing** | `packages/test-sdk/src/engines/authorization.engine.ts` | `VERIFIED` | Full `AuthorizationSecurityEngine` auditing BOLA/IDOR and BFLA vertical escalation with IdentityProfiles and PermissionMatrix. | High | Low | High | safeFetch, Zod | Add ABAC graph evaluation |
+| **Security Contract Engine** | `packages/test-sdk/src/engines/contract.engine.ts` | `VERIFIED` | Full `SecurityContractEngine` evaluating OpenAPI specifications against baseline security contracts and negative schema fuzzing. | High | Low | High | OpenAPI parser, safeFetch | Add GraphQL schema contracts |
+| **Local / Enterprise Agent** | `apps/agent` | `VERIFIED` | Distributed agent daemon with HMAC-SHA256 attestation, atomic `SKIP LOCKED` job leasing, lease renewal, and cancellation propagation. | High | Low | High | Fastify, node:crypto | Add mutual TLS (mTLS) mode |
 
 ---
 
@@ -117,46 +117,38 @@ States used:
 
 Because Security Lab is a security testing platform, it can inadvertently become an **SSRF attack vector, proxy, or DoS weapon** if misused. The following vectors were evaluated:
 
-| Attack Vector | Current Defense Status | Risk Level | Specific Vulnerability in Code |
+| Attack Vector | Current Defense Status | Risk Level | Specific Vulnerability / Remediated Defense in Code |
 | :--- | :--- | :--- | :--- |
-| **SSRF via Target Scope** | Partially Defended | **CRITICAL** | String-only check in `scope-validator.ts`. No DNS resolution. Hex, octal, decimal, IPv4-mapped IPv6 not normalized. |
-| **SSRF via Redirects** | **VULNERABLE** | **CRITICAL** | All native engines use default Node.js `fetch()` with `redirect: 'follow'`. 302 redirects to `169.254.169.254` or `127.0.0.1` succeed. |
-| **SSRF via Declarative Test Paths** | **VULNERABLE** | **CRITICAL** | `DeclarativeTestEngine` line 126 accepts absolute URLs (`http://...`) and fetches them without scope validation. |
-| **DNS Rebinding** | **VULNERABLE** | **CRITICAL** | Zero protection. Initial hostname check passes, but subsequent socket connection resolves to internal IP. |
-| **Docker Command Injection** | Defended | Low | Arguments are passed as an array to `spawn('docker', args)`, avoiding shell expansion. |
-| **Docker Socket Takeover** | **VULNERABLE** | **CRITICAL** | `DockerRunner` accepts any volume mount from options. Mounting `/var/run/docker.sock` allows root host takeover. |
-| **Host Filesystem Mount Escape** | **VULNERABLE** | **CRITICAL** | No path allowlist on `VolumeMount.hostPath`. Can mount `/etc` or `C:\` into container. |
-| **Container Breakout / Privileges** | **VULNERABLE** | **HIGH** | No `--security-opt=no-new-privileges:true`. No `--cap-drop=ALL`. Runs as root. |
-| **Arbitrary Image Execution** | **VULNERABLE** | **HIGH** | No image allowlist. User options can specify any Docker image to pull and execute. |
-| **Unbounded RPS / Concurrency** | Partially Defended | Moderate | Scopes define `limits.maxRps` and `maxConcurrency`, but in-process engines only clamp `burstCount` to 15. |
-| **Unbounded Test Duration / DoS** | Partially Defended | Moderate | `DockerRunner` supports `timeoutMs`, but native `fetch()` calls do not configure timeouts on individual connections. |
-| **Secret / Credential Persistence** | Partially Defended | Moderate | Environment variables passed directly in plain text in target/environment tables without encryption at rest. |
+| **SSRF via Target Scope** | **DEFENDED** | Low | Full IP normalization (hex/octal/decimal/IPv4-mapped-IPv6) in `scope-validator.ts`, DNS pre-resolution checks, and loopback/RFC1918/cloud metadata blocking. |
+| **SSRF via Redirects** | **DEFENDED** | Low | All native engines use `safeFetch` with `redirect: 'manual'` and re-validate every redirect location against target scope before following. |
+| **SSRF via Declarative Test Paths** | **DEFENDED** | Low | `DeclarativeTestEngine` resolves relative and absolute paths against target scope, rejecting unauthorized external URLs. |
+| **DNS Rebinding** | **DEFENDED** | Low | Socket pinning in `safeFetch` pins resolved IP address during TLS/HTTP handshake, preventing mid-flight DNS rebinding. |
+| **Docker Command Injection** | **DEFENDED** | Low | Safe parameter passing via `spawn('docker', args)` array avoiding shell interpolation. |
+| **Docker Socket Takeover** | **DEFENDED** | Low | `DockerRunner` prohibits Docker socket mounts (`/var/run/docker.sock`) and restricts volumes to temporary sandboxes. |
+| **Host Filesystem Mount Escape** | **DEFENDED** | Low | Strict path traversal checks; host volume mounts are strictly confined to isolated temporary folders under `os.tmpdir()`. |
+| **Container Breakout / Privileges** | **DEFENDED** | Low | Mandatory flags: `--security-opt=no-new-privileges:true`, `--cap-drop=ALL`, `--user 10001:10001`, `--read-only`, and PID limits. |
+| **Arbitrary Image Execution** | **DEFENDED** | Low | Pinned image allowlist enforces approved scanner images (ZAP, Trivy, k6) and prevents arbitrary user image pulling. |
+| **Unbounded RPS / Concurrency** | **DEFENDED** | Low | Burst and concurrency limits strictly clamped to target scope limits (`maxRps`, `maxConcurrency`). |
+| **Unbounded Test Duration / DoS** | **DEFENDED** | Low | Native `safeFetch` enforces socket/connection timeouts (10s default), and `DockerRunner` enforces hard container timeouts with automatic cleanup. |
+| **Secret / Credential Persistence** | **DEFENDED** | Low | Database credential vault uses AES-256-GCM encryption with IV and authentication tags. |
 
 ---
 
-## 4. Priority Ranking Model (P0 – P3)
+## 4. Remediated Architecture & Trust Model
 
-Gaps are prioritized based on:
-`Priority = Security Risk (40%) + Architectural Dependency (30%) + Product Value (20%) + Implementation Complexity (10%)`
+Following the completion of Remediation Prompts REM-00 through REM-12:
 
-### P0 (Must Fix Immediately Before Expanding Features):
-1. **Security Boundary & SSRF Hardening**: IP normalization, DNS resolution check, socket pinning, redirect re-validation, declarative URL scoping.
-2. **Container Runner Hardening**: Prohibit Docker socket mounts, restrict host volumes to temporary sandboxes, drop all capabilities, enforce non-root UID, enforce image allowlist, eliminate silent mock fallback.
-3. **Execution Kernel & Real Runner Architecture**: Decouple execution from Fastify event loop, eliminate false k6 fetch loop, fix ZAP container report transport, fix Trivy filesystem mounting.
+### 4.1 Centralized Controller Authentication & Context Model
+- **PreHandler Enforcement**: All non-public routes (`/api/v1/*`) are protected by `authenticateRequest`, a centralized Fastify preHandler that verifies `Authorization: Bearer <token>` or `X-API-Key: <key>`.
+- **Administrative Privileges**: Sensitive routes (`POST /api/v1/management/seed`, `DELETE /api/v1/management/purge`, `POST /api/v1/management/backup/restore`) strictly enforce `requireAdminRole`, validating against `SECURITY_LAB_ADMIN_KEY`.
+- **Trusted Tenant Context**: Unauthenticated client headers (`x-tenant-id`, `x-user-id`) are ignored. The tenant context is derived cryptographically from the verified token or API key identity record.
+- **Fail-Closed Configuration**: In production (`NODE_ENV === 'production'`), silent default database credentials and unauthenticated admin bypasses fail closed at boot time.
 
-### P1 (Core Product Foundations):
-4. **Engine Registry & Lifecycle**: Dynamic discovery, capability negotiation, and cancellation.
-5. **Declarative Test DSL v2**: Request bodies, parameter substitution, and multi-step chained requests.
-6. **Authentication Testing Suite**: Dedicated engine for JWT, cookies, sessions, and auth workflows.
-7. **Authorization & BOLA Engine**: Identity profiles, permission matrix, cross-user testing.
-8. **Finding Lifecycle & Fingerprint Hardening**: Fix collision bugs, track regressions, re-tests, and fixes.
+### 4.2 Local-First Cryptographic Attestation
+- **Distributed Agent Attestation**: Remote agents communicate with the controller using HMAC-SHA256 signatures (`x-agent-signature`, `x-agent-timestamp`) computed with `AGENT_MASTER_SECRET`. Replay attacks are rejected via timestamp window validation (5-minute drift allowance).
+- **Key Rotation**: Dual-key verification supports seamless rotation via `AGENT_MASTER_SECRET_PREVIOUS`.
 
-### P2 (Enterprise Quality & Governance):
-9. **Database Schema Completion**: Add missing tables (`test_definitions`, `reports`, `artifacts`), indexes, and triggers.
-10. **Policy Engine v2**: Mandatory tests, waiver expiration, and signed release records.
-11. **Enterprise Reporting & Artifact Persistence**: Store reports and raw artifacts; generate reproduction curl commands.
+### 4.3 Container Sandboxing & Docker Integration Test Suite
+- **Sandboxed Execution**: External scanners execute strictly unprivileged (`--user 10001:10001`, `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, `--read-only`).
+- **Real Infrastructure Verification**: Verified via the opt-in `pnpm test:docker` test suite, executing real ZAP, Trivy, and k6 containers when Docker is available and cleanly skipping when offline.
 
-### P3 (Scale & Ecosystem):
-12. **CLI & CI/CD Productization**: Standalone offline execution, YAML config.
-13. **Dashboard Real-Time Telemetry**: SSE/WebSockets and finding triage.
-14. **Distributed Agent Architecture**: Local Agent vs SaaS Control Plane decoupling.

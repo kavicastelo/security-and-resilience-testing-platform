@@ -278,12 +278,34 @@ export class TestRunnerService extends EventEmitter {
         logger: runLogger.child({ engineId: engine.id, executionId: executionRow.id }),
       };
 
+      // Sanitize merged options: strip simulated, mockReport, skipVerification so that
+      // caller-supplied metadata or options can never trigger mock generators
+      const rawMetadata = (testRun.metadata as Record<string, unknown> | undefined) ?? {};
+      const rawOptions = options?.options ?? {};
+
+      const sanitizedMetadata: Record<string, unknown> = { ...rawMetadata };
+      delete sanitizedMetadata.simulated;
+      delete sanitizedMetadata.mockReport;
+      delete sanitizedMetadata.skipVerification;
+      if (sanitizedMetadata.options && typeof sanitizedMetadata.options === 'object') {
+        const innerOptions = { ...(sanitizedMetadata.options as Record<string, unknown>) };
+        delete innerOptions.simulated;
+        delete innerOptions.mockReport;
+        delete innerOptions.skipVerification;
+        sanitizedMetadata.options = innerOptions;
+      }
+
+      const sanitizedOptions: Record<string, unknown> = { ...rawOptions };
+      delete sanitizedOptions.simulated;
+      delete sanitizedOptions.mockReport;
+      delete sanitizedOptions.skipVerification;
+
       const engineInput = {
         targetUrl: target.baseUrl,
         customHeaders: options?.customHeaders,
         options: {
-          ...(testRun.metadata as Record<string, unknown> | undefined),
-          ...options?.options,
+          ...sanitizedMetadata,
+          ...sanitizedOptions,
           yaml: definitionYaml,
         },
       };

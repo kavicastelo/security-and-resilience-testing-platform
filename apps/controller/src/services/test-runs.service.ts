@@ -1,6 +1,6 @@
 import { eq, and } from 'drizzle-orm';
 import { getDatabase } from './db.js';
-import { testRuns } from './db/schema.js';
+import { testRuns, projects } from './db/schema.js';
 import { targetsService } from './targets.service.js';
 import {
   CreateTestRunInput,
@@ -10,13 +10,17 @@ import {
 } from '@security-lab/domain';
 
 export class TestRunsService {
-  async createTestRun(input: CreateTestRunInput): Promise<TestRun> {
+  async createTestRun(input: CreateTestRunInput, tenantId?: string): Promise<TestRun> {
     const { db } = getDatabase();
 
-    // 1. Verify Target exists and is valid
-    const target = await targetsService.getTargetById(input.targetId);
+    // 1. Verify Target exists and is accessible within tenant boundary
+    const target = await targetsService.getTargetById(input.targetId, tenantId);
     if (!target) {
-      throw new Error(`Cannot start test run: Target "${input.targetId}" not found`);
+      throw new Error(`Cannot start test run: Target "${input.targetId}" not found or access denied`);
+    }
+
+    if (target.projectId !== input.projectId) {
+      throw new Error(`Target "${input.targetId}" does not belong to project "${input.projectId}"`);
     }
 
     // 2. Persist TestRun session
@@ -44,46 +48,33 @@ export class TestRunsService {
       throw new Error('Failed to create TestRun record');
     }
 
-    return {
-      id: inserted.id,
-      projectId: inserted.projectId,
-      targetId: inserted.targetId,
-      environmentId: inserted.environmentId ?? undefined,
-      profileId: inserted.profileId ?? undefined,
-      status: inserted.status as TestRunStatus,
-      triggeredBy: inserted.triggeredBy as TestRun['triggeredBy'],
-      startedAt: inserted.startedAt ?? undefined,
-      completedAt: inserted.completedAt ?? undefined,
-      summary: inserted.summary as TestRunSummary,
-      metadata: (inserted.metadata as Record<string, unknown>) || {},
-      createdAt: inserted.createdAt,
-      updatedAt: inserted.updatedAt,
-    };
+    return this.mapToDomainTestRun(inserted);
   }
 
-  async getTestRunById(id: string): Promise<TestRun | null> {
+  async getTestRunById(id: string, tenantId?: string): Promise<TestRun | null> {
     const { db } = getDatabase();
-    const [row] = await db.select().from(testRuns).where(eq(testRuns.id, id));
+    if (tenantId) {
+      const [row] = await db
+        .select({ testRun: testRuns })
+        .from(testRuns)
+        .innerJoin(projects, eq(testRuns.projectId, projects.id))
+        .where(and(eq(testRuns.id, id), eq(projects.tenantId, tenantId)))
+        .limit(1);
+
+      if (!row) return null;
+      return this.mapToDomainTestRun(row.testRun);
+    }
+
+    const [row] = await db.select().from(testRuns).where(eq(testRuns.id, id)).limit(1);
     if (!row) return null;
 
-    return {
-      id: row.id,
-      projectId: row.projectId,
-      targetId: row.targetId,
-      environmentId: row.environmentId ?? undefined,
-      profileId: row.profileId ?? undefined,
-      status: row.status as TestRunStatus,
-      triggeredBy: row.triggeredBy as TestRun['triggeredBy'],
-      startedAt: row.startedAt ?? undefined,
-      completedAt: row.completedAt ?? undefined,
-      summary: row.summary as TestRunSummary,
-      metadata: (row.metadata as Record<string, unknown>) || {},
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
+    return this.mapToDomainTestRun(row);
   }
 
-  async listTestRuns(filters?: { projectId?: string; targetId?: string }): Promise<TestRun[]> {
+  async listTestRuns(
+    filters?: { projectId?: string; targetId?: string },
+    tenantId?: string,
+  ): Promise<TestRun[]> {
     const { db } = getDatabase();
     const conditions = [];
 
@@ -94,26 +85,24 @@ export class TestRunsService {
       conditions.push(eq(testRuns.targetId, filters.targetId));
     }
 
+    if (tenantId) {
+      conditions.push(eq(projects.tenantId, tenantId));
+      const rows = await db
+        .select({ testRun: testRuns })
+        .from(testRuns)
+        .innerJoin(projects, eq(testRuns.projectId, projects.id))
+        .where(and(...conditions))
+        .orderBy(testRuns.createdAt);
+
+      return rows.map((r) => this.mapToDomainTestRun(r.testRun));
+    }
+
     const query = db.select().from(testRuns);
     const rows = conditions.length > 0
       ? await query.where(and(...conditions)).orderBy(testRuns.createdAt)
       : await query.orderBy(testRuns.createdAt);
 
-    return rows.map((r) => ({
-      id: r.id,
-      projectId: r.projectId,
-      targetId: r.targetId,
-      environmentId: r.environmentId ?? undefined,
-      profileId: r.profileId ?? undefined,
-      status: r.status as TestRunStatus,
-      triggeredBy: r.triggeredBy as TestRun['triggeredBy'],
-      startedAt: r.startedAt ?? undefined,
-      completedAt: r.completedAt ?? undefined,
-      summary: r.summary as TestRunSummary,
-      metadata: (r.metadata as Record<string, unknown>) || {},
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    }));
+    return rows.map((r) => this.mapToDomainTestRun(r));
   }
 
   async updateTestRunStatus(
@@ -146,27 +135,36 @@ export class TestRunsService {
       throw new Error(`TestRun "${id}" not found`);
     }
 
-    return {
-      id: updated.id,
-      projectId: updated.projectId,
-      targetId: updated.targetId,
-      environmentId: updated.environmentId ?? undefined,
-      profileId: updated.profileId ?? undefined,
-      status: updated.status as TestRunStatus,
-      triggeredBy: updated.triggeredBy as TestRun['triggeredBy'],
-      startedAt: updated.startedAt ?? undefined,
-      completedAt: updated.completedAt ?? undefined,
-      summary: updated.summary as TestRunSummary,
-      metadata: (updated.metadata as Record<string, unknown>) || {},
-      createdAt: updated.createdAt,
-      updatedAt: updated.updatedAt,
-    };
+    return this.mapToDomainTestRun(updated);
   }
 
-  async deleteTestRun(id: string): Promise<boolean> {
+  async deleteTestRun(id: string, tenantId?: string): Promise<boolean> {
     const { db } = getDatabase();
+    if (tenantId) {
+      const existing = await this.getTestRunById(id, tenantId);
+      if (!existing) return false;
+    }
+
     const deleted = await db.delete(testRuns).where(eq(testRuns.id, id)).returning();
     return deleted.length > 0;
+  }
+
+  private mapToDomainTestRun(row: typeof testRuns.$inferSelect): TestRun {
+    return {
+      id: row.id,
+      projectId: row.projectId,
+      targetId: row.targetId,
+      environmentId: row.environmentId ?? undefined,
+      profileId: row.profileId ?? undefined,
+      status: row.status as TestRunStatus,
+      triggeredBy: row.triggeredBy as TestRun['triggeredBy'],
+      startedAt: row.startedAt ?? undefined,
+      completedAt: row.completedAt ?? undefined,
+      summary: row.summary as TestRunSummary,
+      metadata: (row.metadata as Record<string, unknown>) || {},
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
   }
 }
 

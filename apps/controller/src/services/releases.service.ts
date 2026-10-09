@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { getDatabase } from './db.js';
-import { releases, testExecutions } from './db/schema.js';
+import { releases, testExecutions, projects } from './db/schema.js';
 import { Release, ReleaseGateDecision, Policy } from '@security-lab/domain';
 import { testRunsService } from './test-runs.service.js';
 import { findingsService } from './findings.service.js';
@@ -96,67 +96,66 @@ export class ReleasesService {
     };
   }
 
-  async listReleases(projectId?: string): Promise<Release[]> {
+  async listReleases(projectId?: string, tenantId?: string): Promise<Release[]> {
     const { db } = getDatabase();
-    const query = projectId
-      ? db.select().from(releases).where(eq(releases.projectId, projectId)).orderBy(releases.createdAt)
+    const conditions = [];
+    if (projectId) {
+      conditions.push(eq(releases.projectId, projectId));
+    }
+
+    if (tenantId) {
+      conditions.push(eq(projects.tenantId, tenantId));
+      const rows = await db
+        .select({ release: releases })
+        .from(releases)
+        .innerJoin(projects, eq(releases.projectId, projects.id))
+        .where(and(...conditions))
+        .orderBy(releases.createdAt);
+
+      return rows.map((r) => this.mapToDomainRelease(r.release));
+    }
+
+    const query = conditions.length > 0
+      ? db.select().from(releases).where(and(...conditions)).orderBy(releases.createdAt)
       : db.select().from(releases).orderBy(releases.createdAt);
 
     const rows = await query;
-    return rows.map((r) => ({
-      id: r.id,
-      projectId: r.projectId,
-      name: r.name,
-      version: r.version,
-      gitCommit: r.gitCommit || undefined,
-      gitBranch: r.gitBranch || undefined,
-      testRunId: r.testRunId || undefined,
-      policyId: r.policyId || undefined,
-      decision: r.decision as ReleaseGateDecision,
-      reason: r.reason || undefined,
-      evaluatorHash: r.evaluatorHash || undefined,
-      metadata: (r.metadata as Record<string, unknown>) || {},
-      evaluatedAt: r.evaluatedAt || undefined,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    }));
+    return rows.map((r) => this.mapToDomainRelease(r));
   }
 
-  async getReleaseById(id: string): Promise<Release | null> {
+  async getReleaseById(id: string, tenantId?: string): Promise<Release | null> {
     const { db } = getDatabase();
-    const [row] = await db.select().from(releases).where(eq(releases.id, id)).limit(1);
+    if (tenantId) {
+      const [row] = await db
+        .select({ release: releases })
+        .from(releases)
+        .innerJoin(projects, eq(releases.projectId, projects.id))
+        .where(and(eq(releases.id, id), eq(projects.tenantId, tenantId)))
+        .limit(1);
 
+      if (!row) return null;
+      return this.mapToDomainRelease(row.release);
+    }
+
+    const [row] = await db.select().from(releases).where(eq(releases.id, id)).limit(1);
     if (!row) {
       return null;
     }
 
-    return {
-      id: row.id,
-      projectId: row.projectId,
-      name: row.name,
-      version: row.version,
-      gitCommit: row.gitCommit || undefined,
-      gitBranch: row.gitBranch || undefined,
-      testRunId: row.testRunId || undefined,
-      policyId: row.policyId || undefined,
-      decision: row.decision as ReleaseGateDecision,
-      reason: row.reason || undefined,
-      evaluatorHash: row.evaluatorHash || undefined,
-      metadata: (row.metadata as Record<string, unknown>) || {},
-      evaluatedAt: row.evaluatedAt || undefined,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
+    return this.mapToDomainRelease(row);
   }
 
-  async evaluateReleaseGate(input: EvaluateReleaseGateInput): Promise<ReleaseGateEvaluationSummary> {
+  async evaluateReleaseGate(
+    input: EvaluateReleaseGateInput,
+    tenantId?: string,
+  ): Promise<ReleaseGateEvaluationSummary> {
     const { db } = getDatabase();
-    const testRun = await testRunsService.getTestRunById(input.testRunId);
+    const testRun = await testRunsService.getTestRunById(input.testRunId, tenantId);
     if (!testRun) {
       throw new Error(`TestRun "${input.testRunId}" not found`);
     }
 
-    const findings = await findingsService.listFindings({ testRunId: input.testRunId });
+    const findings = await findingsService.listFindings({ testRunId: input.testRunId, tenantId });
     const metrics = await metricsService.listMetricsByTestRunId(input.testRunId);
 
     // Collect executed profiles and engines
@@ -310,10 +309,35 @@ export class ReleasesService {
     };
   }
 
-  async deleteRelease(id: string): Promise<boolean> {
+  async deleteRelease(id: string, tenantId?: string): Promise<boolean> {
     const { db } = getDatabase();
+    if (tenantId) {
+      const existing = await this.getReleaseById(id, tenantId);
+      if (!existing) return false;
+    }
+
     const deleted = await db.delete(releases).where(eq(releases.id, id)).returning();
     return deleted.length > 0;
+  }
+
+  private mapToDomainRelease(row: typeof releases.$inferSelect): Release {
+    return {
+      id: row.id,
+      projectId: row.projectId,
+      name: row.name,
+      version: row.version,
+      gitCommit: row.gitCommit || undefined,
+      gitBranch: row.gitBranch || undefined,
+      testRunId: row.testRunId || undefined,
+      policyId: row.policyId || undefined,
+      decision: row.decision as ReleaseGateDecision,
+      reason: row.reason || undefined,
+      evaluatorHash: row.evaluatorHash || undefined,
+      metadata: (row.metadata as Record<string, unknown>) || {},
+      evaluatedAt: row.evaluatedAt || undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
   }
 }
 

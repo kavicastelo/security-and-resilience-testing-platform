@@ -1,11 +1,12 @@
-import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { PolicyWaiver } from '@security-lab/domain';
 import { policiesService, CreatePolicyInput } from '../services/policies.service.js';
+import { extractTenantId, extractTenantScope } from '../services/tenant-context.js';
 
 export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. List Policies
   fastify.get('/api/v1/policies', async (request, reply) => {
-    const tenantId = request.headers['x-tenant-id'] as string | undefined;
+    const tenantId = extractTenantScope(request);
     const list = await policiesService.listPolicies(tenantId);
     return reply.send({
       success: true,
@@ -24,7 +25,8 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 3. Get Policy by ID
   fastify.get<{ Params: { id: string } }>('/api/v1/policies/:id', async (request, reply) => {
-    const policy = await policiesService.getPolicyById(request.params.id);
+    const tenantId = extractTenantScope(request);
+    const policy = await policiesService.getPolicyById(request.params.id, tenantId);
     if (!policy) {
       return reply.status(404).send({
         success: false,
@@ -44,7 +46,7 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // 4. Create Policy
   fastify.post<{ Body: CreatePolicyInput }>('/api/v1/policies', async (request, reply) => {
     try {
-      const tenantId = request.headers['x-tenant-id'] as string | undefined;
+      const tenantId = extractTenantId(request);
       const created = await policiesService.createPolicy(request.body, tenantId);
       return reply.status(201).send({
         success: true,
@@ -64,14 +66,15 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 5. Update Policy (PUT / PATCH)
   const handleUpdatePolicy = async (
-    request: { params: { id: string }; body: unknown },
+    request: FastifyRequest<{ Params: { id: string }; Body: unknown }>,
     reply: { status: (code: number) => { send: (payload: unknown) => unknown }; send: (payload: unknown) => unknown },
   ) => {
     const { id } = request.params;
     const body = (request.body as Partial<CreatePolicyInput>) || {};
 
     try {
-      const updated = await policiesService.updatePolicy(id, body);
+      const tenantId = extractTenantScope(request);
+      const updated = await policiesService.updatePolicy(id, body, tenantId);
       if (!updated) {
         return reply.status(404).send({
           success: false,
@@ -99,8 +102,8 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
   };
 
-  fastify.put<{ Params: { id: string } }>('/api/v1/policies/:id', handleUpdatePolicy);
-  fastify.patch<{ Params: { id: string } }>('/api/v1/policies/:id', handleUpdatePolicy);
+  fastify.put<{ Params: { id: string }; Body: unknown }>('/api/v1/policies/:id', handleUpdatePolicy);
+  fastify.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/policies/:id', handleUpdatePolicy);
 
   // 5b. Add Waiver to Policy
   fastify.post<{
@@ -108,7 +111,8 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     Body: PolicyWaiver;
   }>('/api/v1/policies/:id/waivers', async (request, reply) => {
     try {
-      const updated = await policiesService.addWaiver(request.params.id, request.body);
+      const tenantId = extractTenantScope(request);
+      const updated = await policiesService.addWaiver(request.params.id, request.body, tenantId);
       return reply.status(200).send({
         success: true,
         data: updated,
@@ -126,8 +130,9 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     Body: PolicyWaiver & { policyId?: string };
   }>('/api/v1/policies/waivers', async (request, reply) => {
     try {
+      const tenantId = extractTenantScope(request);
       const { policyId, ...waiver } = request.body;
-      const updated = await policiesService.addWaiver(policyId, waiver);
+      const updated = await policiesService.addWaiver(policyId, waiver, tenantId);
       return reply.status(200).send({
         success: true,
         data: updated,
@@ -145,7 +150,8 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   fastify.delete<{ Params: { id: string } }>('/api/v1/policies/:id', async (request, reply) => {
     const { id } = request.params;
     try {
-      const deleted = await policiesService.deletePolicy(id);
+      const tenantId = extractTenantScope(request);
+      const deleted = await policiesService.deletePolicy(id, tenantId);
       if (!deleted) {
         return reply.status(404).send({
           success: false,

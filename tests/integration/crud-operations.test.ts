@@ -475,10 +475,11 @@ describe('Comprehensive Data CRUD Operations API', () => {
     let releaseId: string;
 
     beforeAll(async () => {
+      const suffix = Date.now();
       const projRes = await app.inject({
         method: 'POST',
         url: '/api/v1/projects',
-        payload: { name: 'Full Lifecycle Project' },
+        payload: { name: `Full Lifecycle Project ${suffix}` },
       });
       const projBody = JSON.parse(projRes.payload);
       testProjectId = projBody.data.id;

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 import { TestRun, Finding, FindingSeverity, Metric } from '@security-lab/domain';
 
 interface TestRunExecutionResponse {
@@ -182,8 +183,7 @@ loadCommand
         process.exit(1);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Load test execution failed: ${msg}`));
+      console.error(formatCliError(err, 'Load test execution failed'));
       process.exit(1);
     }
   });
@@ -261,8 +261,7 @@ loadCommand
         process.exit(1);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Rate limit audit failed: ${msg}`));
+      console.error(formatCliError(err, 'Rate limit audit failed'));
       process.exit(1);
     }
   });

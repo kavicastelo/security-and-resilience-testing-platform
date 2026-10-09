@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 import { TestRun, Finding, FindingSeverity } from '@security-lab/domain';
 
 interface TestRunExecutionResponse {
@@ -165,8 +166,7 @@ testCommand
         process.exit(1);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Test execution failed: ${msg}`));
+      console.error(formatCliError(err, 'Test execution failed'));
       process.exit(1);
     }
   });
@@ -218,8 +218,7 @@ testCommand
       // eslint-disable-next-line no-console
       console.log('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to list test runs: ${msg}`));
+      console.error(formatCliError(err, 'Failed to list test runs'));
       process.exit(1);
     }
   });
@@ -256,8 +255,7 @@ testCommand
       // eslint-disable-next-line no-console
       console.log('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to retrieve findings: ${msg}`));
+      console.error(formatCliError(err, 'Failed to retrieve findings'));
       process.exit(1);
     }
   });
@@ -296,8 +294,7 @@ testCommand
       // eslint-disable-next-line no-console
       console.log(`  Created:     ${new Date(run.createdAt).toLocaleString()}\n`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to get test run "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to get test run "${id}"`));
       process.exit(1);
     }
   });
@@ -317,8 +314,7 @@ testCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Test run ${id} successfully cancelled (status: ${result.status}).`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to cancel test run "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to cancel test run "${id}"`));
       process.exit(1);
     }
   });
@@ -333,8 +329,7 @@ testCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Test Run [ID: ${id}] and associated records deleted successfully.`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to delete test run "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to delete test run "${id}"`));
       process.exit(1);
     }
   });

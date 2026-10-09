@@ -1,10 +1,10 @@
 import React from 'react';
-import { Shield, Terminal, Menu, X } from 'lucide-react';
+import { Shield, Terminal, Menu, X, Key } from 'lucide-react';
 import { HealthBadge } from './HealthBadge.js';
 import { useAppStore } from '../store/useAppStore.js';
 
 export const Header: React.FC = () => {
-  const { isMobileMenuOpen, setIsMobileMenuOpen } = useAppStore();
+  const { isMobileMenuOpen, setIsMobileMenuOpen, setIsAuthModalOpen, apiKey } = useAppStore();
 
   return (
     <header className="h-16 border-b border-border bg-card/60 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between sticky top-0 z-50">
@@ -39,6 +39,19 @@ export const Header: React.FC = () => {
           <Terminal className="w-3.5 h-3.5 text-blue-400" />
           <span className="font-mono">security-lab --help</span>
         </div>
+        <button
+          type="button"
+          onClick={() => setIsAuthModalOpen(true)}
+          className={`flex items-center space-x-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
+            apiKey
+              ? 'bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20'
+              : 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20'
+          }`}
+          title={apiKey ? 'API Key Configured' : 'API Key Missing - Click to configure'}
+        >
+          <Key className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">{apiKey ? 'Auth: Active' : 'Set API Key'}</span>
+        </button>
         <HealthBadge />
       </div>
     </header>

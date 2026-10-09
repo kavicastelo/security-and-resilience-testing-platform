@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 import { ReleaseGateDecision, Policy } from '@security-lab/domain';
 
 interface PolicyViolation {
@@ -251,8 +252,7 @@ gateCommand
         }
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Release gate evaluation failed: ${msg}`));
+      console.error(formatCliError(err, 'Release gate evaluation failed'));
       process.exit(1);
     }
   });

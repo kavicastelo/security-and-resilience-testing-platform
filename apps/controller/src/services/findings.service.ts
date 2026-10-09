@@ -122,11 +122,15 @@ export class FindingsService {
   async saveFinding(input: CreateFindingInput, dbClient?: any): Promise<Finding> {
     const db = dbClient || getDatabase().db;
 
-    // Query existing finding with identical fingerprint for this specific target
+    // Query existing finding with identical fingerprint for this specific target and tenant
+    const findConditions = [eq(findings.targetId, input.targetId), eq(findings.fingerprint, input.fingerprint)];
+    if (input.tenantId) {
+      findConditions.push(eq(findings.tenantId, input.tenantId));
+    }
     const [existing] = await db
       .select()
       .from(findings)
-      .where(and(eq(findings.targetId, input.targetId), eq(findings.fingerprint, input.fingerprint)))
+      .where(and(...findConditions))
       .limit(1);
 
     if (existing) {
@@ -368,9 +372,13 @@ export class FindingsService {
     };
   }
 
-  async getFindingById(id: string): Promise<Finding | null> {
+  async getFindingById(id: string, tenantId?: string): Promise<Finding | null> {
     const { db } = getDatabase();
-    const [row] = await db.select().from(findings).where(eq(findings.id, id));
+    const conditions = [eq(findings.id, id)];
+    if (tenantId) {
+      conditions.push(eq(findings.tenantId, tenantId));
+    }
+    const [row] = await db.select().from(findings).where(and(...conditions)).limit(1);
     if (!row) return null;
     return this.mapToDomainFinding(row);
   }
@@ -413,9 +421,10 @@ export class FindingsService {
     id: string,
     status: FindingStatus,
     notes?: string,
+    tenantId?: string,
   ): Promise<Finding | null> {
     const { db } = getDatabase();
-    const existing = await this.getFindingById(id);
+    const existing = await this.getFindingById(id, tenantId);
     if (!existing) return null;
 
     const metadata = {
@@ -433,10 +442,15 @@ export class FindingsService {
       updateValues.fixedAt = new Date();
     }
 
+    const updateConditions = [eq(findings.id, id)];
+    if (tenantId) {
+      updateConditions.push(eq(findings.tenantId, tenantId));
+    }
+
     const [updated] = await db
       .update(findings)
       .set(updateValues)
-      .where(eq(findings.id, id))
+      .where(and(...updateConditions))
       .returning();
 
     if (!updated) return null;
@@ -449,9 +463,16 @@ export class FindingsService {
     return this.mapToDomainFinding(updated);
   }
 
-  async deleteFinding(id: string): Promise<boolean> {
+  async deleteFinding(id: string, tenantId?: string): Promise<boolean> {
     const { db } = getDatabase();
-    const deleted = await db.delete(findings).where(eq(findings.id, id)).returning();
+    const existing = await this.getFindingById(id, tenantId);
+    if (!existing) return false;
+
+    const deleteConditions = [eq(findings.id, id)];
+    if (tenantId) {
+      deleteConditions.push(eq(findings.tenantId, tenantId));
+    }
+    const deleted = await db.delete(findings).where(and(...deleteConditions)).returning();
     return deleted.length > 0;
   }
 

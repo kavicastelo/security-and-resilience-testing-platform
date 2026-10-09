@@ -5,7 +5,12 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'packages/*/tests/**/*.test.ts'],
+    env: {
+      SECURITY_LAB_BYPASS_AUTH_IN_TESTS: 'true',
+      AGENT_MASTER_SECRET: 'test-agent-master-secret-at-least-32-chars-long',
+      SECURITY_LAB_API_KEY: 'test-api-key-at-least-16-chars-long',
+    },
   },
   resolve: {
     alias: {

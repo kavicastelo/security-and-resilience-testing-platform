@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { projects } from './db/schema.js';
 import { CreateProjectInput, Project } from '@security-lab/domain';
@@ -46,9 +46,12 @@ export class ProjectsService {
     }));
   }
 
-  async getProjectById(id: string): Promise<Project | null> {
+  async getProjectById(id: string, tenantId?: string): Promise<Project | null> {
     const { db } = getDatabase();
-    const [row] = await db.select().from(projects).where(eq(projects.id, id));
+    const condition = tenantId
+      ? and(eq(projects.id, id), eq(projects.tenantId, tenantId))
+      : eq(projects.id, id);
+    const [row] = await db.select().from(projects).where(condition);
     if (!row) return null;
     return {
       id: row.id,
@@ -59,7 +62,7 @@ export class ProjectsService {
     };
   }
 
-  async updateProject(id: string, input: Partial<CreateProjectInput>): Promise<Project | null> {
+  async updateProject(id: string, input: Partial<CreateProjectInput>, tenantId?: string): Promise<Project | null> {
     const { db } = getDatabase();
     const updateValues: Record<string, unknown> = {
       updatedAt: new Date(),
@@ -68,10 +71,14 @@ export class ProjectsService {
     if (input.name !== undefined) updateValues.name = input.name;
     if (input.description !== undefined) updateValues.description = input.description;
 
+    const condition = tenantId
+      ? and(eq(projects.id, id), eq(projects.tenantId, tenantId))
+      : eq(projects.id, id);
+
     const [updated] = await db
       .update(projects)
       .set(updateValues)
-      .where(eq(projects.id, id))
+      .where(condition)
       .returning();
 
     if (!updated) return null;
@@ -85,9 +92,12 @@ export class ProjectsService {
     };
   }
 
-  async deleteProject(id: string): Promise<boolean> {
+  async deleteProject(id: string, tenantId?: string): Promise<boolean> {
     const { db } = getDatabase();
-    const deleted = await db.delete(projects).where(eq(projects.id, id)).returning();
+    const condition = tenantId
+      ? and(eq(projects.id, id), eq(projects.tenantId, tenantId))
+      : eq(projects.id, id);
+    const deleted = await db.delete(projects).where(condition).returning();
     return deleted.length > 0;
   }
 }

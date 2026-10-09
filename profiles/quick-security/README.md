@@ -15,5 +15,6 @@ A lightweight, non-intrusive security posture audit designed for PR checks and f
 * Max concurrency: 5, Max duration: 1m.
 
 ### Status:
-* **Status**: SCAFFOLDED
-* **Planned Phase**: Phase 2
+* **Status**: `VERIFIED`
+* **Current Behavior**: Fully active profile supported in the controller and CLI. Dispatches `headers`, `tls`, and `cors` native engines with passive inspection.
+

@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { TestEngine, TestEngineError } from '../engine.js';
+import { TestEngine, TestEngineError, EngineExecutionError } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding } from '../result.js';
 import { normalizeTrivyResults } from '@security-lab/domain';
-import { dockerRunner, DockerRunner } from '../runners/docker.runner.js';
+import { dockerRunner, IDockerRunner } from '../runners/docker.runner.js';
 import { createScratchDirectory, EphemeralScratchDirectory } from '../runners/scratch-dir.js';
 import { VolumeMount } from '../runners/docker-policy.js';
 
@@ -67,7 +67,7 @@ export class TrivyScannerEngine implements TestEngine {
   readonly version = '1.0.0';
   readonly executionClass = 'class_b_container' as const;
 
-  constructor(private readonly runner: DockerRunner = dockerRunner) {}
+  constructor(private readonly runner: IDockerRunner = dockerRunner) {}
 
   capabilities(): TestCapability[] {
     return [
@@ -102,9 +102,20 @@ export class TrivyScannerEngine implements TestEngine {
     const startTime = Date.now();
     context.reportProgress(10, 'Initializing Aqua Trivy container environment...');
 
+    // Reject simulation outside test environment
+    const isSimulatedRequested = input.options?.simulated === true;
+    if (isSimulatedRequested && process.env.NODE_ENV !== 'test') {
+      throw new EngineExecutionError(
+        'Simulated scanner execution is disabled in production',
+        this.id,
+      );
+    }
+
     const image = (input.options?.dockerImage as string) || process.env.TRIVY_IMAGE || 'aquasec/trivy:latest';
     const mockReport = input.options?.mockReport || SAMPLE_TRIVY_REPORT;
-    const isSimulated = input.options?.simulated === true || process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true';
+    const isSimulated =
+      process.env.NODE_ENV === 'test' &&
+      (isSimulatedRequested || process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true');
 
     // 1. Provision ephemeral scratch output directory for report transport
     const outScratch = await createScratchDirectory('trivy-out');
@@ -143,7 +154,14 @@ export class TrivyScannerEngine implements TestEngine {
     if (isImageScan) {
       const targetImage =
         explicitImage || rawTarget.replace(/^(image|docker):\/\//, '') || 'target-service-image:latest';
-      trivyArgs = ['image', '--format', 'json', '--output', '/trivy-out/report.json', targetImage];
+      trivyArgs = ['image'];
+      if (input.options?.cacheDir) {
+        trivyArgs.push('--cache-dir', String(input.options.cacheDir));
+      }
+      if (Array.isArray(input.options?.extraArgs)) {
+        trivyArgs.push(...(input.options.extraArgs as string[]));
+      }
+      trivyArgs.push('--format', 'json', '--output', '/trivy-out/report.json', targetImage);
       context.reportProgress(30, `Configured Aqua Trivy for container image scan: ${targetImage}`);
     } else {
       // Filesystem or Repository Scan
@@ -180,7 +198,17 @@ export class TrivyScannerEngine implements TestEngine {
         mode: 'ro',
       });
 
-      trivyArgs = ['fs', '--format', 'json', '--output', '/trivy-out/report.json', '/target-src'];
+      trivyArgs = ['fs'];
+      if (input.options?.cacheDir) {
+        trivyArgs.push('--cache-dir', String(input.options.cacheDir));
+      }
+      if (Array.isArray(input.options?.extraArgs)) {
+        trivyArgs.push(...(input.options.extraArgs as string[]));
+      }
+      if (typeof input.options?.scanners === 'string') {
+        trivyArgs.push('--scanners', input.options.scanners);
+      }
+      trivyArgs.push('--format', 'json', '--output', '/trivy-out/report.json', '/target-src');
       context.reportProgress(30, 'Configured Aqua Trivy for filesystem scan with read-only target mount');
     }
 

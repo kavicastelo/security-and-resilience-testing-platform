@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 
 export const reportCommand = new Command('report')
   .description('Generate and export machine-readable and executive security & resilience reports');
@@ -50,8 +51,7 @@ reportCommand
         console.log(reportContent);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to generate report: ${msg}`));
+      console.error(formatCliError(err, 'Failed to generate report'));
       process.exit(1);
     }
   });

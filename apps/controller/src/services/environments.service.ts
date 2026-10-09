@@ -1,11 +1,23 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { getDatabase } from './db.js';
-import { environments } from './db/schema.js';
+import { environments, projects } from './db/schema.js';
 import { CreateEnvironmentInput, Environment } from '@security-lab/domain';
 
 export class EnvironmentsService {
-  async createEnvironment(input: CreateEnvironmentInput): Promise<Environment> {
+  async createEnvironment(input: CreateEnvironmentInput, tenantId?: string): Promise<Environment> {
     const { db } = getDatabase();
+
+    if (tenantId) {
+      const parentProject = await db
+        .select()
+        .from(projects)
+        .where(and(eq(projects.id, input.projectId), eq(projects.tenantId, tenantId)))
+        .limit(1);
+      if (parentProject.length === 0) {
+        throw new Error(`Project "${input.projectId}" not found or access denied`);
+      }
+    }
+
     const [inserted] = await db
       .insert(environments)
       .values({
@@ -33,8 +45,20 @@ export class EnvironmentsService {
     };
   }
 
-  async listEnvironmentsByProject(projectId: string): Promise<Environment[]> {
+  async listEnvironmentsByProject(projectId: string, tenantId?: string): Promise<Environment[]> {
     const { db } = getDatabase();
+
+    if (tenantId) {
+      const parentProject = await db
+        .select()
+        .from(projects)
+        .where(and(eq(projects.id, projectId), eq(projects.tenantId, tenantId)))
+        .limit(1);
+      if (parentProject.length === 0) {
+        return [];
+      }
+    }
+
     const rows = await db
       .select()
       .from(environments)
@@ -53,8 +77,30 @@ export class EnvironmentsService {
     }));
   }
 
-  async getEnvironmentById(id: string): Promise<Environment | null> {
+  async getEnvironmentById(id: string, tenantId?: string): Promise<Environment | null> {
     const { db } = getDatabase();
+    if (tenantId) {
+      const [row] = await db
+        .select({ environment: environments })
+        .from(environments)
+        .innerJoin(projects, eq(environments.projectId, projects.id))
+        .where(and(eq(environments.id, id), eq(projects.tenantId, tenantId)))
+        .limit(1);
+
+      if (!row) return null;
+      const r = row.environment;
+      return {
+        id: r.id,
+        projectId: r.projectId,
+        name: r.name,
+        type: r.type as Environment['type'],
+        variables: (r.variables as Record<string, string>) || {},
+        headers: (r.headers as Record<string, string>) || {},
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      };
+    }
+
     const [row] = await db.select().from(environments).where(eq(environments.id, id));
     if (!row) return null;
 
@@ -78,8 +124,14 @@ export class EnvironmentsService {
       variables?: Record<string, string>;
       headers?: Record<string, string>;
     },
+    tenantId?: string,
   ): Promise<Environment | null> {
     const { db } = getDatabase();
+    if (tenantId) {
+      const existing = await this.getEnvironmentById(id, tenantId);
+      if (!existing) return null;
+    }
+
     const updateValues: Record<string, unknown> = {
       updatedAt: new Date(),
     };
@@ -108,8 +160,13 @@ export class EnvironmentsService {
     };
   }
 
-  async deleteEnvironment(id: string): Promise<boolean> {
+  async deleteEnvironment(id: string, tenantId?: string): Promise<boolean> {
     const { db } = getDatabase();
+    if (tenantId) {
+      const existing = await this.getEnvironmentById(id, tenantId);
+      if (!existing) return false;
+    }
+
     const deleted = await db.delete(environments).where(eq(environments.id, id)).returning();
     return deleted.length > 0;
   }

@@ -11,7 +11,21 @@ import { managementService } from '../services/management.service.js';
 import { extractTenantId } from '../services/tenant-context.js';
 import { getDatabase } from '../services/db.js';
 import { agentAuditEvents } from '../services/db/schema.js';
-import { desc } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
+
+function requireAdminRole(request: FastifyRequest, reply: FastifyReply): boolean {
+  if (request.auth?.role !== 'admin') {
+    reply.status(403).send({
+      success: false,
+      error: {
+        code: 'FORBIDDEN',
+        message: 'Administrative authorization required for this operation',
+      },
+    });
+    return false;
+  }
+  return true;
+}
 
 export async function managementRoutes(fastify: FastifyInstance) {
   // GET /api/v1/management/overview
@@ -35,7 +49,28 @@ export async function managementRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/v1/management/purge
-  fastify.post('/purge', async (request: FastifyRequest<{ Body: PurgeDataRequest }>, reply: FastifyReply) => {
+  const defaultPurgeMax = process.env.NODE_ENV === 'production' ? 3 : 50;
+  const purgeMax = fastify.rateLimitOverrides?.purgeMax ?? defaultPurgeMax;
+  fastify.post('/purge', {
+    config: {
+      rateLimit: {
+        max: purgeMax,
+        timeWindow: '5 minutes',
+        keyGenerator: (request: FastifyRequest) => {
+          const id = request.auth?.keyId || request.auth?.tenantId || request.ip;
+          return `purge:${id}`;
+        },
+        errorResponseBuilder: (_request, context) => ({
+          statusCode: 429,
+          error: 'Too Many Requests',
+          message: 'Rate limit exceeded for administrative purge operations. Please wait before retrying.',
+          retryAfter: Math.ceil(context.ttl / 1000) || 300,
+        }),
+      },
+    },
+  }, async (request: FastifyRequest<{ Body: PurgeDataRequest }>, reply: FastifyReply) => {
+    if (!requireAdminRole(request, reply)) return;
+
     const parseResult = PurgeDataRequestSchema.safeParse(request.body);
     if (!parseResult.success) {
       return reply.status(400).send({
@@ -69,20 +104,34 @@ export async function managementRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/v1/management/seed
-  fastify.post('/seed', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.post('/seed', async (request: FastifyRequest<{ Body?: { force?: boolean } }>, reply: FastifyReply) => {
+    // 1. Production Environment Lockout: disabled entirely in production
+    if (process.env.NODE_ENV === 'production') {
+      return reply.status(403).send({
+        error: 'Forbidden',
+        message: 'Demo data seeding is disabled in production environments.',
+      });
+    }
+
+    // 2. Administrative Authentication Guard: non-admin requests rejected
+    if (!requireAdminRole(request, reply)) return;
+
     const tenantId = extractTenantId(request);
+    const force = Boolean(request.body?.force);
+
     try {
-      const result = await managementService.seedDemoData(tenantId);
+      const result = await managementService.seedDemoData(tenantId, { force });
       return reply.status(201).send({
         success: true,
         data: result,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Demo data seed failed';
-      return reply.status(500).send({
+      const isConflict = message.includes('existing project(s) found');
+      return reply.status(isConflict ? 409 : 500).send({
         success: false,
         error: {
-          code: 'SEED_FAILED',
+          code: isConflict ? 'PROJECTS_EXIST' : 'SEED_FAILED',
           message,
         },
       });
@@ -90,7 +139,9 @@ export async function managementRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/v1/management/reap-jobs
-  fastify.post('/reap-jobs', async (_request: FastifyRequest, reply: FastifyReply) => {
+  fastify.post('/reap-jobs', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!requireAdminRole(request, reply)) return;
+
     try {
       const result = await managementService.reapAgentJobsNow();
       return reply.status(200).send({
@@ -110,14 +161,14 @@ export async function managementRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/v1/management/audit-events
-  fastify.get('/audit-events', async (_request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/audit-events', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { db } = getDatabase();
-      const events = await db
-        .select()
-        .from(agentAuditEvents)
-        .orderBy(desc(agentAuditEvents.createdAt))
-        .limit(50);
+      const tenantId = extractTenantId(request);
+      const query = db.select().from(agentAuditEvents);
+      const events = request.auth?.role === 'admin'
+        ? await query.orderBy(desc(agentAuditEvents.createdAt)).limit(50)
+        : await query.where(eq(agentAuditEvents.tenantId, tenantId)).orderBy(desc(agentAuditEvents.createdAt)).limit(50);
 
       return reply.status(200).send({
         success: true,
@@ -208,6 +259,8 @@ export async function managementRoutes(fastify: FastifyInstance) {
 
   // DELETE /api/v1/management/backups/:id
   fastify.delete('/backups/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    if (!requireAdminRole(request, reply)) return;
+
     try {
       const result = await managementService.deleteBackup(request.params.id);
       return reply.status(200).send({
@@ -228,6 +281,8 @@ export async function managementRoutes(fastify: FastifyInstance) {
 
   // POST /api/v1/management/backups/restore
   fastify.post('/backups/restore', async (request: FastifyRequest<{ Body: RestoreBackupRequest }>, reply: FastifyReply) => {
+    if (!requireAdminRole(request, reply)) return;
+
     const parseResult = RestoreBackupRequestSchema.safeParse(request.body || {});
     if (!parseResult.success) {
       return reply.status(400).send({

@@ -12,6 +12,8 @@ export interface AgentConfig {
   pollIntervalMs: number;
   heartbeatIntervalMs: number;
   allowLocalTesting?: boolean;
+  masterKey?: string;
+  previousMasterKey?: string;
 }
 
 export function loadAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
@@ -58,7 +60,9 @@ export function loadAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConf
     enrollmentKey:
       overrides.enrollmentKey ||
       env.AGENT_ENROLLMENT_KEY ||
-      env.SECURITY_LAB_AGENT_ENROLLMENT_KEY,
+      env.SECURITY_LAB_AGENT_ENROLLMENT_KEY ||
+      env.SECURITY_LAB_API_KEY,
+
     tenantId: overrides.tenantId || env.TENANT_ID || env.SECURITY_LAB_TENANT_ID,
     name:
       overrides.name ||
@@ -76,5 +80,7 @@ export function loadAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConf
         env.SECURITY_LAB_ALLOW_LOCAL_TESTING === 'true' ||
         env.NODE_ENV === 'test' ||
         env.VITEST === 'true'),
+    masterKey: overrides.masterKey || env.AGENT_MASTER_SECRET || env.SECURITY_LAB_AGENT_MASTER_SECRET,
+    previousMasterKey: overrides.previousMasterKey || env.AGENT_MASTER_SECRET_PREVIOUS,
   };
 }

@@ -11,6 +11,16 @@ export class TestEngineError extends Error {
   }
 }
 
+export class EngineExecutionError extends TestEngineError {
+  constructor(message: string, engineId?: string, cause?: unknown) {
+    super(message, engineId, cause);
+    this.name = 'EngineExecutionError';
+  }
+}
+
+export const TestEngineExecutionError = EngineExecutionError;
+
+
 /**
  * Fundamental test engine contract.
  * Every testing capability (Class A native, Class B scanner wrapper, Class C heavy worker)

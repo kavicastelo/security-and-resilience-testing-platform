@@ -13,5 +13,6 @@ Automated CI/CD deployment gating profile combining passive security audits, cri
 * Non-disruptive: Can be safely run against pre-release staging or canary environments.
 
 ### Status:
-* **Status**: SCAFFOLDED
-* **Planned Phase**: Phase 3
+* **Status**: `VERIFIED`
+* **Current Behavior**: Fully active profile supported in the controller and CLI (`security-lab gate evaluate`). Enforces policy rules, evaluates critical/high finding counts, checks SLA thresholds, and issues release decisions.
+

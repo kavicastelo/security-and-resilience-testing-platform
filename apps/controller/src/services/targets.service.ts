@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { getDatabase } from './db.js';
-import { targets, testRuns } from './db/schema.js';
+import { targets, testRuns, projects } from './db/schema.js';
 import {
   CreateTargetInput,
   Target,
@@ -40,6 +40,18 @@ export class TargetsService {
       );
     }
 
+    // Verify parent project exists and belongs to the caller's tenant
+    if (tenantId) {
+      const parentProject = await db
+        .select()
+        .from(projects)
+        .where(and(eq(projects.id, input.projectId), eq(projects.tenantId, tenantId)))
+        .limit(1);
+      if (parentProject.length === 0) {
+        throw new Error(`Project "${input.projectId}" not found or access denied`);
+      }
+    }
+
     const [inserted] = await db
       .insert(targets)
       .values({
@@ -66,12 +78,17 @@ export class TargetsService {
     };
   }
 
-  async listTargetsByProject(projectId: string): Promise<Target[]> {
+  async listTargetsByProject(projectId: string, tenantId?: string): Promise<Target[]> {
     const { db } = getDatabase();
+    const conditions = [eq(targets.projectId, projectId)];
+    if (tenantId) {
+      conditions.push(eq(targets.tenantId, tenantId));
+    }
+
     const rows = await db
       .select()
       .from(targets)
-      .where(eq(targets.projectId, projectId))
+      .where(and(...conditions))
       .orderBy(targets.name);
 
     return rows.map((r) => ({
@@ -102,9 +119,19 @@ export class TargetsService {
     }));
   }
 
-  async getTargetById(id: string): Promise<Target | null> {
+  async getTargetById(id: string, tenantId?: string): Promise<Target | null> {
     const { db } = getDatabase();
-    const [row] = await db.select().from(targets).where(eq(targets.id, id));
+    const conditions = [eq(targets.id, id)];
+    if (tenantId) {
+      conditions.push(eq(targets.tenantId, tenantId));
+    }
+
+    const [row] = await db
+      .select()
+      .from(targets)
+      .where(and(...conditions))
+      .limit(1);
+
     if (!row) return null;
 
     return {
@@ -130,9 +157,10 @@ export class TargetsService {
       limits?: Partial<TargetScope['limits']>;
       scope?: Partial<TargetScope>;
     },
+    tenantId?: string,
   ): Promise<Target | null> {
     const { db } = getDatabase();
-    const existing = await this.getTargetById(id);
+    const existing = await this.getTargetById(id, tenantId);
     if (!existing) return null;
 
     const nestedScope = input.scope || {};
@@ -183,10 +211,15 @@ export class TargetsService {
     if (input.name !== undefined) updateValues.name = input.name;
     if (input.baseUrl !== undefined) updateValues.baseUrl = input.baseUrl;
 
+    const updateConditions = [eq(targets.id, id)];
+    if (tenantId) {
+      updateConditions.push(eq(targets.tenantId, tenantId));
+    }
+
     const [updated] = await db
       .update(targets)
       .set(updateValues)
-      .where(eq(targets.id, id))
+      .where(and(...updateConditions))
       .returning();
 
     if (!updated) return null;
@@ -202,12 +235,20 @@ export class TargetsService {
     };
   }
 
-  async deleteTarget(id: string): Promise<boolean> {
+  async deleteTarget(id: string, tenantId?: string): Promise<boolean> {
     const { db } = getDatabase();
+    const existing = await this.getTargetById(id, tenantId);
+    if (!existing) return false;
+
     // Cascade delete any associated test runs first to respect foreign key constraint
     await db.delete(testRuns).where(eq(testRuns.targetId, id));
 
-    const deleted = await db.delete(targets).where(eq(targets.id, id)).returning();
+    const deleteConditions = [eq(targets.id, id)];
+    if (tenantId) {
+      deleteConditions.push(eq(targets.tenantId, tenantId));
+    }
+
+    const deleted = await db.delete(targets).where(and(...deleteConditions)).returning();
     return deleted.length > 0;
   }
 
@@ -215,12 +256,13 @@ export class TargetsService {
     targetId: string,
     candidateUrl: string,
     options: ScopeCheckOptions = {},
+    tenantId?: string,
   ): Promise<ScopeValidationResult & { target?: Target }> {
-    const target = await this.getTargetById(targetId);
+    const target = await this.getTargetById(targetId, tenantId);
     if (!target) {
       return {
         valid: false,
-        violations: [`Target with ID "${targetId}" does not exist`],
+        violations: [`Target with ID "${targetId}" not found`],
       };
     }
 

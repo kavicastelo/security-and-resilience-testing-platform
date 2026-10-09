@@ -307,7 +307,7 @@ export async function agentsRoutes(fastify: FastifyInstance) {
     }
 
     if (!tenantId) {
-      tenantId = request.headers['x-tenant-id'] as string | undefined;
+      tenantId = extractTenantId(request);
     }
 
     const list = await agentDispatcherService.listAgents(tenantId);

@@ -71,12 +71,14 @@ export function parseDurationMs(duration: string | number | undefined, defaultMs
 export interface AgentWorkerOptions {
   allowLocalTesting?: boolean;
   masterKey?: string;
+  previousMasterKey?: string;
 }
 
 export class AgentWorker {
   private readonly client: AgentClient;
   private readonly allowLocalTesting: boolean;
   private readonly masterKey?: string;
+  private readonly previousMasterKey?: string;
 
   constructor(client: AgentClient, options: AgentWorkerOptions = {}) {
     this.client = client;
@@ -87,6 +89,7 @@ export class AgentWorker {
         process.env.NODE_ENV === 'test' ||
         process.env.VITEST === 'true');
     this.masterKey = options.masterKey;
+    this.previousMasterKey = options.previousMasterKey;
   }
 
   async executeJob(job: AgentJobDispatch, abortSignal?: AbortSignal): Promise<void> {
@@ -153,6 +156,7 @@ export class AgentWorker {
         scope: job.target.scope,
         signature: job.target.scopeSignature,
         masterKey: this.masterKey,
+        previousMasterKey: this.previousMasterKey,
       });
 
       if (!isScopeSignatureValid) {

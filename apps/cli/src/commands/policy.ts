@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 
 interface PolicyRule {
   id: string;
@@ -64,8 +65,7 @@ policyCommand
       // eslint-disable-next-line no-console
       console.log('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to list policies: ${msg}`));
+      console.error(formatCliError(err, 'Failed to list policies'));
       process.exit(1);
     }
   });
@@ -116,8 +116,7 @@ policyCommand
       // eslint-disable-next-line no-console
       console.log('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to get policy "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to get policy "${id}"`));
       process.exit(1);
     }
   });
@@ -170,8 +169,7 @@ policyCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Policy "${policy.name}" created successfully! ID: ${policy.id}`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to create policy: ${msg}`));
+      console.error(formatCliError(err, 'Failed to create policy'));
       process.exit(1);
     }
   });
@@ -223,8 +221,7 @@ policyCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Policy "${policy.name}" [ID: ${policy.id}] updated successfully!`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to update policy "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to update policy "${id}"`));
       process.exit(1);
     }
   });
@@ -239,8 +236,7 @@ policyCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Policy [ID: ${id}] deleted successfully.`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to delete policy "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to delete policy "${id}"`));
       process.exit(1);
     }
   });

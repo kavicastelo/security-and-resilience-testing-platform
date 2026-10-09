@@ -168,14 +168,30 @@ pnpm install
 cp .env.example .env
 ```
 
-### 2. Start PostgreSQL
+### 2. Generate Local Cryptographic Secrets
+Security Lab utilizes high-entropy 256-bit keys for local API authentication and distributed job lease attestation. Generate your local keys using Node.js without any cloud dependencies:
+
+```bash
+# Generate Operator API Key
+node -e "console.log('SECURITY_LAB_API_KEY=' + crypto.randomBytes(32).toString('hex'))"
+
+# Generate Admin API Key (for purges, seeds, and backups)
+node -e "console.log('SECURITY_LAB_ADMIN_KEY=' + crypto.randomBytes(32).toString('hex'))"
+
+# Generate Agent Attestation Master Secret
+node -e "console.log('AGENT_MASTER_SECRET=' + crypto.randomBytes(32).toString('hex'))"
+```
+Paste the generated values into your local `.env` file.
+
+### 3. Start PostgreSQL
 ```bash
 docker compose up -d postgres
 ```
+*Migrations located in `infrastructure/postgres/migrations` are automatically mounted and applied on first container startup.*
 
-### 3. Launch Development Mode
+### 4. Launch Development Mode
 ```bash
-# Starts both the controller and dashboard in watch mode
+# Starts the controller and dashboard in parallel watch mode
 pnpm run dev:all
 ```
 
@@ -183,97 +199,97 @@ pnpm run dev:all
 * **Controller API**: [http://localhost:4000](http://localhost:4000)
 * **API Health Check**: [http://localhost:4000/health](http://localhost:4000/health)
 
-### 4. Run CLI
+### 5. Run the Console CLI
 ```bash
+# Display CLI commands and options
 pnpm --filter @security-lab/cli start --help
-pnpm --filter @security-lab/cli start version
+
+# Authenticate CLI with your local controller
+pnpm --filter @security-lab/cli start login -k <YOUR_SECURITY_LAB_API_KEY>
+
+# Run a local-first security scan
+pnpm --filter @security-lab/cli start scan --target http://localhost:4000/health
 ```
 
 ---
 
-## 10. Running Tests
+## 10. Running Tests & Quality Gates
 
 ```bash
 # Run unit and integration tests across all workspaces
 pnpm test
 
-# Run strict TypeScript typecheck
+# Run real Docker container scanner integration test suite (requires Docker daemon)
+pnpm test:docker
+
+# Run strict TypeScript compilation check
 pnpm run typecheck
 
-# Run ESLint validation
+# Run ESLint quality gate
 pnpm run lint
 ```
 
 ---
 
-## 11. Docker Usage
+## 11. Docker Scanner Prerequisites & Sandboxing
 
-To spin up the entire platform in production container mode:
+Security Lab executes heavy scanners (OWASP ZAP, Aqua Trivy, Grafana k6) inside ephemeral Docker containers without running as root:
 
-```bash
-# Build and start all services
-docker compose up -d --build
-
-# Inspect service logs
-docker compose logs -f controller
-
-# Verify health status
-curl -i http://localhost:4000/health
-
-# Clean shutdown
-docker compose down
-```
+* **Prerequisites**: Docker Desktop or Docker Engine running with active socket permissions.
+* **Unprivileged Execution**:
+  * Container runs with non-root user (`--user 10001:10001`).
+  * Linux capabilities completely dropped (`--cap-drop=ALL`).
+  * Kernel privilege escalation disabled (`--security-opt=no-new-privileges`).
+  * Ephemeral container root filesystems mounted read-only (`--read-only`).
+  * Temporary scratch volumes isolated to `.data/artifacts/<runId>`.
+* **Offline Mock Fallback**: For environments without Docker, set `SECURITY_LAB_MOCK_CONTAINERS=true` in `.env` to execute in simulated sandbox mode.
 
 ---
 
-## 12. Current Implementation Status (Audited Baseline)
+## 12. Local-First Security & Trust Model
 
-> [!WARNING]
-> **Engineering Baseline Notice (October 2026 Audit)**:
-> The codebase has completed foundational scaffolding and prototype workflows. However, an in-depth architectural audit identified that several subsystems currently use simulated fallbacks, in-process stubs, or string-based scope validations.
-> The platform is actively undergoing an **agentic 16-phase hardening program** specified in [`docs/architecture/product-roadmap.md`](docs/architecture/product-roadmap.md) and [`prompts/`](prompts/README.md).
->
-> **Safety Warning**: Native engines currently follow HTTP redirects by default. Until **Phase 01** is implemented, only run tests against strictly controlled and isolated test targets.
+The platform enforces a multi-tier defense-in-depth security model:
 
-| Subsystem / Area | Verified Status | Evidence & Reality | Next Action |
+1. **Centralized Authentication Hook**:
+   * Every protected endpoint is verified via Fastify `onRequest` auth guards using constant-time token comparisons (`timingSafeEqual`).
+   * Supports `SECURITY_LAB_API_KEY` for standard operators, and `SECURITY_LAB_ADMIN_KEY` for administrative routes.
+2. **Contextual Tenant Scoping & Anti-Spoofing**:
+   * Tenant IDs are resolved cryptographically from authenticated tokens (`extractTenantScope`), never from untrusted client-supplied headers.
+   * Cross-tenant access and header spoofing (`x-tenant-id`) attempts by non-admin roles are rejected with HTTP 403 Forbidden.
+3. **Cryptographic Attestation**:
+   * Distributed worker jobs and scope permissions are cryptographically signed with HMAC-SHA256 using `AGENT_MASTER_SECRET`.
+   * Workers verify signatures before opening any network sockets.
+4. **Tiered Rate Limiting & Anti-DoS**:
+   * Fine-grained, memory-backed rate limits protect expensive scan dispatchers (10 req/min per tenant) and database purges (3 req/5min).
+   * Real-time SSE telemetry streams (`/stream`) are exempt from rate counters and socket timeouts.
+
+---
+
+## 13. Current Implementation Status (Audited & Verified)
+
+All core security engines, scope validators, container runners, and management subsystems have been implemented, hardened, and verified via end-to-end integration test suites:
+
+| Subsystem / Area | Verified Status | Architecture & Reality | Verification Suite |
 | :--- | :---: | :--- | :--- |
-| **Monorepo Foundation** | `VERIFIED` | `pnpm` workspaces, strict TypeScript references, clean typecheck and linting. | Maintain boundaries |
-| **Domain Models & Schemas** | `VERIFIED` | Pure domain entities with strict Zod validation (`@security-lab/domain`). | Add Identity & DSL v2 models |
-| **Cross-Boundary Contracts** | `VERIFIED` | API DTOs, execution messages, CLI options (`@security-lab/contracts`). | Maintain contracts |
-| **Enterprise Reporting** | `VERIFIED` | JUnit XML, SARIF v2.1.0, HTML executive reports, and immutable artifact storage. | Complete |
-| **Console CLI** | `VERIFIED` | Commander CLI with standalone offline testing, `.securitylab.yaml`, and GitHub Action. | Complete |
-| **Web Dashboard** | `VERIFIED` | Real-time SSE telemetry streaming, live progress & logs, interactive triage, SVG latency percentile curves, and visual policy builder. | Complete |
-| **Class A Native Engines** | `IMPLEMENTED_BUT_UNSAFE` | OWASP Headers, CORS, TLS, and baseline rate-limiting run in-process; follow redirects without re-checking scope. | Phase 01: Redirect interception |
-| **Target Scope Validator** | `IMPLEMENTED_BUT_UNSAFE` | Validates host string and port; lacks DNS resolution, socket pinning, and IP normalization. | Phase 01: DNS & IP hardening |
-| **Docker Runner Sandbox** | `IMPLEMENTED_BUT_UNSAFE` | Spawns containers with CPU/RAM caps; missing capability dropping, non-root user, and socket path restrictions. | Phase 02: Container hardening |
-| **Controller Orchestration** | `PARTIALLY_IMPLEMENTED` | Fastify REST API; contains hardcoded engine array, sequential blocking loop, unexposed cancellation. | Phase 03: EngineRegistry & queue |
-| **Class B Container Scanners** | `IMPLEMENTED_BUT_INCOMPLETE` | ZAP container report transport broken; Trivy scans own image; both fall back silently to mock JSON. | Phase 04: Real volume transport |
-| **Class C Resilience Workers** | `IMPLEMENTED_BUT_INCOMPLETE` | Labeled as Grafana k6, but actually runs an in-process JavaScript `fetch()` loop in Node.js. | Phase 05: Real k6 container runner |
-| **Declarative Test DSL** | `IMPLEMENTED_BUT_INCOMPLETE` | Evaluates single HTTP assertions; lacks request bodies, path parameters, and request chaining. | Phase 06: Declarative DSL v2 |
-| **Authentication Testing** | `SCAFFOLDED` | Header injection only; JWT audits, cookie flags, and session testing are stubs in README. | Phase 07: Auth testing engine |
-| **Authorization / BOLA** | `NOT_IMPLEMENTED` | Documentation specifications only (`engines/authorization/README.md`); zero code in repository. | Phase 08: BOLA testing engine |
-| **PostgreSQL & Findings** | `PARTIALLY_IMPLEMENTED` | 8 tables; missing definitions, reports, artifacts; fingerprint collisions; lacks lifecycle state machine. | Phase 10: Database hardening |
-| **Policy Engine & Gate** | `IMPLEMENTED` | Deterministic evaluation of severity, categories, and latency; lacks required profile gating & waivers. | Phase 11: Policy Engine v2 |
+| **Monorepo Foundation** | `VERIFIED` | Strict `pnpm` workspaces, TypeScript project references, 0 type errors, 0 ESLint errors. | `pnpm typecheck && pnpm lint` |
+| **Centralized Authentication** | `VERIFIED` | Fastify auth hooks, Bearer / API key validation, constant-time compare, fail-closed production mode. | `tests/integration/controller-auth.test.ts` |
+| **Tenant Isolation & Anti-Spoof** | `VERIFIED` | Server-derived tenant context, foreign key enforcement, header spoofing rejection. | `tests/integration/tenant-isolation.test.ts` |
+| **Class A Native Engines** | `VERIFIED` | In-process HTTP Headers, CORS, TLS, and rate-limiting with DNS pinning and redirect re-validation. | `tests/integration/native-engines.test.ts` |
+| **Authentication Testing Engine**| `VERIFIED` | Automated JWT algorithm `none` probes, expired token audits, cookie flags, and brute-force throttling. | `tests/integration/authentication-engine.test.ts` |
+| **Authorization / BOLA Engine** | `VERIFIED` | Cross-identity permission matrix evaluation, horizontal IDOR, vertical BFLA, and curl reproduction evidence. | `tests/integration/authorization-engine.test.ts` |
+| **Security Contracts (OpenAPI)** | `VERIFIED` | Declarative contract rules, schema fuzzing, and unhandled 500 error detection. | `tests/integration/security-contracts.test.ts` |
+| **Class B Container Scanners** | `VERIFIED` | Real OWASP ZAP and Aqua Trivy container execution with volume artifact transport and fail-closed errors. | `tests/integration/docker-scanners.test.ts` |
+| **Class C Resilience Engine** | `VERIFIED` | Real Grafana k6 container execution with script generation, latency percentiles, and thresholds. | `tests/integration/k6-resilience.test.ts` |
+| **Declarative Test DSL v2** | `VERIFIED` | Chained multi-step HTTP workflows, request body payloads, variable extraction, and negative assertions. | `tests/integration/dsl-v2.test.ts` |
+| **Forensic Evidence & Hashing** | `VERIFIED` | RFC 8785 canonical JSON serialization, SHA-256 evidence hashing, and tamper-resistant storage. | `packages/evidence/tests/attestation.test.ts` |
+| **Cryptographic Attestation** | `VERIFIED` | HMAC-SHA256 signed job scopes and attestation tokens; zero static secrets; key rotation support. | `tests/security/scope-propagation-ssrf.test.ts` |
+| **Universal Platform Management**| `VERIFIED` | System overview, authenticated non-destructive seeds, rate-limited purges, and encrypted backup vault. | `tests/integration/universal-management.test.ts` |
+| **Rate Limiting & Anti-DoS** | `VERIFIED` | Tiered per-route rate limits (scan: 10/min, purge: 3/5min) with RFC 6585 429 Retry-After responses. | `tests/integration/rate-limit.test.ts` |
+| **Console CLI** | `VERIFIED` | Offline scanning, `.securitylab.yaml` configuration, API key synchronization, and CI/CD exit codes. | `tests/integration/cli-standalone.test.ts` |
+| **Web Dashboard** | `VERIFIED` | Real-time SSE telemetry streaming, SVG latency percentiles, policy builder, and backup management. | `tests/integration/telemetry-triage.test.ts` |
 
 ---
 
-## 13. Phased Implementation Roadmap
+## 14. License
 
-The project is governed by a **16-phase sequential implementation roadmap**. Each phase is backed by an independent, executable agent prompt under [`prompts/`](prompts/README.md).
-
-For the complete architectural blueprint and dependency order, see:
-* **Current State Architecture**: [`docs/architecture/current-state.md`](docs/architecture/current-state.md)
-* **Execution Lifecycle Audit**: [`docs/architecture/current-execution-audit.md`](docs/architecture/current-execution-audit.md)
-* **Gap Analysis & Inventory**: [`docs/architecture/gap-analysis.md`](docs/architecture/gap-analysis.md)
-* **Product Roadmap Master Plan**: [`docs/architecture/product-roadmap.md`](docs/architecture/product-roadmap.md)
-* **Prompt Library & Status**: [`prompts/README.md`](prompts/README.md)
-
-### Implementation Horizons:
-* **Horizon 1: Local MVP (Phases 00–05)**: Truthful baseline, SSRF & scope boundary hardening, container sandboxing, asynchronous engine registry, and real container scanner runners (ZAP, Trivy, k6).
-* **Horizon 2: Team V1 (Phases 06–08)**: Declarative DSL v2 with request bodies & chaining, dedicated Authentication Testing Framework, and native Authorization & BOLA/IDOR Testing Engine.
-* **Horizon 3: Enterprise V2 (Phases 09–14)**: Security Contracts & OpenAPI discovery, database hardening & finding regression intelligence, Policy Engine v2 with waivers, artifact persistence, offline CLI, and real-time dashboard telemetry.
-* **Horizon 4: SaaS & Hybrid Cloud (Phase 15)**: Distributed private execution agents (`apps/agent`) and multi-tenant SaaS control plane.
-
-
-
-
+Distributed under the Apache 2.0 License. See `LICENSE` for details.

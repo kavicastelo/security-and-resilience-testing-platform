@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 import { Project } from '@security-lab/domain';
 
 export const projectCommand = new Command('project')
@@ -40,8 +41,7 @@ projectCommand
       // eslint-disable-next-line no-console
       console.log('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to list projects: ${msg}`));
+      console.error(formatCliError(err, 'Failed to list projects'));
       process.exit(1);
     }
   });
@@ -74,8 +74,7 @@ projectCommand
       // eslint-disable-next-line no-console
       console.log(`  Created:     ${new Date(project.createdAt).toLocaleString()}\n`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to get project "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to get project "${id}"`));
       process.exit(1);
     }
   });
@@ -96,8 +95,7 @@ projectCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Project "${project.name}" created successfully! ID: ${project.id}`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to create project: ${msg}`));
+      console.error(formatCliError(err, 'Failed to create project'));
       process.exit(1);
     }
   });
@@ -119,8 +117,7 @@ projectCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Project "${project.name}" [ID: ${project.id}] updated successfully!`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to update project "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to update project "${id}"`));
       process.exit(1);
     }
   });
@@ -135,8 +132,7 @@ projectCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Project [ID: ${id}] deleted successfully.`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to delete project "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to delete project "${id}"`));
       process.exit(1);
     }
   });

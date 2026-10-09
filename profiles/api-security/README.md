@@ -15,5 +15,6 @@ Comprehensive REST / GraphQL API security audit targeting authentication, object
 * Max duration: 5m.
 
 ### Status:
-* **Status**: SCAFFOLDED
-* **Planned Phase**: Phase 3
+* **Status**: `VERIFIED`
+* **Current Behavior**: Fully active profile supported in the controller and CLI. Dispatches `authentication`, `authorization` (BOLA/IDOR), and `headers` audits against authenticated target endpoints.
+

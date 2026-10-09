@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { TestEngine, TestEngineError } from '../engine.js';
+import { TestEngine, TestEngineError, EngineExecutionError } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding } from '../result.js';
 import { normalizeZapAlerts } from '@security-lab/domain';
-import { dockerRunner, DockerRunner } from '../runners/docker.runner.js';
+import { dockerRunner, IDockerRunner } from '../runners/docker.runner.js';
 import { createScratchDirectory } from '../runners/scratch-dir.js';
 
 export const SAMPLE_ZAP_BASELINE_REPORT = {
@@ -66,7 +66,7 @@ export class ZapScannerEngine implements TestEngine {
   readonly version = '1.0.0';
   readonly executionClass = 'class_b_container' as const;
 
-  constructor(private readonly runner: DockerRunner = dockerRunner) {}
+  constructor(private readonly runner: IDockerRunner = dockerRunner) {}
 
   capabilities(): TestCapability[] {
     return [
@@ -116,9 +116,20 @@ export class ZapScannerEngine implements TestEngine {
       };
     }
 
+    // 2. Reject simulation outside test environment
+    const isSimulatedRequested = input.options?.simulated === true;
+    if (isSimulatedRequested && process.env.NODE_ENV !== 'test') {
+      throw new EngineExecutionError(
+        'Simulated scanner execution is disabled in production',
+        this.id,
+      );
+    }
+
     const image = (input.options?.dockerImage as string) || process.env.ZAP_IMAGE || 'ghcr.io/zaproxy/zaproxy:stable';
     const mockReport = input.options?.mockReport || SAMPLE_ZAP_BASELINE_REPORT;
-    const isSimulated = input.options?.simulated === true || process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true';
+    const isSimulated =
+      process.env.NODE_ENV === 'test' &&
+      (isSimulatedRequested || process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true');
 
     context.reportProgress(20, 'Provisioning ephemeral host scratch directory for ZAP report transport...');
 
@@ -135,9 +146,16 @@ export class ZapScannerEngine implements TestEngine {
         await fs.promises.writeFile(reportFilePath, JSON.stringify(mockReport), 'utf-8');
       }
 
+      const zapArgs = ['zap-baseline.py', '-t', input.targetUrl, '-J', 'report.json', '-I', '-m', '1'];
+      if (Array.isArray(input.options?.extraArgs)) {
+        zapArgs.push(...(input.options.extraArgs as string[]));
+      }
+
       const runResult = await this.runner.execute({
         image,
-        args: ['zap-baseline.py', '-t', input.targetUrl, '-J', 'report.json'],
+        user: '1000:1000',
+        tmpfs: ['/home/zap:rw,exec,mode=1777,size=1048576k'],
+        args: zapArgs,
         volumes: [
           {
             hostPath: scratch.path,
@@ -145,7 +163,7 @@ export class ZapScannerEngine implements TestEngine {
             mode: 'rw',
           },
         ],
-        timeoutMs: input.timeoutMs || 60000,
+        timeoutMs: input.timeoutMs || 90000,
         abortSignal: context.abortSignal,
         simulated: isSimulated,
         mockStdout: JSON.stringify(mockReport),

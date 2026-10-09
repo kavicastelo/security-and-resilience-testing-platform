@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 import { parseOpenApiSpec, evaluateOpenApiContractRules } from '@security-lab/domain';
 
 interface ContractVerificationFinding {
@@ -119,14 +120,22 @@ contractCommand
           fuzzing: options.fuzz !== false,
         },
       });
-    } catch {
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        (err.name === 'AuthenticationError' ||
+          err.message.includes('SECURITY_LAB_API_KEY is missing or invalid'))
+      ) {
+        console.error(formatCliError(err));
+        process.exit(1);
+      }
       // Local in-process fallback using @security-lab/domain
       if (!specContent && isUrl) {
         try {
           const fetchRes = await fetch(options.spec);
           specContent = await fetchRes.text();
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
+        } catch (fetchErr: unknown) {
+          const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
           console.error(pc.red(`✖ Failed to fetch OpenAPI spec from ${options.spec}: ${msg}`));
           process.exit(1);
         }

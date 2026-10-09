@@ -8,6 +8,10 @@ import {
   ZapScannerEngine,
   TrivyScannerEngine,
   DockerRunner,
+  IDockerRunner,
+  engineRegistry,
+  SAMPLE_ZAP_BASELINE_REPORT,
+  SAMPLE_TRIVY_REPORT,
   ContainerSecurityError,
   createScratchDirectory,
   isApprovedImage,
@@ -28,6 +32,8 @@ describe('Class B Container Scanners Pipeline (OWASP ZAP & Aqua Trivy)', () => {
   let projectId: string;
   let targetId: string;
   let testRunId: string;
+  let originalZap: any;
+  let originalTrivy: any;
 
   beforeAll(async () => {
     // 1. Controller Fastify instance
@@ -35,7 +41,43 @@ describe('Class B Container Scanners Pipeline (OWASP ZAP & Aqua Trivy)', () => {
     const health = await checkDatabaseHealth();
     isDbAvailable = health === 'up';
 
-    // 2. Mock HTTP target
+    // 2. Set up mock runner dependency injection for container engines in test harness
+    originalZap = engineRegistry.get('engine-container-zap');
+    originalTrivy = engineRegistry.get('engine-container-trivy');
+
+    const mockZapRunner: IDockerRunner = {
+      execute: async (opts) => {
+        const reportPath = path.join(opts.volumes![0].hostPath, 'report.json');
+        await fs.promises.writeFile(reportPath, JSON.stringify(SAMPLE_ZAP_BASELINE_REPORT), 'utf-8');
+        return {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 50,
+          simulated: false,
+        };
+      },
+    };
+
+    const mockTrivyRunner: IDockerRunner = {
+      execute: async (opts) => {
+        const outVol = opts.volumes!.find((v) => v.containerPath === '/trivy-out');
+        const reportPath = path.join(outVol!.hostPath, 'report.json');
+        await fs.promises.writeFile(reportPath, JSON.stringify(SAMPLE_TRIVY_REPORT), 'utf-8');
+        return {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 50,
+          simulated: false,
+        };
+      },
+    };
+
+    engineRegistry.register(new ZapScannerEngine(mockZapRunner));
+    engineRegistry.register(new TrivyScannerEngine(mockTrivyRunner));
+
+    // 3. Mock HTTP target
     server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', service: 'container-audit-target' }));
@@ -54,6 +96,9 @@ describe('Class B Container Scanners Pipeline (OWASP ZAP & Aqua Trivy)', () => {
   });
 
   afterAll(async () => {
+    if (originalZap) engineRegistry.register(originalZap);
+    if (originalTrivy) engineRegistry.register(originalTrivy);
+
     await app.close();
     await closeDatabase();
     await new Promise<void>((resolve, reject) => {
@@ -197,9 +242,6 @@ describe('Class B Container Scanners Pipeline (OWASP ZAP & Aqua Trivy)', () => {
           targetId,
           profileId: 'class-b-scanners',
           triggeredBy: 'manual',
-          metadata: {
-            simulated: true, // fast execution mode for testing
-          },
         },
       });
 
@@ -215,9 +257,6 @@ describe('Class B Container Scanners Pipeline (OWASP ZAP & Aqua Trivy)', () => {
         url: `/api/v1/test-runs/${testRunId}/execute?wait=true`,
         payload: {
           engineIds: ['engine-container-zap', 'engine-container-trivy'],
-          options: {
-            simulated: true,
-          },
         },
       });
 
@@ -404,7 +443,7 @@ describe('Class B Container Scanners Pipeline (OWASP ZAP & Aqua Trivy)', () => {
           timeoutMs: 150,
         }),
       ).rejects.toThrow();
-    });
+    }, 15000);
 
     it('cleans up and rejects on abortSignal without silent mock fallback', async () => {
       const runner = new DockerRunner();
