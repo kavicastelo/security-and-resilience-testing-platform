@@ -14,6 +14,7 @@ import {
   computeJobDispatchSecret,
   computeScopeSignature,
   verifyResultSignature,
+  getPreviousMasterKey,
 } from '@security-lab/evidence';
 import { findingsService, computeHardenedFindingFingerprint } from './findings.service.js';
 import { metricsService } from './metrics.service.js';
@@ -851,8 +852,14 @@ export class AgentDispatcherService {
     // 6. Cryptographic Result Attestation Verification (Rule 4, Finding SEC-04)
     if (report.resultSignature) {
       const jobDispatchSecret = computeJobDispatchSecret(job.id, job.leaseId || '', agent.id);
+      const prevMaster = getPreviousMasterKey();
+      const previousJobDispatchSecret = prevMaster
+        ? computeJobDispatchSecret(job.id, job.leaseId || '', agent.id, prevMaster)
+        : undefined;
+
       const isValid = verifyResultSignature({
         jobDispatchSecret,
+        previousJobDispatchSecret,
         jobId: job.id,
         findings: report.findings || [],
         executions: report.executions || [],

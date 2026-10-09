@@ -19,12 +19,14 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yml,yaml}\"",
     "test": "vitest run",
+    "test:docker": "cross-env SECURITY_LAB_TEST_REAL_DOCKER=true vitest run tests/integration/docker-scanners.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
     "@types/node": "^22.13.5",
+    "cross-env": "^10.1.0",
     "eslint": "^9.21.0",
     "prettier": "^3.5.2",
     "typescript": "^5.7.3",

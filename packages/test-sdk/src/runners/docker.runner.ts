@@ -22,6 +22,7 @@ export interface DockerRunOptions {
   user?: string;
   timeoutMs?: number;
   abortSignal?: AbortSignal;
+  tmpfs?: string[];
   simulated?: boolean;
   mockStdout?: string;
   mockExitCode?: number;
@@ -36,16 +37,54 @@ export interface DockerRunResult {
   simulated: boolean;
 }
 
-export class DockerRunner {
+export class DockerExecutionError extends Error {
+  constructor(message: string, public readonly cause?: unknown) {
+    super(message);
+    this.name = 'DockerExecutionError';
+  }
+}
+
+export interface IDockerRunner {
+  isDockerAvailable?(): Promise<boolean>;
+  cleanupContainer?(containerName: string): Promise<void>;
+  execute(options: DockerRunOptions): Promise<DockerRunResult>;
+}
+
+export class DockerRunner implements IDockerRunner {
   /**
    * Checks whether the Docker daemon is accessible and responding.
    */
   async isDockerAvailable(): Promise<boolean> {
     try {
       return await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            try {
+              proc.kill();
+            } catch {
+              // Ignore kill error
+            }
+            resolve(false);
+          }
+        }, 3000);
+
         const proc = spawn('docker', ['info'], { stdio: 'ignore' });
-        proc.on('error', () => resolve(false));
-        proc.on('close', (code) => resolve(code === 0));
+        proc.on('error', () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(false);
+          }
+        });
+        proc.on('close', (code) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(code === 0);
+          }
+        });
       });
     } catch {
       return false;
@@ -85,10 +124,16 @@ export class DockerRunner {
     enforceContainerSecurityPolicy(options);
 
     // 2. Explicit Simulated / Mock Execution Gating
-    // Simulation is strictly opt-in via environment flag or options.simulated
+    // Simulation is strictly opt-in via environment flag or options.simulated only in test environment
+    if (options.simulated === true && process.env.NODE_ENV !== 'test') {
+      throw new ContainerSecurityError(
+        'Simulated container execution is disabled outside of test environment',
+      );
+    }
+
     const isMockEnv =
-      process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true' ||
-      options.simulated === true;
+      process.env.NODE_ENV === 'test' &&
+      (process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true' || options.simulated === true);
 
     if (isMockEnv) {
       logger.debug(
@@ -141,6 +186,13 @@ export class DockerRunner {
     if (options.volumes) {
       for (const vol of options.volumes) {
         dockerArgs.push('-v', `${vol.hostPath}:${vol.containerPath}:${vol.mode || 'ro'}`);
+      }
+    }
+
+    // Optional tmpfs mounts
+    if (options.tmpfs) {
+      for (const t of options.tmpfs) {
+        dockerArgs.push(`--tmpfs=${t}`);
       }
     }
 
@@ -210,8 +262,9 @@ export class DockerRunner {
         if (timedOut || aborted) return;
         // Fail fast: do NOT silently mask Docker failures with mock data
         reject(
-          new Error(
-            `Failed to spawn Docker process for image ${options.image}: ${err.message}. Ensure Docker daemon is running or configure simulated execution.`,
+          new DockerExecutionError(
+            `Failed to spawn Docker process for image ${options.image}: ${err.message}. Ensure Docker daemon is running.`,
+            err,
           ),
         );
       });

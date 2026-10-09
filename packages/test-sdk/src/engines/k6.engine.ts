@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { TestEngine, TestEngineError } from '../engine.js';
+import { TestEngine, TestEngineError, EngineExecutionError } from '../engine.js';
 import { TestCapability } from '../capability.js';
 import { ExecutionContext } from '../context.js';
 import { TestInput, TestResult, ValidationResult, RawEngineFinding, RawEngineMetric } from '../result.js';
-import { dockerRunner, DockerRunner } from '../runners/docker.runner.js';
+import { dockerRunner, IDockerRunner } from '../runners/docker.runner.js';
 import { createScratchDirectory } from '../runners/scratch-dir.js';
 import { buildK6Script, K6Stage } from './k6-script-builder.js';
 
@@ -130,7 +130,7 @@ export const SAMPLE_K6_SUMMARY = {
   },
 };
 
-function generateMockK6Summary(options: {
+export function generateMockK6Summary(options: {
   targetUrl: string;
   vus: number;
   durationSec: number;
@@ -213,7 +213,7 @@ export class K6ResilienceEngine implements TestEngine {
   readonly version = '1.0.0';
   readonly executionClass = 'class_c_worker' as const;
 
-  constructor(private readonly runner: DockerRunner = dockerRunner) {}
+  constructor(private readonly runner: IDockerRunner = dockerRunner) {}
 
   capabilities(): TestCapability[] {
     return [
@@ -292,8 +292,19 @@ export class K6ResilienceEngine implements TestEngine {
     const scriptPath = path.join(scratch.path, 'script.js');
     const summaryPath = path.join(scratch.path, 'summary.json');
 
+    // Reject simulation outside test environment
+    const isSimulatedRequested = opts.simulated === true;
+    if (isSimulatedRequested && process.env.NODE_ENV !== 'test') {
+      throw new EngineExecutionError(
+        'Simulated scanner execution is disabled in production',
+        this.id,
+      );
+    }
+
     const image = (opts.dockerImage as string) || process.env.K6_IMAGE || 'grafana/k6:latest';
-    const isSimulated = opts.simulated === true || process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true';
+    const isSimulated =
+      process.env.NODE_ENV === 'test' &&
+      (isSimulatedRequested || process.env.SECURITY_LAB_MOCK_CONTAINERS === 'true');
 
     let rawJson: unknown;
 

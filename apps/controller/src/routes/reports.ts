@@ -2,16 +2,47 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { reportsService, ReportFormat } from '../services/reports.service.js';
 import { artifactStorageService } from '../services/artifact-storage.service.js';
 import { testRunsService } from '../services/test-runs.service.js';
+import { extractTenantScope } from '../services/tenant-context.js';
 
 export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+  const defaultReportMax = process.env.NODE_ENV === 'production' ? 30 : 200;
   // 1. Generate & Return Report on demand in JUnit, SARIF, HTML, or JSON format
   fastify.get<{
     Params: { id: string };
     Querystring: { format?: ReportFormat; policyId?: string };
-  }>('/api/v1/test-runs/:id/report', async (request, reply) => {
+  }>('/api/v1/test-runs/:id/report', {
+    config: {
+      rateLimit: {
+        max: defaultReportMax,
+        timeWindow: '1 minute',
+        keyGenerator: (request) => {
+          const id = request.auth?.keyId || request.auth?.tenantId || request.ip;
+          return `report:${id}`;
+        },
+        errorResponseBuilder: (_request, context) => ({
+          statusCode: 429,
+          error: 'Too Many Requests',
+          message: 'Rate limit exceeded for report exports. Please wait before retrying.',
+          retryAfter: Math.ceil(context.ttl / 1000) || 60,
+        }),
+      },
+    },
+  }, async (request, reply) => {
     const { id } = request.params;
     const format = request.query.format || 'html';
     const { policyId } = request.query;
+    const tenantId = extractTenantScope(request);
+
+    const testRun = await testRunsService.getTestRunById(id, tenantId);
+    if (!testRun) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${id}" not found`,
+        },
+      });
+    }
 
     try {
       const report = await reportsService.generateReport(id, format, policyId);
@@ -36,8 +67,9 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     Params: { id: string };
   }>('/api/v1/test-runs/:id/reports', async (request, reply) => {
     const { id } = request.params;
+    const tenantId = extractTenantScope(request);
 
-    const testRun = await testRunsService.getTestRunById(id);
+    const testRun = await testRunsService.getTestRunById(id, tenantId);
     if (!testRun) {
       return reply.status(404).send({
         success: false,
@@ -78,6 +110,18 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     Params: { id: string; reportId: string };
   }>('/api/v1/test-runs/:id/reports/:reportId/download', async (request, reply) => {
     const { id, reportId } = request.params;
+    const tenantId = extractTenantScope(request);
+
+    const testRun = await testRunsService.getTestRunById(id, tenantId);
+    if (!testRun) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${id}" not found`,
+        },
+      });
+    }
 
     try {
       const report = await reportsService.getReportById(reportId);
@@ -112,6 +156,18 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     Params: { id: string };
   }>('/api/v1/test-runs/:id/artifacts', async (request, reply) => {
     const { id } = request.params;
+    const tenantId = extractTenantScope(request);
+
+    const testRun = await testRunsService.getTestRunById(id, tenantId);
+    if (!testRun) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${id}" not found`,
+        },
+      });
+    }
 
     try {
       const artifactList = await artifactStorageService.listArtifacts(id);
@@ -136,6 +192,18 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     Params: { id: string; artifactId: string };
   }>('/api/v1/test-runs/:id/artifacts/:artifactId/download', async (request, reply) => {
     const { id, artifactId } = request.params;
+    const tenantId = extractTenantScope(request);
+
+    const testRun = await testRunsService.getTestRunById(id, tenantId);
+    if (!testRun) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${id}" not found`,
+        },
+      });
+    }
 
     try {
       const result = await artifactStorageService.getArtifact(artifactId);

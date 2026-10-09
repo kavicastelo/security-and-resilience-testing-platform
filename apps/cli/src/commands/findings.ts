@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 
 interface Finding {
   id: string;
@@ -99,8 +100,7 @@ findingsCommand
       // eslint-disable-next-line no-console
       console.log('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to list findings: ${msg}`));
+      console.error(formatCliError(err, 'Failed to list findings'));
       process.exit(1);
     }
   });
@@ -147,8 +147,7 @@ findingsCommand
       // eslint-disable-next-line no-console
       console.log(`  Detected At:    ${new Date(finding.firstDetectedAt).toLocaleString()}\n`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to get finding "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to get finding "${id}"`));
       process.exit(1);
     }
   });
@@ -172,8 +171,7 @@ findingsCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Finding "${updated.title}" [ID: ${updated.id}] status updated to: ${formatStatus(updated.status)}`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to triage finding "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to triage finding "${id}"`));
       process.exit(1);
     }
   });
@@ -188,8 +186,7 @@ findingsCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Finding [ID: ${id}] deleted successfully.`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to delete finding "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to delete finding "${id}"`));
       process.exit(1);
     }
   });

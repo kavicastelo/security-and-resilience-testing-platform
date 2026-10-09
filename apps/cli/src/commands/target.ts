@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
+import { formatCliError } from '../output/formatters.js';
 import { Target } from '@security-lab/domain';
 
 export const targetCommand = new Command('target')
@@ -52,8 +53,7 @@ targetCommand
       // eslint-disable-next-line no-console
       console.log('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to list targets: ${msg}`));
+      console.error(formatCliError(err, 'Failed to list targets'));
       process.exit(1);
     }
   });
@@ -96,8 +96,7 @@ targetCommand
       // eslint-disable-next-line no-console
       console.log(`  Created:         ${new Date(target.createdAt).toLocaleString()}\n`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to get target "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to get target "${id}"`));
       process.exit(1);
     }
   });
@@ -149,8 +148,7 @@ targetCommand
       // eslint-disable-next-line no-console
       console.log(`  Allowed Ports: [${target.scope.allowedPorts.join(', ')}]`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to register target: ${msg}`));
+      console.error(formatCliError(err, 'Failed to register target'));
       process.exit(1);
     }
   });
@@ -202,8 +200,7 @@ targetCommand
       // eslint-disable-next-line no-console
       console.log(`  Allowed Hosts: [${target.scope.allowedHosts.join(', ')}]`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to update target "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to update target "${id}"`));
       process.exit(1);
     }
   });
@@ -218,8 +215,7 @@ targetCommand
       // eslint-disable-next-line no-console
       console.log(pc.green(`✔ Target [ID: ${id}] and associated records deleted successfully.`));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Failed to delete target "${id}": ${msg}`));
+      console.error(formatCliError(err, `Failed to delete target "${id}"`));
       process.exit(1);
     }
   });
@@ -272,8 +268,7 @@ targetCommand
         process.exit(1);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`✖ Scope validation error: ${msg}`));
+      console.error(formatCliError(err, 'Scope validation error'));
       process.exit(1);
     }
   });

@@ -3,6 +3,7 @@ import { FindingSeverity, FindingStatus } from '@security-lab/domain';
 import { findingsService } from '../services/findings.service.js';
 import { testRunsService } from '../services/test-runs.service.js';
 import { executionManager } from '../services/execution-manager.js';
+import { extractTenantScope } from '../services/tenant-context.js';
 
 export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. List findings with optional filters (testRunId, targetId, severity, status)
@@ -15,7 +16,7 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     };
   }>('/api/v1/findings', async (request, reply) => {
     const { testRunId, targetId, severity, status } = request.query;
-    const tenantId = request.headers['x-tenant-id'] as string | undefined;
+    const tenantId = extractTenantScope(request);
     const findingsList = await findingsService.listFindings({ testRunId, targetId, severity, status, tenantId });
     return reply.send({
       success: true,
@@ -25,7 +26,8 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 2. Get single finding by ID
   fastify.get<{ Params: { id: string } }>('/api/v1/findings/:id', async (request, reply) => {
-    const finding = await findingsService.getFindingById(request.params.id);
+    const tenantId = extractTenantScope(request);
+    const finding = await findingsService.getFindingById(request.params.id, tenantId);
     if (!finding) {
       return reply.status(404).send({
         success: false,
@@ -61,7 +63,8 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
 
     try {
-      const updated = await findingsService.updateFindingStatus(id, status, notes);
+      const tenantId = extractTenantScope(request);
+      const updated = await findingsService.updateFindingStatus(id, status, notes, tenantId);
       if (!updated) {
         return reply.status(404).send({
           success: false,
@@ -75,7 +78,7 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       let retestRunId: string | undefined;
       if (triggerRetest && updated.testRunId) {
         try {
-          const originalRun = await testRunsService.getTestRunById(updated.testRunId);
+          const originalRun = await testRunsService.getTestRunById(updated.testRunId, tenantId);
           if (originalRun) {
             const retestRun = await testRunsService.createTestRun({
               projectId: originalRun.projectId,
@@ -87,7 +90,7 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
                 originalFindingId: updated.id,
                 fingerprint: updated.fingerprint,
               },
-            });
+            }, tenantId);
             await executionManager.enqueue(retestRun.id, {
               engineIds: [updated.testDefinitionId],
             });
@@ -118,7 +121,8 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // 4. Delete Finding
   fastify.delete<{ Params: { id: string } }>('/api/v1/findings/:id', async (request, reply) => {
     const { id } = request.params;
-    const deleted = await findingsService.deleteFinding(id);
+    const tenantId = extractTenantScope(request);
+    const deleted = await findingsService.deleteFinding(id, tenantId);
     if (!deleted) {
       return reply.status(404).send({
         success: false,

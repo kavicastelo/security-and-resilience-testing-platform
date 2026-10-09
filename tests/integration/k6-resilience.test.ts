@@ -13,6 +13,9 @@ import {
   buildK6Script,
   parseK6Summary,
   DockerRunner,
+  IDockerRunner,
+  engineRegistry,
+  generateMockK6Summary,
   TestEngineError,
   validateVolumePath,
   ExecutionContext,
@@ -24,11 +27,30 @@ describe('Phase 4: Class C Resilience & Load Testing (Grafana k6 & Rate Limiting
   let server: http.Server;
   let serverPort: number;
   let serverUrl: string;
+  let originalK6: any;
 
   beforeAll(async () => {
     app = buildApp({ disableLogging: true });
     const health = await checkDatabaseHealth();
     isDbAvailable = health === 'up';
+
+    // Inject mock runner for K6 engine in test harness
+    originalK6 = engineRegistry.get('engine-worker-k6');
+    const mockK6Runner: IDockerRunner = {
+      execute: async (opts) => {
+        const summaryPath = path.join(opts.volumes![0].hostPath, 'summary.json');
+        const summary = generateMockK6Summary({ targetUrl: serverUrl, vus: 3, durationSec: 1 });
+        await fs.promises.writeFile(summaryPath, JSON.stringify(summary), 'utf-8');
+        return {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 50,
+          simulated: false,
+        };
+      },
+    };
+    engineRegistry.register(new K6ResilienceEngine(mockK6Runner));
 
     // Mock HTTP target endpoint
     server = http.createServer((req, res) => {
@@ -69,6 +91,7 @@ describe('Phase 4: Class C Resilience & Load Testing (Grafana k6 & Rate Limiting
   });
 
   afterAll(async () => {
+    if (originalK6) engineRegistry.register(originalK6);
     await app.close();
     await closeDatabase();
     await new Promise<void>((resolve, reject) => {
@@ -399,7 +422,6 @@ describe('Phase 4: Class C Resilience & Load Testing (Grafana k6 & Rate Limiting
             vus: 3,
             durationSec: 1,
             maxP95Ms: 500,
-            simulated: true,
           },
         },
       });
@@ -415,7 +437,6 @@ describe('Phase 4: Class C Resilience & Load Testing (Grafana k6 & Rate Limiting
             vus: 3,
             durationSec: 1,
             maxP95Ms: 500,
-            simulated: true,
           },
         },
       });

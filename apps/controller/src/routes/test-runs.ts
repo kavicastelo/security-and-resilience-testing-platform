@@ -1,11 +1,12 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
-import { CreateTestRunInputSchema } from '@security-lab/domain';
+import { CreateTestRunInputSchema, ExecuteTestRunInputSchema } from '@security-lab/domain';
 import { testRunsService } from '../services/test-runs.service.js';
 import { ExecuteRunOptions } from '../services/runner.service.js';
 import { executionManager } from '../services/execution-manager.js';
 import { findingsService } from '../services/findings.service.js';
 import { evidenceService } from '../services/evidence.service.js';
 import { metricsService } from '../services/metrics.service.js';
+import { extractTenantScope } from '../services/tenant-context.js';
 import {
   RunLifecycleEvent,
   EngineLifecycleEvent,
@@ -13,22 +14,51 @@ import {
 } from '../services/execution-events.js';
 
 export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+  const defaultScanMax = process.env.NODE_ENV === 'production' ? 10 : 500;
+  const scanMax = fastify.rateLimitOverrides?.scanMax ?? defaultScanMax;
+  const scanRateLimitConfig = {
+    max: scanMax,
+    timeWindow: '1 minute',
+    keyGenerator: (request: any) => {
+      // Key rate limits by authenticated tenantId, keyId, or client IP.
+      // Never key by raw client-supplied x-tenant-id header.
+      const id = request.auth?.tenantId || request.auth?.keyId || request.ip;
+      return `scan:${id}`;
+    },
+    errorResponseBuilder: (_request: any, context: any) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: 'Rate limit exceeded for scan execution. Please wait before retrying.',
+      retryAfter: Math.ceil(context.ttl / 1000) || 60,
+    }),
+  };
+
   // 1. Create & Queue TestRun
-  fastify.post('/api/v1/test-runs', async (request, reply) => {
+  fastify.post('/api/v1/test-runs', {
+    config: {
+      rateLimit: scanRateLimitConfig,
+    },
+  }, async (request, reply) => {
     const parseResult = CreateTestRunInputSchema.safeParse(request.body);
     if (!parseResult.success) {
+      const isSimulationError = parseResult.error.issues.some((i) =>
+        i.message.includes('Simulation options are not permitted via the public API'),
+      );
       return reply.status(400).send({
         success: false,
         error: {
           code: 'VALIDATION_ERROR',
-          message: 'Invalid TestRun input parameters',
+          message: isSimulationError
+            ? 'Simulation options are not permitted via the public API'
+            : 'Invalid TestRun input parameters',
           details: parseResult.error.format(),
         },
       });
     }
 
     try {
-      const testRun = await testRunsService.createTestRun(parseResult.data);
+      const tenantId = extractTenantScope(request);
+      const testRun = await testRunsService.createTestRun(parseResult.data, tenantId);
       return reply.status(201).send({
         success: true,
         data: testRun,
@@ -50,7 +80,8 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     Querystring: { projectId?: string; targetId?: string };
   }>('/api/v1/test-runs', async (request, reply) => {
     const { projectId, targetId } = request.query;
-    const runs = await testRunsService.listTestRuns({ projectId, targetId });
+    const tenantId = extractTenantScope(request);
+    const runs = await testRunsService.listTestRuns({ projectId, targetId }, tenantId);
     return reply.send({
       success: true,
       data: runs,
@@ -59,7 +90,8 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 3. Get TestRun by ID
   fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id', async (request, reply) => {
-    const run = await testRunsService.getTestRunById(request.params.id);
+    const tenantId = extractTenantScope(request);
+    const run = await testRunsService.getTestRunById(request.params.id, tenantId);
     if (!run) {
       return reply.status(404).send({
         success: false,
@@ -77,9 +109,14 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 3b. Real-Time Execution SSE Stream
-  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/stream', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/stream', {
+    config: {
+      rateLimit: false,
+    },
+  }, async (request, reply) => {
     const { id } = request.params;
-    const run = await testRunsService.getTestRunById(id);
+    const tenantId = extractTenantScope(request);
+    const run = await testRunsService.getTestRunById(id, tenantId);
     if (!run) {
       return reply.status(404).send({
         success: false,
@@ -89,6 +126,31 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
         },
       });
     }
+
+    // Disable socket timeouts for long-lived SSE connections
+    if (typeof request.raw?.setTimeout === 'function') {
+      try {
+        request.raw.setTimeout(0, () => {});
+      } catch {
+        // Ignore mock socket errors
+      }
+    }
+    if (typeof reply.raw?.setTimeout === 'function') {
+      try {
+        reply.raw.setTimeout(0, () => {});
+      } catch {
+        // Ignore mock socket errors
+      }
+    }
+    if (request.raw?.socket && typeof request.raw.socket.setTimeout === 'function') {
+      try {
+        request.raw.socket.setTimeout(0);
+      } catch {
+        // Ignore mock socket errors
+      }
+    }
+
+    reply.hijack();
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -116,7 +178,11 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       timestamp: new Date().toISOString(),
     });
 
-    if (['completed', 'failed', 'cancelled'].includes(run.status)) {
+    if (
+      (request.query as Record<string, unknown>)?.snapshot === 'true' ||
+      request.headers['x-stream-snapshot'] === 'true' ||
+      ['completed', 'failed', 'cancelled'].includes(run.status)
+    ) {
       sendEvent('run_completed', {
         testRunId: run.id,
         status: run.status,
@@ -176,8 +242,41 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     Params: { id: string };
     Body?: ExecuteRunOptions;
     Querystring: { wait?: string };
-  }>('/api/v1/test-runs/:id/execute', async (request, reply) => {
+  }>('/api/v1/test-runs/:id/execute', {
+    config: {
+      rateLimit: scanRateLimitConfig,
+    },
+  }, async (request, reply) => {
     const shouldWait = request.query.wait === 'true' || request.body?.wait === true;
+    const tenantId = extractTenantScope(request);
+
+    const execParseResult = ExecuteTestRunInputSchema.safeParse(request.body ?? {});
+    if (!execParseResult.success) {
+      const isSimulationError = execParseResult.error.issues.some((i) =>
+        i.message.includes('Simulation options are not permitted via the public API'),
+      );
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: isSimulationError
+            ? 'Simulation options are not permitted via the public API'
+            : 'Invalid TestRun execution parameters',
+          details: execParseResult.error.format(),
+        },
+      });
+    }
+
+    const run = await testRunsService.getTestRunById(request.params.id, tenantId);
+    if (!run) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${request.params.id}" not found`,
+        },
+      });
+    }
 
     try {
       if (shouldWait) {
@@ -207,10 +306,99 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
   });
 
+  // 4a. Execute TestRun Alias (without :id param, taking testRunId/id in body)
+  fastify.post<{
+    Body?: ExecuteRunOptions & { testRunId?: string; id?: string };
+    Querystring: { wait?: string };
+  }>('/api/v1/test-runs/execute', {
+    config: {
+      rateLimit: scanRateLimitConfig,
+    },
+  }, async (request, reply) => {
+    const runId = request.body?.testRunId || request.body?.id;
+    if (!runId) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'testRunId or id is required in request body for /api/v1/test-runs/execute',
+        },
+      });
+    }
+
+    const shouldWait = request.query.wait === 'true' || request.body?.wait === true;
+    const tenantId = extractTenantScope(request);
+
+    const execParseResult = ExecuteTestRunInputSchema.safeParse(request.body ?? {});
+    if (!execParseResult.success) {
+      const isSimulationError = execParseResult.error.issues.some((i) =>
+        i.message.includes('Simulation options are not permitted via the public API'),
+      );
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: isSimulationError
+            ? 'Simulation options are not permitted via the public API'
+            : 'Invalid TestRun execution parameters',
+          details: execParseResult.error.format(),
+        },
+      });
+    }
+
+    const run = await testRunsService.getTestRunById(runId, tenantId);
+    if (!run) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${runId}" not found`,
+        },
+      });
+    }
+
+    try {
+      if (shouldWait) {
+        const result = await executionManager.executeAndWait(runId, request.body);
+        return reply.status(200).send({
+          success: true,
+          data: result,
+        });
+      }
+
+      const queuedJob = await executionManager.enqueue(runId, request.body);
+      return reply.status(202).send({
+        success: true,
+        data: queuedJob,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Test run execution failed';
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_EXECUTION_FAILED',
+          message,
+        },
+      });
+    }
+  });
+
   // 4b. Cancel In-Flight or Queued TestRun
   fastify.post<{
     Params: { id: string };
   }>('/api/v1/test-runs/:id/cancel', async (request, reply) => {
+    const tenantId = extractTenantScope(request);
+    const run = await testRunsService.getTestRunById(request.params.id, tenantId);
+    if (!run) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${request.params.id}" not found`,
+        },
+      });
+    }
+
     try {
       const cancelResult = await executionManager.cancel(request.params.id);
       if (cancelResult.status === 'not_found') {
@@ -254,7 +442,19 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 5. Get TestRun Findings
   fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/findings', async (request, reply) => {
-    const findingsList = await findingsService.listFindings({ testRunId: request.params.id });
+    const tenantId = extractTenantScope(request);
+    const run = await testRunsService.getTestRunById(request.params.id, tenantId);
+    if (!run) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${request.params.id}" not found`,
+        },
+      });
+    }
+
+    const findingsList = await findingsService.listFindings({ testRunId: request.params.id, tenantId });
     return reply.send({
       success: true,
       data: findingsList,
@@ -263,6 +463,18 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 6. Get TestRun Forensic Evidence Records
   fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/evidence', async (request, reply) => {
+    const tenantId = extractTenantScope(request);
+    const run = await testRunsService.getTestRunById(request.params.id, tenantId);
+    if (!run) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${request.params.id}" not found`,
+        },
+      });
+    }
+
     const evidenceList = await evidenceService.listEvidenceByTestRunId(request.params.id);
     return reply.send({
       success: true,
@@ -272,6 +484,18 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 7. Get TestRun Quantitative Metrics
   fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/metrics', async (request, reply) => {
+    const tenantId = extractTenantScope(request);
+    const run = await testRunsService.getTestRunById(request.params.id, tenantId);
+    if (!run) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${request.params.id}" not found`,
+        },
+      });
+    }
+
     const metricsList = await metricsService.listMetricsByTestRunId(request.params.id);
     return reply.send({
       success: true,
@@ -282,7 +506,8 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // 8. Delete TestRun
   fastify.delete<{ Params: { id: string } }>('/api/v1/test-runs/:id', async (request, reply) => {
     const { id } = request.params;
-    const deleted = await testRunsService.deleteTestRun(id);
+    const tenantId = extractTenantScope(request);
+    const deleted = await testRunsService.deleteTestRun(id, tenantId);
     if (!deleted) {
       return reply.status(404).send({
         success: false,

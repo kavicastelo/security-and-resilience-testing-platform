@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "clean": "rimraf dist",
-    "test": "pnpm --dir ../.. vitest run tests/integration/cli-standalone.test.ts"
+    "test": "pnpm --dir ../.. vitest run tests/integration/cli-standalone.test.ts tests/integration/client-auth-sync.test.ts"
   },
   "dependencies": {
     "@security-lab/contracts": "workspace:*",

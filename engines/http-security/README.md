@@ -16,5 +16,6 @@ In-process native engine for inspecting HTTP security configurations, verbs, met
 * **Class A (Native In-Process)**: Fast execution directly orchestrated within the test runner process.
 
 ### Implementation Status:
-* **Status**: SCAFFOLDED (Interface boundary defined in `@security-lab/test-sdk`)
-* **Planned Phase**: Phase 2 (Native Test Engines & Scanners)
+* **Status**: `VERIFIED`
+* **Current Behavior**: Fully implemented across `@security-lab/test-sdk` engines (`CorsSecurityEngine`, `HeadersSecurityEngine`, and `RateLimitResilienceEngine`). Audits CORS misconfigurations, disallowed HTTP methods, security headers, and rate limits with strict SSRF scope enforcement.
+

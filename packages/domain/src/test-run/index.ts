@@ -55,14 +55,71 @@ export const TestRunSchema = z.object({
 
 export type TestRun = z.infer<typeof TestRunSchema>;
 
-export const CreateTestRunInputSchema = z.object({
-  projectId: z.string().uuid(),
-  targetId: z.string().uuid(),
-  environmentId: z.string().uuid().optional(),
-  profileId: z.string().optional(),
-  testDefinitionIds: z.array(z.string()).optional(),
-  triggeredBy: TestRunTriggerSchema.default('manual'),
-  metadata: z.record(z.string(), z.any()).optional(),
-});
+export const FORBIDDEN_SIMULATION_KEYS = ['simulated', 'mockReport', 'skipVerification'] as const;
+
+export function checkForbiddenSimulationOptions(
+  data: unknown,
+  ctx: z.RefinementCtx,
+  pathPrefix: (string | number)[] = [],
+): void {
+  if (!data || typeof data !== 'object') return;
+  const record = data as Record<string, unknown>;
+
+  for (const key of FORBIDDEN_SIMULATION_KEYS) {
+    if (key in record && record[key] !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Simulation options are not permitted via the public API',
+        path: [...pathPrefix, key],
+      });
+    }
+  }
+
+  if (record.options && typeof record.options === 'object') {
+    const opts = record.options as Record<string, unknown>;
+    for (const key of FORBIDDEN_SIMULATION_KEYS) {
+      if (key in opts && opts[key] !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Simulation options are not permitted via the public API',
+          path: [...pathPrefix, 'options', key],
+        });
+      }
+    }
+  }
+}
+
+export const CreateTestRunInputSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    targetId: z.string().uuid(),
+    environmentId: z.string().uuid().optional(),
+    profileId: z.string().optional(),
+    testDefinitionIds: z.array(z.string()).optional(),
+    triggeredBy: TestRunTriggerSchema.default('manual'),
+    options: z.record(z.string(), z.unknown()).optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
+  })
+  .passthrough()
+  .superRefine((data, ctx) => {
+    checkForbiddenSimulationOptions(data, ctx);
+  });
 
 export type CreateTestRunInput = z.infer<typeof CreateTestRunInputSchema>;
+export type CreateTestRunDto = CreateTestRunInput;
+
+export const ExecuteTestRunInputSchema = z
+  .object({
+    engineIds: z.array(z.string()).optional(),
+    definitionYaml: z.string().optional(),
+    customHeaders: z.record(z.string(), z.string()).optional(),
+    options: z.record(z.string(), z.unknown()).optional(),
+    wait: z.boolean().optional(),
+  })
+  .passthrough()
+  .superRefine((data, ctx) => {
+    checkForbiddenSimulationOptions(data, ctx);
+  });
+
+export type ExecuteTestRunDto = z.infer<typeof ExecuteTestRunInputSchema>;
+

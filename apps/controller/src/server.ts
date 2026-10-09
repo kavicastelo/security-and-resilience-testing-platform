@@ -1,7 +1,7 @@
 import { config } from './config/index.js';
 import { logger } from '@security-lab/logger';
 import { buildApp } from './app/index.js';
-import { closeDatabase } from './services/db.js';
+import { closeDatabase, verifyDatabaseConnection } from './services/db.js';
 
 // Security Lab Controller Server
 async function startServer(): Promise<void> {
@@ -14,7 +14,20 @@ async function startServer(): Promise<void> {
     'Starting Security Lab Controller service...',
   );
 
+  // Verify database connectivity
+  try {
+    await verifyDatabaseConnection();
+  } catch (err) {
+    if (config.NODE_ENV === 'production') {
+      logger.fatal({ err }, 'Aborting startup due to database connectivity failure in production');
+      process.exit(1);
+    } else {
+      logger.warn({ err }, 'Continuing startup in non-production mode despite initial database connectivity check failure');
+    }
+  }
+
   const app = buildApp();
+
 
   // Graceful shutdown handler
   let isShuttingDown = false;

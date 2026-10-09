@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import crypto from 'node:crypto';
 import {
   canonicalizeJson,
@@ -9,8 +9,9 @@ import {
 import {
   computeHardenedFindingFingerprint,
   extractFindingComponents,
+  findingsService,
 } from '../../apps/controller/src/services/findings.service.js';
-import { FindingStatus } from '@security-lab/domain';
+import { getDatabase, closeDatabase } from '../../apps/controller/src/services/db.js';
 
 describe('Phase 10 — Database Hardening, Finding Lifecycle & Regression Intelligence', () => {
   // ---------------------------------------------------------------------------
@@ -232,113 +233,359 @@ describe('Phase 10 — Database Hardening, Finding Lifecycle & Regression Intell
   });
 
   // ---------------------------------------------------------------------------
-  // 3. Finding Lifecycle State Machine Logic
+  // 3. Database-Backed Finding Lifecycle State Machine & Regression Logic
   // ---------------------------------------------------------------------------
-  describe('Finding Lifecycle State Machine & Regression Logic', () => {
-    it('models lifecycle transitions correctly (new -> open -> resolved -> regressed)', () => {
-      // In-memory simulation of the lifecycle state machine verified in unit test
-      interface SimulatedFinding {
-        id: string;
-        targetId: string;
-        fingerprint: string;
-        title: string;
-        status: FindingStatus;
-        occurrenceCount: number;
-        firstDetectedAt: Date;
-        lastDetectedAt: Date;
-        fixedAt?: Date;
-        regressionEvents: { regressedAt: string; testRunId: string }[];
+  describe('Database-Backed Finding Lifecycle & Regression State Machine', () => {
+    const testTenantId = crypto.randomUUID();
+    const testProjectId = crypto.randomUUID();
+    const testTargetId = crypto.randomUUID();
+    const testRun1Id = crypto.randomUUID();
+    const testRun2Id = crypto.randomUUID();
+    const testRun3Id = crypto.randomUUID();
+    const testRun4Id = crypto.randomUUID();
+    const testExec1Id = crypto.randomUUID();
+    const testExec2Id = crypto.randomUUID();
+    const testExec3Id = crypto.randomUUID();
+    const testExec4Id = crypto.randomUUID();
+
+    const sqlInjectionFingerprint = computeHardenedFindingFingerprint({
+      targetId: testTargetId,
+      engineId: 'zap-baseline',
+      category: 'injection',
+      ruleOrCweId: 'CWE-89',
+      endpointPath: '/api/v1/users',
+      parameterName: 'id',
+    });
+
+    const xssFingerprint = computeHardenedFindingFingerprint({
+      targetId: testTargetId,
+      engineId: 'zap-baseline',
+      category: 'xss',
+      ruleOrCweId: 'CWE-79',
+      endpointPath: '/api/v1/search',
+      parameterName: 'q',
+    });
+
+    beforeAll(async () => {
+      const { sql } = getDatabase();
+
+      // 1. Seed isolated tenant
+      await sql`
+        INSERT INTO tenants (id, name, slug)
+        VALUES (${testTenantId}, 'Finding Lifecycle Tenant', ${'finding-lifecycle-' + testTenantId})
+        ON CONFLICT (id) DO NOTHING;
+      `;
+
+      // 2. Seed project
+      await sql`
+        INSERT INTO projects (id, tenant_id, name, description)
+        VALUES (${testProjectId}, ${testTenantId}, ${'Finding Lifecycle Project ' + testProjectId}, 'Test Project for finding lifecycle')
+        ON CONFLICT (id) DO NOTHING;
+      `;
+
+      // 3. Seed target
+      await sql`
+        INSERT INTO targets (id, tenant_id, project_id, name, base_url, scope)
+        VALUES (
+          ${testTargetId},
+          ${testTenantId},
+          ${testProjectId},
+          'Lifecycle Test Target',
+          'https://lifecycle-target.local',
+          ${JSON.stringify({ allowedHosts: ['lifecycle-target.local'], maxDepth: 2 })}
+        )
+        ON CONFLICT (id) DO NOTHING;
+      `;
+
+      // 4. Seed test runs and executions for runs 1 through 4
+      const runs = [
+        [testRun1Id, testExec1Id],
+        [testRun2Id, testExec2Id],
+        [testRun3Id, testExec3Id],
+        [testRun4Id, testExec4Id],
+      ];
+
+      for (const [runId, execId] of runs) {
+        await sql`
+          INSERT INTO test_runs (id, project_id, target_id, status)
+          VALUES (${runId}, ${testProjectId}, ${testTargetId}, 'completed')
+          ON CONFLICT (id) DO NOTHING;
+        `;
+
+        await sql`
+          INSERT INTO test_executions (id, test_run_id, engine_id, execution_class, status)
+          VALUES (${execId}, ${runId}, 'zap-baseline', 'class_a_native', 'completed')
+          ON CONFLICT (id) DO NOTHING;
+        `;
       }
+    });
 
-      const store = new Map<string, SimulatedFinding>();
+    afterAll(async () => {
+      const { sql } = getDatabase();
+      try {
+        await sql`DELETE FROM findings WHERE tenant_id = ${testTenantId}`;
+        await sql`DELETE FROM test_executions WHERE test_run_id IN (${testRun1Id}, ${testRun2Id}, ${testRun3Id}, ${testRun4Id})`;
+        await sql`DELETE FROM test_runs WHERE project_id = ${testProjectId}`;
+        await sql`DELETE FROM targets WHERE id = ${testTargetId}`;
+        await sql`DELETE FROM projects WHERE id = ${testProjectId}`;
+        await sql`DELETE FROM tenants WHERE id = ${testTenantId}`;
 
-      function simulateSaveFinding(input: {
-        targetId: string;
-        fingerprint: string;
-        title: string;
-        testRunId: string;
-      }): SimulatedFinding {
-        const key = `${input.targetId}:${input.fingerprint}`;
-        const existing = store.get(key);
-        const now = new Date();
-
-        if (existing) {
-          if (existing.status === 'resolved') {
-            // Regression!
-            existing.status = 'regressed';
-            existing.occurrenceCount++;
-            existing.lastDetectedAt = now;
-            existing.fixedAt = undefined;
-            existing.regressionEvents.push({
-              regressedAt: now.toISOString(),
-              testRunId: input.testRunId,
-            });
-            return existing;
-          }
-
-          // Recurring
-          existing.occurrenceCount++;
-          existing.lastDetectedAt = now;
-          return existing;
-        }
-
-        // New finding
-        const newFinding: SimulatedFinding = {
-          id: crypto.randomUUID(),
-          targetId: input.targetId,
-          fingerprint: input.fingerprint,
-          title: input.title,
-          status: 'open',
-          occurrenceCount: 1,
-          firstDetectedAt: now,
-          lastDetectedAt: now,
-          regressionEvents: [],
-        };
-        store.set(key, newFinding);
-        return newFinding;
+        // Verify clean teardown with zero orphan records
+        const remainingFindings = await sql`SELECT count(*)::int as count FROM findings WHERE tenant_id = ${testTenantId}`;
+        expect(remainingFindings[0].count).toBe(0);
+        const remainingTenants = await sql`SELECT count(*)::int as count FROM tenants WHERE id = ${testTenantId}`;
+        expect(remainingTenants[0].count).toBe(0);
+      } finally {
+        await closeDatabase();
       }
+    });
 
-      function simulateReconcile(testRunId: string, targetId: string, detectedFp: string[]) {
-        const detectedSet = new Set(detectedFp);
-        let resolvedCount = 0;
-        for (const finding of store.values()) {
-          if (finding.targetId === targetId && (finding.status === 'open' || finding.status === 'regressed')) {
-            if (!detectedSet.has(finding.fingerprint)) {
-              finding.status = 'resolved';
-              finding.fixedAt = new Date();
-              resolvedCount++;
-            }
-          }
-        }
-        return resolvedCount;
+    it('persists initial finding discovery with status OPEN, occurrenceCount 1, and verifies real PostgreSQL columns and constraints', async () => {
+      const { sql } = getDatabase();
+
+      const created = await findingsService.saveFinding({
+        tenantId: testTenantId,
+        targetId: testTargetId,
+        testRunId: testRun1Id,
+        executionId: testExec1Id,
+        testDefinitionId: 'zap-baseline',
+        fingerprint: sqlInjectionFingerprint,
+        title: 'SQL Injection in User Endpoint',
+        category: 'injection',
+        severity: 'high',
+        confidence: 'confirmed',
+        status: 'open',
+        description: 'User input not sanitized in query string parameter id',
+        risk: 'Potential full database compromise',
+        recommendation: 'Use parameterized queries or ORM abstractions',
+        metadata: {
+          cwe: 'CWE-89',
+          cve: 'CVE-2026-0001',
+          cvss: 8.8,
+          ruleId: 'sql-injection-rule',
+        },
+      });
+
+      expect(created.status).toBe('open');
+      expect(created.occurrenceCount).toBe(1);
+      expect(created.fingerprint).toBe(sqlInjectionFingerprint);
+      expect(created.targetId).toBe(testTargetId);
+      expect(created.firstDetectedAt).toBeInstanceOf(Date);
+      expect(created.lastDetectedAt).toBeInstanceOf(Date);
+
+      // Verify PostgreSQL columns directly via SQL query
+      const rows = await sql`
+        SELECT id, tenant_id, fingerprint, title, severity, confidence, status, occurrence_count, metadata
+        FROM findings
+        WHERE id = ${created.id}
+      `;
+      expect(rows.length).toBe(1);
+      const row = rows[0];
+      expect(row.tenant_id).toBe(testTenantId);
+      expect(row.fingerprint).toBe(sqlInjectionFingerprint);
+      expect(row.severity).toBe('high');
+      expect(row.confidence).toBe('confirmed');
+      expect(row.status).toBe('open');
+      expect(row.occurrence_count).toBe(1);
+      expect(row.metadata.cwe).toBe('CWE-89');
+      expect(row.metadata.cve).toBe('CVE-2026-0001');
+      expect(row.metadata.cvss).toBe(8.8);
+    });
+
+    it('deduplicates recurring findings with identical fingerprint, incrementing occurrenceCount without duplicate rows', async () => {
+      const { sql } = getDatabase();
+
+      // Scan run 2 re-detects the exact same vulnerability
+      const updated = await findingsService.saveFinding({
+        tenantId: testTenantId,
+        targetId: testTargetId,
+        testRunId: testRun2Id,
+        executionId: testExec2Id,
+        testDefinitionId: 'zap-baseline',
+        fingerprint: sqlInjectionFingerprint,
+        title: 'SQL Injection in User Endpoint',
+        category: 'injection',
+        severity: 'high',
+        description: 'User input not sanitized in query string parameter id',
+      });
+
+      expect(updated.status).toBe('open');
+      expect(updated.occurrenceCount).toBe(2);
+      expect(updated.testRunId).toBe(testRun2Id);
+      expect(updated.executionId).toBe(testExec2Id);
+
+      // Query database directly to assert exactly ONE row exists for this target + fingerprint
+      const countRows = await sql`
+        SELECT COUNT(*)::int as total
+        FROM findings
+        WHERE target_id = ${testTargetId} AND fingerprint = ${sqlInjectionFingerprint}
+      `;
+      expect(countRows[0].total).toBe(1);
+
+      // Verify occurrence_count in database row is 2
+      const dbRows = await sql`
+        SELECT occurrence_count, test_run_id, execution_id
+        FROM findings
+        WHERE target_id = ${testTargetId} AND fingerprint = ${sqlInjectionFingerprint}
+      `;
+      expect(dbRows[0].occurrence_count).toBe(2);
+      expect(dbRows[0].test_run_id).toBe(testRun2Id);
+      expect(dbRows[0].execution_id).toBe(testExec2Id);
+    });
+
+    it('transitions absent finding to RESOLVED with fixedAt timestamp and fixedInRunId during reconciliation', async () => {
+      const { sql } = getDatabase();
+
+      // In testRun3, scan completed with zero detected findings for target
+      const result = await findingsService.reconcileTestRunFindings(
+        testRun3Id,
+        testTargetId,
+        ['zap-baseline'],
+      );
+
+      expect(result.resolvedCount).toBeGreaterThanOrEqual(1);
+
+      // Query database directly to verify status is now 'resolved'
+      const rows = await sql`
+        SELECT id, status, fixed_at, fixed_in_run_id, metadata
+        FROM findings
+        WHERE target_id = ${testTargetId} AND fingerprint = ${sqlInjectionFingerprint}
+      `;
+      expect(rows.length).toBe(1);
+      const row = rows[0];
+      expect(row.status).toBe('resolved');
+      expect(row.fixed_at).not.toBeNull();
+      expect(row.fixed_in_run_id).toBe(testRun3Id);
+      expect(row.metadata.resolvedInTestRunId).toBe(testRun3Id);
+      expect(row.metadata.resolvedAt).toBeDefined();
+    });
+
+    it('transitions resolved finding to REGRESSED when re-detected in a subsequent run, clearing fixedAt and recording regression event', async () => {
+      const { sql } = getDatabase();
+
+      // Scan run 4 re-detects the previously resolved finding -> REGRESSION!
+      const regressed = await findingsService.saveFinding({
+        tenantId: testTenantId,
+        targetId: testTargetId,
+        testRunId: testRun4Id,
+        executionId: testExec4Id,
+        testDefinitionId: 'zap-baseline',
+        fingerprint: sqlInjectionFingerprint,
+        title: 'SQL Injection in User Endpoint',
+        category: 'injection',
+        severity: 'high',
+        description: 'User input not sanitized in query string parameter id (reverted fix)',
+      });
+
+      expect(regressed.status).toBe('regressed');
+      expect(regressed.occurrenceCount).toBe(3);
+      expect(regressed.fixedAt).toBeUndefined();
+      expect(regressed.fixedInRunId).toBeUndefined();
+
+      // Verify regressionEvents array in metadata
+      const metadata = regressed.metadata as {
+        regressionEvents?: Array<{ regressedAt: string; testRunId: string; executionId: string }>;
+      };
+      expect(Array.isArray(metadata.regressionEvents)).toBe(true);
+      expect(metadata.regressionEvents!.length).toBe(1);
+      expect(metadata.regressionEvents![0].testRunId).toBe(testRun4Id);
+      expect(metadata.regressionEvents![0].executionId).toBe(testExec4Id);
+
+      // Directly verify in PostgreSQL
+      const rows = await sql`
+        SELECT status, occurrence_count, fixed_at, fixed_in_run_id, metadata
+        FROM findings
+        WHERE id = ${regressed.id}
+      `;
+      expect(rows.length).toBe(1);
+      const row = rows[0];
+      expect(row.status).toBe('regressed');
+      expect(row.occurrence_count).toBe(3);
+      expect(row.fixed_at).toBeNull();
+      expect(row.fixed_in_run_id).toBeNull();
+      expect(row.metadata.regressionEvents.length).toBe(1);
+    });
+
+    it('preserves analyst triage decision (false_positive) across recurring scan detections', async () => {
+      const { sql } = getDatabase();
+
+      // 1. Initial finding detected in testRun1
+      const initial = await findingsService.saveFinding({
+        tenantId: testTenantId,
+        targetId: testTargetId,
+        testRunId: testRun1Id,
+        executionId: testExec1Id,
+        testDefinitionId: 'zap-baseline',
+        fingerprint: xssFingerprint,
+        title: 'Reflected XSS in Search Query',
+        category: 'xss',
+        severity: 'medium',
+        description: 'User input reflected without sanitization in HTML body',
+      });
+      expect(initial.status).toBe('open');
+
+      // 2. Security analyst reviews and marks finding as false_positive
+      const triaged = await findingsService.updateFindingStatus(
+        initial.id,
+        'false_positive',
+        'Verified sanitized by upstream edge proxy and React JSX escaping',
+        testTenantId,
+      );
+      expect(triaged?.status).toBe('false_positive');
+
+      // 3. Subsequent scan run (testRun2) re-detects the same vulnerability fingerprint
+      const recurring = await findingsService.saveFinding({
+        tenantId: testTenantId,
+        targetId: testTargetId,
+        testRunId: testRun2Id,
+        executionId: testExec2Id,
+        testDefinitionId: 'zap-baseline',
+        fingerprint: xssFingerprint,
+        title: 'Reflected XSS in Search Query',
+        category: 'xss',
+        severity: 'medium',
+        description: 'User input reflected without sanitization in HTML body',
+      });
+
+      // Triaged status must be preserved, but occurrenceCount increments
+      expect(recurring.status).toBe('false_positive');
+      expect(recurring.occurrenceCount).toBe(2);
+
+      // Directly verify in PostgreSQL
+      const rows = await sql`
+        SELECT status, occurrence_count, metadata
+        FROM findings
+        WHERE id = ${initial.id}
+      `;
+      expect(rows.length).toBe(1);
+      expect(rows[0].status).toBe('false_positive');
+      expect(rows[0].occurrence_count).toBe(2);
+      expect(rows[0].metadata.statusUpdatedNotes).toContain('upstream edge proxy');
+    });
+
+    it('enforces tenant isolation and prevents cross-tenant finding access or leakage', async () => {
+      const otherTenantId = crypto.randomUUID();
+      const { sql } = getDatabase();
+
+      await sql`
+        INSERT INTO tenants (id, name, slug)
+        VALUES (${otherTenantId}, 'Other Tenant Ltd', ${'other-tenant-' + otherTenantId})
+        ON CONFLICT (id) DO NOTHING;
+      `;
+
+      try {
+        // Query findings with other tenant ID should return zero findings
+        const otherFindings = await findingsService.listFindings({ tenantId: otherTenantId });
+        expect(otherFindings.length).toBe(0);
+
+        // Attempting to retrieve test tenant finding with other tenant ID returns null
+        const testFindingId = (await sql`SELECT id FROM findings WHERE tenant_id = ${testTenantId} LIMIT 1`)[0]?.id;
+        expect(testFindingId).toBeDefined();
+        const candidate = await findingsService.getFindingById(testFindingId, otherTenantId);
+        expect(candidate).toBeNull();
+      } finally {
+        await sql`DELETE FROM tenants WHERE id = ${otherTenantId}`;
       }
-
-      const targetId = 'target-lifecycle-1';
-      const fp = 'fp-xss-12345';
-
-      // 1. First run: Finding is detected for the first time
-      const f1 = simulateSaveFinding({ targetId, fingerprint: fp, title: 'Reflected XSS', testRunId: 'run-1' });
-      expect(f1.status).toBe('open');
-      expect(f1.occurrenceCount).toBe(1);
-
-      // 2. Second run: Finding is re-detected (recurring)
-      const f2 = simulateSaveFinding({ targetId, fingerprint: fp, title: 'Reflected XSS', testRunId: 'run-2' });
-      expect(f2.status).toBe('open');
-      expect(f2.occurrenceCount).toBe(2);
-
-      // 3. Third run: Finding was fixed by developers (not detected during run-3)
-      const resolved = simulateReconcile('run-3', targetId, []);
-      expect(resolved).toBe(1);
-      expect(f1.status).toBe('resolved');
-      expect(f1.fixedAt).toBeDefined();
-
-      // 4. Fourth run: Code was reverted! Finding reappears in run-4 -> REGRESSION!
-      const f4 = simulateSaveFinding({ targetId, fingerprint: fp, title: 'Reflected XSS', testRunId: 'run-4' });
-      expect(f4.status).toBe('regressed');
-      expect(f4.occurrenceCount).toBe(3);
-      expect(f4.fixedAt).toBeUndefined();
-      expect(f4.regressionEvents.length).toBe(1);
-      expect(f4.regressionEvents[0]?.testRunId).toBe('run-4');
     });
   });
 
@@ -349,8 +596,11 @@ describe('Phase 10 — Database Hardening, Finding Lifecycle & Regression Intell
     it('verifies SQL migration 0004 defines all required tables and constraints', async () => {
       const fs = await import('node:fs');
       const path = await import('node:path');
+      const rootDir = fs.existsSync(path.resolve(process.cwd(), 'infrastructure'))
+        ? process.cwd()
+        : path.resolve(process.cwd(), '../..');
       const migrationPath = path.resolve(
-        process.cwd(),
+        rootDir,
         'infrastructure/postgres/migrations/0004_finding_lifecycle_and_artifacts.sql',
       );
 

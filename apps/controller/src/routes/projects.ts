@@ -1,6 +1,7 @@
-import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { CreateProjectInputSchema } from '@security-lab/domain';
 import { projectsService } from '../services/projects.service.js';
+import { extractTenantId, extractTenantScope } from '../services/tenant-context.js';
 
 export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. Create Project
@@ -18,7 +19,7 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
 
     try {
-      const tenantId = request.headers['x-tenant-id'] as string | undefined;
+      const tenantId = extractTenantId(request);
       const project = await projectsService.createProject(parseResult.data, tenantId);
       return reply.status(201).send({
         success: true,
@@ -38,7 +39,7 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 2. List Projects
   fastify.get('/api/v1/projects', async (request, reply) => {
-    const tenantId = request.headers['x-tenant-id'] as string | undefined;
+    const tenantId = extractTenantScope(request);
     const projectsList = await projectsService.listProjects(tenantId);
     return reply.send({
       success: true,
@@ -48,7 +49,8 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 3. Get Project by ID
   fastify.get<{ Params: { id: string } }>('/api/v1/projects/:id', async (request, reply) => {
-    const project = await projectsService.getProjectById(request.params.id);
+    const tenantId = extractTenantScope(request);
+    const project = await projectsService.getProjectById(request.params.id, tenantId);
     if (!project) {
       return reply.status(404).send({
         success: false,
@@ -67,14 +69,15 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 4. Update Project (PUT / PATCH)
   const handleUpdateProject = async (
-    request: { params: { id: string }; body: unknown },
-    reply: { status: (code: number) => { send: (payload: unknown) => unknown }; send: (payload: unknown) => unknown },
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
   ) => {
+    const tenantId = extractTenantScope(request);
     const { id } = request.params;
     const body = (request.body as { name?: string; description?: string }) || {};
 
     try {
-      const updated = await projectsService.updateProject(id, body);
+      const updated = await projectsService.updateProject(id, body, tenantId);
       if (!updated) {
         return reply.status(404).send({
           success: false,
@@ -106,8 +109,9 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 5. Delete Project
   fastify.delete<{ Params: { id: string } }>('/api/v1/projects/:id', async (request, reply) => {
+    const tenantId = extractTenantScope(request);
     const { id } = request.params;
-    const deleted = await projectsService.deleteProject(id);
+    const deleted = await projectsService.deleteProject(id, tenantId);
     if (!deleted) {
       return reply.status(404).send({
         success: false,

@@ -1,6 +1,7 @@
-import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { CreateEnvironmentInputSchema } from '@security-lab/domain';
 import { environmentsService } from '../services/environments.service.js';
+import { extractTenantId } from '../services/tenant-context.js';
 
 export const environmentsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. Create Environment for Project
@@ -25,7 +26,8 @@ export const environmentsRoutes: FastifyPluginAsync = async (fastify: FastifyIns
       }
 
       try {
-        const env = await environmentsService.createEnvironment(parseResult.data);
+        const tenantId = extractTenantId(request);
+        const env = await environmentsService.createEnvironment(parseResult.data, tenantId);
         return reply.status(201).send({
           success: true,
           data: env,
@@ -47,7 +49,8 @@ export const environmentsRoutes: FastifyPluginAsync = async (fastify: FastifyIns
   fastify.get<{ Params: { projectId: string } }>(
     '/api/v1/projects/:projectId/environments',
     async (request, reply) => {
-      const envList = await environmentsService.listEnvironmentsByProject(request.params.projectId);
+      const tenantId = extractTenantId(request);
+      const envList = await environmentsService.listEnvironmentsByProject(request.params.projectId, tenantId);
       return reply.send({
         success: true,
         data: envList,
@@ -57,7 +60,8 @@ export const environmentsRoutes: FastifyPluginAsync = async (fastify: FastifyIns
 
   // 3. Get Environment by ID
   fastify.get<{ Params: { id: string } }>('/api/v1/environments/:id', async (request, reply) => {
-    const env = await environmentsService.getEnvironmentById(request.params.id);
+    const tenantId = extractTenantId(request);
+    const env = await environmentsService.getEnvironmentById(request.params.id, tenantId);
     if (!env) {
       return reply.status(404).send({
         success: false,
@@ -76,7 +80,7 @@ export const environmentsRoutes: FastifyPluginAsync = async (fastify: FastifyIns
 
   // 4. Update Environment (PUT / PATCH)
   const handleUpdateEnv = async (
-    request: { params: { id: string }; body: unknown },
+    request: FastifyRequest<{ Params: { id: string }; Body: unknown }>,
     reply: { status: (code: number) => { send: (payload: unknown) => unknown }; send: (payload: unknown) => unknown },
   ) => {
     const { id } = request.params;
@@ -88,7 +92,8 @@ export const environmentsRoutes: FastifyPluginAsync = async (fastify: FastifyIns
     }) || {};
 
     try {
-      const updated = await environmentsService.updateEnvironment(id, body);
+      const tenantId = extractTenantId(request);
+      const updated = await environmentsService.updateEnvironment(id, body, tenantId);
       if (!updated) {
         return reply.status(404).send({
           success: false,
@@ -115,13 +120,14 @@ export const environmentsRoutes: FastifyPluginAsync = async (fastify: FastifyIns
     }
   };
 
-  fastify.put<{ Params: { id: string } }>('/api/v1/environments/:id', handleUpdateEnv);
-  fastify.patch<{ Params: { id: string } }>('/api/v1/environments/:id', handleUpdateEnv);
+  fastify.put<{ Params: { id: string }; Body: unknown }>('/api/v1/environments/:id', handleUpdateEnv);
+  fastify.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/environments/:id', handleUpdateEnv);
 
   // 5. Delete Environment
   fastify.delete<{ Params: { id: string } }>('/api/v1/environments/:id', async (request, reply) => {
     const { id } = request.params;
-    const deleted = await environmentsService.deleteEnvironment(id);
+    const tenantId = extractTenantId(request);
+    const deleted = await environmentsService.deleteEnvironment(id, tenantId);
     if (!deleted) {
       return reply.status(404).send({
         success: false,

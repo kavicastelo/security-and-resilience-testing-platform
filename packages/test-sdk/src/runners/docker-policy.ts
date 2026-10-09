@@ -181,7 +181,7 @@ export const MANDATORY_DOCKER_SECURITY_FLAGS: string[] = [
   '--cap-drop=ALL',
   '--read-only',
   '--pids-limit=100',
-  '--tmpfs=/tmp:rw,noexec,nosuid,size=65536k',
+  '--tmpfs=/tmp:rw,noexec,nosuid,size=262144k',
 ];
 
 export interface VolumeMount {
@@ -201,6 +201,7 @@ export interface ValidatedDockerRunOptions {
   user?: string;
   timeoutMs?: number;
   abortSignal?: AbortSignal;
+  tmpfs?: string[];
   simulated?: boolean;
   mockStdout?: string;
   mockExitCode?: number;

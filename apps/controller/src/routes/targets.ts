@@ -1,7 +1,8 @@
-import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { CreateTargetInputSchema } from '@security-lab/domain';
 import { targetsService } from '../services/targets.service.js';
+import { extractTenantScope } from '../services/tenant-context.js';
 
 const ValidateScopeRequestSchema = z.object({
   candidateUrl: z.string().url(),
@@ -33,7 +34,7 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       }
 
       try {
-        const tenantId = request.headers['x-tenant-id'] as string | undefined;
+        const tenantId = extractTenantScope(request);
         const target = await targetsService.createTarget(parseResult.data, tenantId);
         return reply.status(201).send({
           success: true,
@@ -56,7 +57,8 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   fastify.get<{ Params: { projectId: string } }>(
     '/api/v1/projects/:projectId/targets',
     async (request, reply) => {
-      const targetList = await targetsService.listTargetsByProject(request.params.projectId);
+      const tenantId = extractTenantScope(request);
+      const targetList = await targetsService.listTargetsByProject(request.params.projectId, tenantId);
       return reply.send({
         success: true,
         data: targetList,
@@ -66,7 +68,7 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
 
   // 3. List All Targets
   fastify.get('/api/v1/targets', async (request, reply) => {
-    const tenantId = request.headers['x-tenant-id'] as string | undefined;
+    const tenantId = extractTenantScope(request);
     const targetList = await targetsService.listAllTargets(tenantId);
     return reply.send({
       success: true,
@@ -76,7 +78,8 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
 
   // 4. Get Target by ID
   fastify.get<{ Params: { id: string } }>('/api/v1/targets/:id', async (request, reply) => {
-    const target = await targetsService.getTargetById(request.params.id);
+    const tenantId = extractTenantScope(request);
+    const target = await targetsService.getTargetById(request.params.id, tenantId);
     if (!target) {
       return reply.status(404).send({
         success: false,
@@ -110,11 +113,17 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       }
 
       const { candidateUrl, capability, requestedRps, requestedConcurrency } = parseResult.data;
-      const validation = await targetsService.validateCandidateUrl(request.params.id, candidateUrl, {
-        requestedCapability: capability,
-        requestedRps,
-        requestedConcurrency,
-      });
+      const tenantId = extractTenantScope(request);
+      const validation = await targetsService.validateCandidateUrl(
+        request.params.id,
+        candidateUrl,
+        {
+          requestedCapability: capability,
+          requestedRps,
+          requestedConcurrency,
+        },
+        tenantId,
+      );
 
       if (!validation.target) {
         return reply.status(404).send({
@@ -144,7 +153,7 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
 
   // 6. Update Target (PUT / PATCH)
   const handleUpdateTarget = async (
-    request: { params: { id: string }; body: unknown },
+    request: FastifyRequest<{ Params: { id: string }; Body: unknown }>,
     reply: { status: (code: number) => { send: (payload: unknown) => unknown }; send: (payload: unknown) => unknown },
   ) => {
     const { id } = request.params;
@@ -160,7 +169,8 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     }) || {};
 
     try {
-      const updated = await targetsService.updateTarget(id, body);
+      const tenantId = extractTenantScope(request);
+      const updated = await targetsService.updateTarget(id, body, tenantId);
       if (!updated) {
         return reply.status(404).send({
           success: false,
@@ -187,13 +197,14 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     }
   };
 
-  fastify.put<{ Params: { id: string } }>('/api/v1/targets/:id', handleUpdateTarget);
-  fastify.patch<{ Params: { id: string } }>('/api/v1/targets/:id', handleUpdateTarget);
+  fastify.put<{ Params: { id: string }; Body: unknown }>('/api/v1/targets/:id', handleUpdateTarget);
+  fastify.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/targets/:id', handleUpdateTarget);
 
   // 7. Delete Target
   fastify.delete<{ Params: { id: string } }>('/api/v1/targets/:id', async (request, reply) => {
     const { id } = request.params;
-    const deleted = await targetsService.deleteTarget(id);
+    const tenantId = extractTenantScope(request);
+    const deleted = await targetsService.deleteTarget(id, tenantId);
     if (!deleted) {
       return reply.status(404).send({
         success: false,

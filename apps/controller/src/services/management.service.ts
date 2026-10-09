@@ -32,6 +32,7 @@ import { TargetScope } from '@security-lab/domain';
 import { tenantsService, DEFAULT_TENANT_ID } from './tenants.service.js';
 import { policiesService, ENTERPRISE_DEFAULT_POLICY } from './policies.service.js';
 import { agentDispatcherService } from './agent-dispatcher.service.js';
+import { eq } from 'drizzle-orm';
 
 function sanitizeRecordForInsert(record: Record<string, any>): Record<string, any> {
   const result: Record<string, any> = {};
@@ -61,7 +62,7 @@ async function chunkedInsert(table: any, items: any[], chunkSize = 50): Promise<
       try {
         await db.insert(table).values(chunk).onConflictDoNothing();
         inserted += chunk.length;
-      } catch (err) {
+      } catch {
         // Fall back to row-by-row insertion if bulk conflict occurs
         for (const singleItem of chunk) {
           try {
@@ -256,6 +257,7 @@ export class ManagementService {
       system: {
         nodeVersion: process.version,
         platform: process.platform,
+        environment: process.env.NODE_ENV || 'development',
         uptimeSeconds: Math.floor(process.uptime()),
         pid: process.pid,
         memoryUsage: {
@@ -487,20 +489,36 @@ export class ManagementService {
     throw new Error(`Unsupported purge mode: ${mode}`);
   }
 
-  async seedDemoData(tenantId: string = DEFAULT_TENANT_ID): Promise<SeedDataResult> {
+  async seedDemoData(
+    tenantId: string = DEFAULT_TENANT_ID,
+    options?: { force?: boolean },
+  ): Promise<SeedDataResult> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Demo data seeding is disabled in production environments.');
+    }
+
     const { db } = getDatabase();
 
-    // 1. Ensure default tenant exists
+    // 1. Data Overwrite Protection: Check if non-demo (real) projects exist
+    const existingProjects = await db.select().from(projects).where(eq(projects.tenantId, tenantId));
+    const realProjects = existingProjects.filter((p) => !p.name.includes('(Demo'));
+    if (realProjects.length > 0 && !options?.force) {
+      throw new Error(
+        `Cannot seed demo data: ${realProjects.length} existing project(s) found in tenant. Pass { force: true } to override.`,
+      );
+    }
+
+    // 2. Ensure default tenant exists
     await tenantsService.ensureDefaultTenant();
 
-    // 2. Create Demo Project
-    const demoProjectName = `Nova Banking Core API (Demo ${new Date().toISOString().slice(11, 19)})`;
+    // 3. Create Demo Project
+    const demoProjectName = `Nova Banking Core API (Demo ${new Date().toISOString().slice(11, 19)}-${crypto.randomBytes(3).toString('hex')})`;
     const [project] = await db
       .insert(projects)
       .values({
         tenantId,
         name: demoProjectName,
-        description: 'Production internet banking API gateway and identity authentication service',
+        description: '[DEMO / SYNTHETIC] Production internet banking API gateway and identity authentication service',
       })
       .returning();
 
@@ -508,9 +526,9 @@ export class ManagementService {
       throw new Error('Failed to create demo project');
     }
 
-    // 3. Create Targets with strict scopes
+    // 4. Create Targets with strict scopes using distinct demo domains
     const scope1: TargetScope = {
-      allowedHosts: ['api.banking.staging.internal'],
+      allowedHosts: ['demo.local'],
       allowedPorts: [8443, 443],
       excludedPaths: ['/admin/debug', '/internal/shutdown'],
       testing: {
@@ -527,7 +545,7 @@ export class ManagementService {
     };
 
     const scope2: TargetScope = {
-      allowedHosts: ['auth.banking.staging.internal'],
+      allowedHosts: ['mock-bank.internal'],
       allowedPorts: [443],
       excludedPaths: ['/internal'],
       testing: {
@@ -548,8 +566,8 @@ export class ManagementService {
       .values({
         tenantId,
         projectId: project.id,
-        name: 'Core Banking API Gateway (Staging)',
-        baseUrl: 'https://api.banking.staging.internal:8443',
+        name: 'Core Banking API Gateway (Demo)',
+        baseUrl: 'https://demo.local:8443',
         scope: scope1,
       })
       .returning();
@@ -559,8 +577,8 @@ export class ManagementService {
       .values({
         tenantId,
         projectId: project.id,
-        name: 'Customer Identity & OAuth2 Provider',
-        baseUrl: 'https://auth.banking.staging.internal:443',
+        name: 'Customer Identity & OAuth2 Provider (Demo)',
+        baseUrl: 'https://mock-bank.internal:443',
         scope: scope2,
       })
       .returning();
@@ -615,10 +633,11 @@ export class ManagementService {
           },
         },
         metadata: {
-          environment: 'staging',
+          environment: 'demo',
           gitCommit: '4f8a32b',
           gitBranch: 'main',
           seedDemo: true,
+          synthetic: true,
         },
       })
       .returning();
@@ -655,31 +674,31 @@ export class ManagementService {
       {
         endpoint: '/api/v1/accounts/10293',
         description: 'BOLA vulnerability: Unauthorized access to arbitrary bank account without role check',
-        req: { method: 'GET', url: 'https://api.banking.staging.internal:8443/api/v1/accounts/10293', headers: { 'authorization': 'Bearer demo-user-token' }, body: '' },
+        req: { method: 'GET', url: 'https://demo.local:8443/api/v1/accounts/10293', headers: { 'authorization': 'Bearer demo-user-token' }, body: '' },
         res: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accountId: '10293', balance: 945000.5, owner: 'Target Victim Corp' }) },
       },
       {
-        endpoint: 'https://api.banking.staging.internal:8443',
+        endpoint: 'https://demo.local:8443',
         description: 'Missing HSTS header on HTTPS endpoint',
-        req: { method: 'HEAD', url: 'https://api.banking.staging.internal:8443/health', headers: {}, body: '' },
+        req: { method: 'HEAD', url: 'https://demo.local:8443/health', headers: {}, body: '' },
         res: { statusCode: 200, headers: { 'server': 'nginx/1.22.1', 'content-type': 'application/json' }, body: '' },
       },
       {
-        endpoint: 'https://api.banking.staging.internal:8443/api/v1/transfer',
+        endpoint: 'https://demo.local:8443/api/v1/transfer',
         description: 'Permissive CORS: Access-Control-Allow-Origin wildcard with credential support',
-        req: { method: 'OPTIONS', url: 'https://api.banking.staging.internal:8443/api/v1/transfer', headers: { 'origin': 'https://malicious-attacker.com' }, body: '' },
+        req: { method: 'OPTIONS', url: 'https://demo.local:8443/api/v1/transfer', headers: { 'origin': 'https://malicious-attacker.com' }, body: '' },
         res: { statusCode: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-credentials': 'true' }, body: '' },
       },
       {
-        endpoint: 'https://api.banking.staging.internal:8443',
+        endpoint: 'https://demo.local:8443',
         description: 'Content-Security-Policy (CSP) header is completely absent',
-        req: { method: 'GET', url: 'https://api.banking.staging.internal:8443/', headers: {}, body: '' },
+        req: { method: 'GET', url: 'https://demo.local:8443/', headers: {}, body: '' },
         res: { statusCode: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: '<html><body>Welcome</body></html>' },
       },
       {
-        endpoint: 'https://api.banking.staging.internal:8443/health',
+        endpoint: 'https://demo.local:8443/health',
         description: 'Server banner leakage disclosing exact software version',
-        req: { method: 'GET', url: 'https://api.banking.staging.internal:8443/health', headers: {}, body: '' },
+        req: { method: 'GET', url: 'https://demo.local:8443/health', headers: {}, body: '' },
         res: { statusCode: 200, headers: { 'server': 'nginx/1.22.1 (Ubuntu 22.04 LTS)', 'x-powered-by': 'Express/4.18.2' }, body: '{"status":"ok"}' },
       },
     ];
@@ -699,7 +718,11 @@ export class ManagementService {
           executionId: execution.id,
           request: item.req,
           response: item.res,
-          environment: 'staging',
+          environment: 'demo',
+          metadata: {
+            synthetic: true,
+            environment: 'demo',
+          },
           applicationVersion: '2.4.0-demo',
           gitCommit: '4f8a32b',
           immutableHash: hash,
@@ -797,6 +820,10 @@ export class ManagementService {
         executionId: execution.id,
         targetId: target1.id,
         evidenceId: f.evidenceId,
+        metadata: {
+          synthetic: true,
+          environment: 'demo',
+        },
       });
     }
 
@@ -1046,7 +1073,7 @@ export class ManagementService {
 
   async getBackupFile(backupId: string): Promise<{ filename: string; filePath: string; content: string; parsed: BackupPayload }> {
     const backupsDir = path.resolve(config.BACKUPS_DIR || './.data/backups');
-    const sanitizedId = path.basename(backupId).replace(/[^a-zA-Z0-9_\-\.]/g, '');
+    const sanitizedId = path.basename(backupId).replace(/[^a-zA-Z0-9_.-]/g, '');
     const filename = sanitizedId.endsWith('.json') ? sanitizedId : `${sanitizedId}.json`;
     const filePath = path.join(backupsDir, filename);
 
@@ -1067,7 +1094,7 @@ export class ManagementService {
 
   async deleteBackup(backupId: string): Promise<{ success: boolean; message: string }> {
     const backupsDir = path.resolve(config.BACKUPS_DIR || './.data/backups');
-    const sanitizedId = path.basename(backupId).replace(/[^a-zA-Z0-9_\-\.]/g, '');
+    const sanitizedId = path.basename(backupId).replace(/[^a-zA-Z0-9_.-]/g, '');
     const filename = sanitizedId.endsWith('.json') ? sanitizedId : `${sanitizedId}.json`;
     const filePath = path.join(backupsDir, filename);
 

@@ -65,6 +65,7 @@ describe('Universal Platform Management Integration Tests', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/v1/management/seed',
+      payload: { force: true },
     });
 
     expect(response.statusCode).toBe(201);

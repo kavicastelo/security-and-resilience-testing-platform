@@ -9,7 +9,12 @@ import { FindingsView } from './components/FindingsView.js';
 import { PoliciesView } from './components/PoliciesView.js';
 import { ManagementView } from './components/ManagementView.js';
 import { ToastNotification } from './components/ToastNotification.js';
+import { ApiKeyModal } from './components/ApiKeyModal.js';
 import { useAppStore } from './store/useAppStore.js';
+import { installAuthInterceptor } from './api/client.js';
+
+// Automatically ensure all dashboard fetch requests attach auth credentials and handle 401s
+installAuthInterceptor();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,7 +26,7 @@ const queryClient = new QueryClient({
 });
 
 export const AppContent: React.FC = () => {
-  const { activeTab, setActiveTab } = useAppStore();
+  const { activeTab, setActiveTab, setIsAuthModalOpen } = useAppStore();
 
   useEffect(() => {
     const handleNavigate = (e: Event) => {
@@ -31,9 +36,25 @@ export const AppContent: React.FC = () => {
       }
     };
 
+    const handleAuthRequired = () => {
+      setIsAuthModalOpen(true);
+    };
+
+    const handleAuthChanged = () => {
+      queryClient.invalidateQueries();
+    };
+
     window.addEventListener('navigate-tab', handleNavigate);
-    return () => window.removeEventListener('navigate-tab', handleNavigate);
-  }, [setActiveTab]);
+    window.addEventListener('security-lab:auth-required', handleAuthRequired);
+    window.addEventListener('security-lab:auth-changed', handleAuthChanged);
+
+    return () => {
+      window.removeEventListener('navigate-tab', handleNavigate);
+      window.removeEventListener('security-lab:auth-required', handleAuthRequired);
+      window.removeEventListener('security-lab:auth-changed', handleAuthChanged);
+    };
+
+  }, [setActiveTab, setIsAuthModalOpen]);
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground antialiased selection:bg-blue-600/30 selection:text-blue-200">
@@ -49,6 +70,7 @@ export const AppContent: React.FC = () => {
           {activeTab === 'management' && <ManagementView />}
         </main>
       </div>
+      <ApiKeyModal />
       <ToastNotification />
     </div>
   );

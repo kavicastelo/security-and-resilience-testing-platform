@@ -12,6 +12,7 @@
     }
   },
   "scripts": {
+    "test": "vitest run --root ../.. tests/integration/container-scanners.test.ts tests/integration/k6-resilience.test.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist"

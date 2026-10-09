@@ -19,7 +19,11 @@ export class AgentDaemon {
   constructor(config: AgentConfig) {
     this.config = config;
     this.client = new AgentClient(config.controllerUrl, config.agentToken);
-    this.worker = new AgentWorker(this.client, { allowLocalTesting: config.allowLocalTesting });
+    this.worker = new AgentWorker(this.client, {
+      allowLocalTesting: config.allowLocalTesting,
+      masterKey: config.masterKey,
+      previousMasterKey: config.previousMasterKey,
+    });
     this.agentId = config.agentId;
   }
 

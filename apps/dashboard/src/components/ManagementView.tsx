@@ -71,6 +71,7 @@ export interface SystemOverviewStats {
   system: {
     nodeVersion: string;
     platform: string;
+    environment?: string;
     uptimeSeconds: number;
     pid: number;
     memoryUsage: {
@@ -275,14 +276,15 @@ export const ManagementView: React.FC = () => {
 
   // 5. Seed Demo Data Mutation
   const seedMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (options?: { force?: boolean }) => {
       const res = await fetch(`${apiUrl}/api/v1/management/seed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: options?.force ?? true }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
-        throw new Error(json.error?.message || 'Seed operation failed');
+        throw new Error(json.message || json.error?.message || 'Seed operation failed');
       }
       return json.data;
     },
@@ -554,12 +556,27 @@ export const ManagementView: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => seedMutation.mutate()}
-            disabled={seedMutation.isPending}
-            className="flex items-center space-x-2 px-3.5 py-2 text-xs font-medium rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 transition-all hover:scale-[1.02]"
+            onClick={() => seedMutation.mutate({ force: true })}
+            disabled={seedMutation.isPending || overview?.system?.environment === 'production'}
+            className={
+              overview?.system?.environment === 'production'
+                ? "flex items-center space-x-2 px-3.5 py-2 text-xs font-medium rounded-lg bg-muted/20 text-muted-foreground/40 border border-border/30 cursor-not-allowed"
+                : "flex items-center space-x-2 px-3.5 py-2 text-xs font-medium rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 transition-all hover:scale-[1.02]"
+            }
+            title={
+              overview?.system?.environment === 'production'
+                ? 'Demo data seeding is disabled in production environments'
+                : 'Seed demonstration test suite with Nova Banking Core API'
+            }
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>{seedMutation.isPending ? 'Generating Lab...' : 'Seed Demo Data'}</span>
+            <span>
+              {overview?.system?.environment === 'production'
+                ? 'Seeding Disabled (Prod)'
+                : seedMutation.isPending
+                  ? 'Generating Lab...'
+                  : 'Seed Demo Data'}
+            </span>
           </button>
 
           <button

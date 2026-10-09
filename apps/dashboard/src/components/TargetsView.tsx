@@ -704,15 +704,15 @@ export const TargetsView: React.FC = () => {
                   <div className="flex flex-wrap items-center gap-4 pt-1 text-muted-foreground">
                     <div>
                       <span className="text-[11px]">Ports: </span>
-                      <span className="font-mono text-foreground">{target.scope.allowedPorts.join(', ')}</span>
+                      <span className="font-mono text-foreground">{target.scope.allowedPorts?.join(', ')}</span>
                     </div>
                     <div>
                       <span className="text-[11px]">Max RPS: </span>
-                      <span className="font-mono text-foreground">{target.scope.limits.maxRps}</span>
+                      <span className="font-mono text-foreground">{target.scope.limits?.maxRps}</span>
                     </div>
                     <div>
                       <span className="text-[11px]">Max Concurrency: </span>
-                      <span className="font-mono text-foreground">{target.scope.limits.maxConcurrency}</span>
+                      <span className="font-mono text-foreground">{target.scope.limits?.maxConcurrency}</span>
                     </div>
                   </div>
                 </div>
@@ -722,22 +722,20 @@ export const TargetsView: React.FC = () => {
                   <div className="flex items-center space-x-2">
                     <span className="text-muted-foreground">Capabilities:</span>
                     <span
-                      className={`px-2 py-0.5 rounded-full font-medium ${
-                        target.scope.testing.activeScanning
-                          ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-800/40'
-                          : 'bg-muted text-muted-foreground'
-                      }`}
+                      className={`px-2 py-0.5 rounded-full font-medium ${target.scope.testing?.activeScanning
+                        ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-800/40'
+                        : 'bg-muted text-muted-foreground'
+                        }`}
                     >
-                      Active Scan: {target.scope.testing.activeScanning ? 'ON' : 'OFF'}
+                      Active Scan: {target.scope.testing?.activeScanning ? 'ON' : 'OFF'}
                     </span>
                     <span
-                      className={`px-2 py-0.5 rounded-full font-medium ${
-                        target.scope.testing.loadTesting
-                          ? 'bg-indigo-950/40 text-indigo-400 border border-indigo-800/40'
-                          : 'bg-muted text-muted-foreground'
-                      }`}
+                      className={`px-2 py-0.5 rounded-full font-medium ${target.scope.testing?.loadTesting
+                        ? 'bg-indigo-950/40 text-indigo-400 border border-indigo-800/40'
+                        : 'bg-muted text-muted-foreground'
+                        }`}
                     >
-                      Load Test: {target.scope.testing.loadTesting ? 'ON' : 'OFF'}
+                      Load Test: {target.scope.testing?.loadTesting ? 'ON' : 'OFF'}
                     </span>
                   </div>
 
@@ -852,11 +850,10 @@ export const TargetsView: React.FC = () => {
         {/* Validation Verdict Display */}
         {validationResult && (
           <div
-            className={`p-4 rounded-xl border mt-4 text-xs space-y-2 animate-fade-in ${
-              validationResult.valid
-                ? 'bg-emerald-950/40 border-emerald-800/50 text-emerald-300'
-                : 'bg-red-950/40 border-red-800/50 text-red-300'
-            }`}
+            className={`p-4 rounded-xl border mt-4 text-xs space-y-2 animate-fade-in ${validationResult.valid
+              ? 'bg-emerald-950/40 border-emerald-800/50 text-emerald-300'
+              : 'bg-red-950/40 border-red-800/50 text-red-300'
+              }`}
           >
             <div className="flex items-center space-x-2 font-semibold">
               {validationResult.valid ? (

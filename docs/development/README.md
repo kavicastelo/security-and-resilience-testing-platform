@@ -14,15 +14,28 @@ Follow these steps to set up the development environment:
    pnpm install
    ```
 
-2. Copy the environment configuration:
+2. Generate local secrets and configure `.env`:
    ```bash
    cp .env.example .env
    ```
+   Generate high-entropy keys using native Node.js:
+   ```bash
+   # Generate API Key
+   node -e "console.log(crypto.randomBytes(32).toString('hex'))"
+
+   # Generate Admin Key
+   node -e "console.log(crypto.randomBytes(32).toString('hex'))"
+
+   # Generate Agent Master Secret
+   node -e "console.log(crypto.randomBytes(32).toString('hex'))"
+   ```
+   Set `SECURITY_LAB_API_KEY`, `SECURITY_LAB_ADMIN_KEY`, and `AGENT_MASTER_SECRET` in your `.env` file.
 
 3. Start backing services (PostgreSQL):
    ```bash
    docker compose up -d postgres
    ```
+   *Note: Database migrations in `infrastructure/postgres/migrations/` are applied automatically by the PostgreSQL Docker container on initial startup.*
 
 4. Launch services in development watch mode:
    ```bash
@@ -31,6 +44,46 @@ Follow these steps to set up the development environment:
    * Dashboard: `http://localhost:3000`
    * Controller API: `http://localhost:4000`
    * Controller Health: `http://localhost:4000/health`
+
+### Controller Authentication
+All non-public routes (`/api/v1/*`) require authentication:
+```bash
+# Standard user/agent request:
+curl -H "X-API-Key: <your-api-key>" http://localhost:4000/api/v1/targets
+
+# Administrative request (seeding/purging/restore):
+curl -X POST -H "X-Admin-Key: <your-admin-key>" http://localhost:4000/api/v1/management/seed
+```
+
+### Running Tests
+```bash
+# Run unit and mock integration test suites (560+ tests):
+pnpm test
+
+# Run dedicated real Docker scanner integration tests (requires Docker daemon running):
+pnpm test:docker
+
+# Type checking and linting:
+pnpm typecheck
+pnpm lint
+```
+
+### Docker Scanner Prerequisites & Sandboxing
+To execute Class B (OWASP ZAP, Aqua Trivy) or Class C (Grafana k6) scans locally:
+* **Docker Daemon**: Ensure Docker is installed and running.
+* **Pull Scanner Images**:
+  ```bash
+  docker pull ghcr.io/zaproxy/zaproxy:stable
+  docker pull aquasec/trivy:latest
+  docker pull grafana/k6:latest
+  ```
+* **Unprivileged Execution**: All container runners operate with hardened security flags:
+  - `--cap-drop=ALL` (drops all Linux capabilities)
+  - `--security-opt=no-new-privileges:true` (prevents privilege escalation)
+  - `--user 10001:10001` (runs as unprivileged user)
+  - `--read-only` (read-only root filesystem)
+  - Strictly confined temporary scratch directory mounts under `os.tmpdir()` with automatic post-run teardown.
+
 
 ---
 

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, and, or } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { policies } from './db/schema.js';
 import { Policy, PolicyRule, PolicyWaiver } from '@security-lab/domain';
@@ -94,7 +94,7 @@ export class PoliciesService {
     const { db } = getDatabase();
     const query = db.select().from(policies);
     const rows = tenantId
-      ? await query.where(eq(policies.tenantId, tenantId)).orderBy(policies.createdAt)
+      ? await query.where(or(eq(policies.tenantId, tenantId), eq(policies.isDefault, true))).orderBy(policies.createdAt)
       : await query.orderBy(policies.createdAt);
 
     if (rows.length === 0) {
@@ -113,9 +113,13 @@ export class PoliciesService {
     }));
   }
 
-  async getPolicyById(id: string): Promise<Policy | null> {
+  async getPolicyById(id: string, tenantId?: string): Promise<Policy | null> {
     const { db } = getDatabase();
-    const [row] = await db.select().from(policies).where(eq(policies.id, id)).limit(1);
+    const conditions = [eq(policies.id, id)];
+    if (tenantId) {
+      conditions.push(or(eq(policies.tenantId, tenantId), eq(policies.isDefault, true))!);
+    }
+    const [row] = await db.select().from(policies).where(and(...conditions)).limit(1);
 
     if (row) {
       return {
@@ -212,11 +216,15 @@ export class PoliciesService {
       requiredProfiles?: string[];
       waivers?: PolicyWaiver[];
     },
+    tenantId?: string,
   ): Promise<Policy | null> {
     const { db } = getDatabase();
     if (id === ENTERPRISE_DEFAULT_POLICY.id) {
       throw new Error('Cannot modify the enterprise baseline default policy');
     }
+
+    const existing = await this.getPolicyById(id, tenantId);
+    if (!existing) return null;
 
     const updateValues: Record<string, unknown> = {
       updatedAt: new Date(),
@@ -227,10 +235,15 @@ export class PoliciesService {
     if (input.requiredProfiles !== undefined) updateValues.requiredProfiles = input.requiredProfiles;
     if (input.waivers !== undefined) updateValues.waivers = input.waivers;
 
+    const updateConditions = [eq(policies.id, id)];
+    if (tenantId) {
+      updateConditions.push(eq(policies.tenantId, tenantId));
+    }
+
     const [updated] = await db
       .update(policies)
       .set(updateValues)
-      .where(eq(policies.id, id))
+      .where(and(...updateConditions))
       .returning();
 
     if (!updated) return null;
@@ -247,8 +260,8 @@ export class PoliciesService {
     };
   }
 
-  async addWaiver(policyId: string | undefined, waiver: PolicyWaiver): Promise<Policy> {
-    const targetPolicy = policyId ? await this.getPolicyById(policyId) : await this.getDefaultPolicy();
+  async addWaiver(policyId: string | undefined, waiver: PolicyWaiver, tenantId?: string): Promise<Policy> {
+    const targetPolicy = policyId ? await this.getPolicyById(policyId, tenantId) : await this.getDefaultPolicy();
     if (!targetPolicy) {
       throw new Error(`Policy "${policyId}" not found`);
     }
@@ -267,27 +280,34 @@ export class PoliciesService {
         requiredProfiles: targetPolicy.requiredProfiles,
         waivers: updatedWaivers,
         isDefault: true,
-      });
+      }, tenantId);
       return cloned;
     }
 
-    const updated = await this.updatePolicy(targetPolicy.id, { waivers: updatedWaivers });
+    const updated = await this.updatePolicy(targetPolicy.id, { waivers: updatedWaivers }, tenantId);
     return updated!;
   }
 
-  async deletePolicy(id: string): Promise<boolean> {
+  async deletePolicy(id: string, tenantId?: string): Promise<boolean> {
     const { db } = getDatabase();
     if (id === ENTERPRISE_DEFAULT_POLICY.id) {
       throw new Error('Cannot delete the enterprise baseline default policy');
     }
 
-    const [existing] = await db.select().from(policies).where(eq(policies.id, id)).limit(1);
+    const existing = await this.getPolicyById(id, tenantId);
     if (!existing) return false;
-    if (existing.isDefault) {
+
+    const [row] = await db.select().from(policies).where(eq(policies.id, id)).limit(1);
+    if (row?.isDefault) {
       throw new Error('Cannot delete a default policy');
     }
 
-    const deleted = await db.delete(policies).where(eq(policies.id, id)).returning();
+    const deleteConditions = [eq(policies.id, id)];
+    if (tenantId) {
+      deleteConditions.push(eq(policies.tenantId, tenantId));
+    }
+
+    const deleted = await db.delete(policies).where(and(...deleteConditions)).returning();
     return deleted.length > 0;
   }
 }

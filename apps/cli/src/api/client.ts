@@ -1,96 +1,147 @@
 import { getCliConfig } from '../config/index.js';
 
+export class AuthenticationError extends Error {
+  constructor(
+    message = "Error: SECURITY_LAB_API_KEY is missing or invalid. Set it in your environment or run 'sec-lab login'.",
+  ) {
+    super(message);
+    this.name = 'AuthenticationError';
+  }
+}
+
 export class ApiClient {
   private get baseUrl(): string {
     return getCliConfig().apiUrl.replace(/\/$/, '');
   }
 
-  async get<T>(path: string): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      headers: {
-        Accept: 'application/json',
-      },
-    });
+  private getHeaders(customHeaders?: Record<string, string>): Record<string, string> {
+    const config = getCliConfig();
+    const apiKey = config.apiKey?.trim();
 
-    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
+    if (!apiKey) {
+      throw new AuthenticationError();
+    }
+
+    return {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'X-API-Key': apiKey,
+      ...customHeaders,
+    };
+  }
+
+  private handleResponse<T>(res: Response, json: { success?: boolean; data?: T; error?: { message?: string } }): T {
+    if (res.status === 401) {
+      throw new AuthenticationError();
+    }
     if (!res.ok) {
       throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
     }
     return json.data as T;
   }
 
-  async post<T>(path: string, body: unknown): Promise<T> {
+  async get<T>(path: string, headers?: Record<string, string>): Promise<T> {
+    const reqHeaders = this.getHeaders(headers);
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: reqHeaders,
+    });
+
+    if (res.status === 401) {
+      throw new AuthenticationError();
+    }
+
+    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
+    return this.handleResponse(res, json);
+  }
+
+  async post<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
+    const reqHeaders = this.getHeaders({
+      'Content-Type': 'application/json',
+      ...headers,
+    });
+
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers: reqHeaders,
       body: JSON.stringify(body),
     });
 
-    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
-    if (!res.ok) {
-      throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+    if (res.status === 401) {
+      throw new AuthenticationError();
     }
-    return json.data as T;
+
+    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
+    return this.handleResponse(res, json);
   }
 
-  async put<T>(path: string, body: unknown): Promise<T> {
+  async put<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
+    const reqHeaders = this.getHeaders({
+      'Content-Type': 'application/json',
+      ...headers,
+    });
+
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers: reqHeaders,
       body: JSON.stringify(body),
     });
 
-    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
-    if (!res.ok) {
-      throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+    if (res.status === 401) {
+      throw new AuthenticationError();
     }
-    return json.data as T;
+
+    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
+    return this.handleResponse(res, json);
   }
 
-  async patch<T>(path: string, body: unknown): Promise<T> {
+  async patch<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
+    const reqHeaders = this.getHeaders({
+      'Content-Type': 'application/json',
+      ...headers,
+    });
+
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers: reqHeaders,
       body: JSON.stringify(body),
     });
 
-    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
-    if (!res.ok) {
-      throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+    if (res.status === 401) {
+      throw new AuthenticationError();
     }
-    return json.data as T;
+
+    const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
+    return this.handleResponse(res, json);
   }
 
-  async delete<T = unknown>(path: string): Promise<T> {
+  async delete<T = unknown>(path: string, headers?: Record<string, string>): Promise<T> {
+    const reqHeaders = this.getHeaders(headers);
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'DELETE',
-      headers: {
-        Accept: 'application/json',
-      },
+      headers: reqHeaders,
     });
+
+    if (res.status === 401) {
+      throw new AuthenticationError();
+    }
 
     const json = (await res.json()) as { success?: boolean; data?: T; error?: { message?: string } };
-    if (!res.ok) {
-      throw new Error(json.error?.message || `HTTP ${res.status}: ${res.statusText}`);
-    }
-    return json.data as T;
+    return this.handleResponse(res, json);
   }
 
-  async getText(path: string): Promise<string> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      headers: {
-        Accept: '*/*',
-      },
+  async getText(path: string, headers?: Record<string, string>): Promise<string> {
+    const reqHeaders = this.getHeaders({
+      Accept: '*/*',
+      ...headers,
     });
+
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: reqHeaders,
+    });
+
+    if (res.status === 401) {
+      throw new AuthenticationError();
+    }
 
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);

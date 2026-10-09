@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { releasesService, EvaluateReleaseGateInput } from '../services/releases.service.js';
+import { extractTenantId } from '../services/tenant-context.js';
 
 export const releasesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. Evaluate Release Gate for a TestRun
@@ -16,7 +17,8 @@ export const releasesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
 
     try {
-      const evaluation = await releasesService.evaluateReleaseGate(request.body);
+      const tenantId = extractTenantId(request);
+      const evaluation = await releasesService.evaluateReleaseGate(request.body, tenantId);
       return reply.send({
         success: true,
         data: evaluation,
@@ -35,7 +37,8 @@ export const releasesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 2. List Releases
   fastify.get<{ Querystring: { projectId?: string } }>('/api/v1/releases', async (request, reply) => {
-    const list = await releasesService.listReleases(request.query.projectId);
+    const tenantId = extractTenantId(request);
+    const list = await releasesService.listReleases(request.query.projectId, tenantId);
     return reply.send({
       success: true,
       data: list,
@@ -44,7 +47,8 @@ export const releasesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 3. Get Release by ID
   fastify.get<{ Params: { id: string } }>('/api/v1/releases/:id', async (request, reply) => {
-    const item = await releasesService.getReleaseById(request.params.id);
+    const tenantId = extractTenantId(request);
+    const item = await releasesService.getReleaseById(request.params.id, tenantId);
     if (!item) {
       return reply.status(404).send({
         success: false,
@@ -64,7 +68,8 @@ export const releasesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // 4. Delete Release
   fastify.delete<{ Params: { id: string } }>('/api/v1/releases/:id', async (request, reply) => {
     const { id } = request.params;
-    const deleted = await releasesService.deleteRelease(id);
+    const tenantId = extractTenantId(request);
+    const deleted = await releasesService.deleteRelease(id, tenantId);
     if (!deleted) {
       return reply.status(404).send({
         success: false,
