@@ -141,10 +141,22 @@ export class TrivyScannerEngine implements TestEngine {
         !explicitPath &&
         rawTarget.includes(':'));
 
+    const hostCacheDir = path.join(os.tmpdir(), 'security-lab-trivy-cache');
+    try {
+      await fs.promises.mkdir(hostCacheDir, { recursive: true });
+    } catch {
+      // Ignore if exists
+    }
+
     const volumes: VolumeMount[] = [
       {
         hostPath: outScratch.path,
         containerPath: '/trivy-out',
+        mode: 'rw',
+      },
+      {
+        hostPath: hostCacheDir,
+        containerPath: '/trivy-cache',
         mode: 'rw',
       },
     ];
@@ -224,7 +236,14 @@ export class TrivyScannerEngine implements TestEngine {
         image,
         args: trivyArgs,
         volumes,
-        timeoutMs: input.timeoutMs || 60000,
+        env: {
+          HOME: '/tmp',
+          TRIVY_CACHE_DIR: '/trivy-cache',
+          ...(input.options?.env as Record<string, string> | undefined),
+        },
+        timeoutMs:
+          input.timeoutMs ||
+          (typeof input.options?.timeoutMs === 'number' ? input.options.timeoutMs : 180000),
         abortSignal: context.abortSignal,
         simulated: isSimulated,
         mockStdout: JSON.stringify(mockReport),

@@ -181,7 +181,9 @@ export const MANDATORY_DOCKER_SECURITY_FLAGS: string[] = [
   '--cap-drop=ALL',
   '--read-only',
   '--pids-limit=100',
-  '--tmpfs=/tmp:rw,noexec,nosuid,size=262144k',
+  '--tmpfs=/tmp:rw,noexec,nosuid,size=1048576k',
+  '--tmpfs=/root/.cache:rw,noexec,nosuid,size=262144k',
+  '--tmpfs=/.cache:rw,noexec,nosuid,size=262144k',
 ];
 
 export interface VolumeMount {

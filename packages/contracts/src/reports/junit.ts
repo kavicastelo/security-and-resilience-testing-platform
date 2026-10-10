@@ -40,6 +40,8 @@ export function generateJUnitXml(input: ReportInput): string {
 
   const suitesXml: string[] = [];
 
+  let totalTestCasesCount = 0;
+
   for (const exec of executions) {
     const engineFindings = findings.filter(
       (f) => f.executionId === exec.id || f.testDefinitionId === exec.engineId,
@@ -87,6 +89,8 @@ Evidence ID: ${finding.evidenceId || 'N/A'}${curlCmd ? `\n\nReproduction Command
       }
     }
 
+    totalTestCasesCount += testCases.length;
+
     suitesXml.push(`  <testsuite id="${exec.id}" name="${escapeXml(exec.engineId)}" tests="${testCases.length}" failures="${engineFindings.length}" errors="${exec.errorMessage ? 1 : 0}" time="${execDurationSec}">
 ${testCases.join('\n')}
   </testsuite>`);
@@ -100,8 +104,13 @@ ${testCases.join('\n')}
   </properties>\n`
     : '';
 
+  const finalTestsCount = Math.max(
+    totalTestCasesCount,
+    testRun.summary?.totalTests || 1,
+  );
+
   return `<?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Security Lab: ${escapeXml(targetName)}" tests="${Math.max(totalFindings, 1)}" failures="${totalFindings}" errors="${totalErrors}" time="${totalDurationSec.toFixed(3)}">
+<testsuites name="Security Lab: ${escapeXml(targetName)}" tests="${finalTestsCount}" failures="${totalFindings}" errors="${totalErrors}" time="${totalDurationSec.toFixed(3)}">
 ${diffPropertiesXml}${suitesXml.join('\n')}
 </testsuites>`;
 }

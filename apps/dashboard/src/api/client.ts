@@ -1,6 +1,8 @@
 export const STORAGE_KEY = 'security_lab_api_key';
+export const ADMIN_STORAGE_KEY = 'security_lab_admin_key';
 
 let inMemoryApiKey: string | null = null;
+let inMemoryAdminKey: string | null = null;
 
 /**
  * Resolves API key from in-memory fallback, localStorage, sessionStorage, or environment variable.
@@ -21,7 +23,7 @@ export function getStoredApiKey(): string {
   }
 
   try {
-    const envKey = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SECURITY_LAB_API_KEY;
+    const envKey = import.meta.env?.VITE_SECURITY_LAB_API_KEY;
     if (typeof envKey === 'string' && envKey.trim().length > 0) {
       return envKey.trim();
     }
@@ -37,20 +39,26 @@ export function getStoredApiKey(): string {
 }
 
 /**
- * Resolves optional admin key from localStorage or environment variable.
+ * Resolves optional admin key from in-memory, localStorage, environment variable,
+ * or falls back to the operator API key.
  */
 export function getStoredAdminKey(): string {
+  if (inMemoryAdminKey !== null) return inMemoryAdminKey;
+
   if (typeof window !== 'undefined') {
     try {
-      const local = window.localStorage?.getItem('security_lab_admin_key');
+      const local = window.localStorage?.getItem(ADMIN_STORAGE_KEY);
       if (local && local.trim().length > 0) return local.trim();
+
+      const session = window.sessionStorage?.getItem(ADMIN_STORAGE_KEY);
+      if (session && session.trim().length > 0) return session.trim();
     } catch {
       // Ignore localStorage security/quota errors
     }
   }
 
   try {
-    const envKey = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SECURITY_LAB_ADMIN_KEY;
+    const envKey = import.meta.env?.VITE_SECURITY_LAB_ADMIN_KEY;
     if (typeof envKey === 'string' && envKey.trim().length > 0) {
       return envKey.trim();
     }
@@ -62,9 +70,9 @@ export function getStoredAdminKey(): string {
     return process.env.VITE_SECURITY_LAB_ADMIN_KEY.trim();
   }
 
-  return '';
+  // Fallback to primary API key so single-credential setups authenticate for admin features
+  return getStoredApiKey();
 }
-
 
 /**
  * Persists API key in browser storage and in-memory cache.
@@ -93,14 +101,58 @@ export function setStoredApiKey(key: string, persistent = true): void {
  */
 export function clearStoredApiKey(): void {
   inMemoryApiKey = '';
-  if (typeof process !== 'undefined' && process.env?.VITE_SECURITY_LAB_API_KEY) {
-    delete process.env.VITE_SECURITY_LAB_API_KEY;
+  inMemoryAdminKey = '';
+  if (typeof process !== 'undefined') {
+    if (process.env?.VITE_SECURITY_LAB_API_KEY) delete process.env.VITE_SECURITY_LAB_API_KEY;
+    if (process.env?.VITE_SECURITY_LAB_ADMIN_KEY) delete process.env.VITE_SECURITY_LAB_ADMIN_KEY;
   }
   if (typeof window === 'undefined') return;
 
   try {
     window.localStorage?.removeItem(STORAGE_KEY);
     window.sessionStorage?.removeItem(STORAGE_KEY);
+    window.localStorage?.removeItem(ADMIN_STORAGE_KEY);
+    window.sessionStorage?.removeItem(ADMIN_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+/**
+ * Persists Admin key in browser storage and in-memory cache.
+ */
+export function setStoredAdminKey(key: string, persistent = true): void {
+  const trimmed = key.trim();
+  inMemoryAdminKey = trimmed;
+
+  if (typeof window === 'undefined') return;
+
+  try {
+    if (persistent) {
+      window.localStorage?.setItem(ADMIN_STORAGE_KEY, trimmed);
+      window.sessionStorage?.removeItem(ADMIN_STORAGE_KEY);
+    } else {
+      window.sessionStorage?.setItem(ADMIN_STORAGE_KEY, trimmed);
+      window.localStorage?.removeItem(ADMIN_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage quota or access errors
+  }
+}
+
+/**
+ * Removes Admin key from browser storage and in-memory cache.
+ */
+export function clearStoredAdminKey(): void {
+  inMemoryAdminKey = '';
+  if (typeof process !== 'undefined' && process.env?.VITE_SECURITY_LAB_ADMIN_KEY) {
+    delete process.env.VITE_SECURITY_LAB_ADMIN_KEY;
+  }
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage?.removeItem(ADMIN_STORAGE_KEY);
+    window.sessionStorage?.removeItem(ADMIN_STORAGE_KEY);
   } catch {
     // Ignore storage errors
   }
@@ -138,7 +190,6 @@ export function getAuthHeaders(headers?: HeadersInit): Record<string, string> {
   }
 
   return result;
-
 }
 
 /**
@@ -199,6 +250,9 @@ export const apiClient = {
   getStoredApiKey,
   setStoredApiKey,
   clearStoredApiKey,
+  getStoredAdminKey,
+  setStoredAdminKey,
+  clearStoredAdminKey,
   getAuthHeaders,
   authFetch,
   installAuthInterceptor,

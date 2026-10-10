@@ -36,6 +36,8 @@ export function buildK6Script(options: K6ScriptOptions): string {
     k6Options.duration = options.duration || `${options.durationSec || 3}s`;
   }
 
+  k6Options.summaryTrendStats = ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'];
+
   k6Options.thresholds = {
     http_req_duration: [`p(95)<${maxP95Ms}`],
     http_req_failed: [`rate<${maxFailedRatio}`],

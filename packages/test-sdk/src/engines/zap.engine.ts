@@ -163,7 +163,9 @@ export class ZapScannerEngine implements TestEngine {
             mode: 'rw',
           },
         ],
-        timeoutMs: input.timeoutMs || 90000,
+        timeoutMs:
+          input.timeoutMs ||
+          (typeof input.options?.timeoutMs === 'number' ? input.options.timeoutMs : 300000),
         abortSignal: context.abortSignal,
         simulated: isSimulated,
         mockStdout: JSON.stringify(mockReport),

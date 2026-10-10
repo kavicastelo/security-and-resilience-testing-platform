@@ -33,6 +33,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore.js';
+import { authFetch } from '../api/client.js';
 
 export type PurgeMode = 'all' | 'executions' | 'findings' | 'artifacts' | 'jobs';
 
@@ -210,7 +211,7 @@ export const ManagementView: React.FC = () => {
   } = useQuery<SystemOverviewStats>({
     queryKey: ['management-overview'],
     queryFn: async () => {
-      const res = await fetch(`${apiUrl}/api/v1/management/overview`);
+      const res = await authFetch(`${apiUrl}/api/v1/management/overview`);
       const json = await res.json();
       if (!res.ok || !json.success) {
         throw new Error(json.error?.message || 'Failed to fetch management diagnostics');
@@ -228,7 +229,7 @@ export const ManagementView: React.FC = () => {
   } = useQuery<BackupMetadata[]>({
     queryKey: ['management-backups'],
     queryFn: async () => {
-      const res = await fetch(`${apiUrl}/api/v1/management/backups`);
+      const res = await authFetch(`${apiUrl}/api/v1/management/backups`);
       const json = await res.json();
       if (!res.ok || !json.success) {
         throw new Error(json.error?.message || 'Failed to fetch platform backups');
@@ -242,7 +243,7 @@ export const ManagementView: React.FC = () => {
   const { data: auditEvents = [] } = useQuery({
     queryKey: ['management-audit-events'],
     queryFn: async () => {
-      const res = await fetch(`${apiUrl}/api/v1/management/audit-events`);
+      const res = await authFetch(`${apiUrl}/api/v1/management/audit-events`);
       const json = await res.json();
       return json.data || [];
     },
@@ -252,7 +253,7 @@ export const ManagementView: React.FC = () => {
   // 4. Purge Data Mutation
   const purgeMutation = useMutation({
     mutationFn: async ({ mode, confirmation }: { mode: PurgeMode; confirmation: string }) => {
-      const res = await fetch(`${apiUrl}/api/v1/management/purge`, {
+      const res = await authFetch(`${apiUrl}/api/v1/management/purge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, confirmation }),
@@ -277,7 +278,7 @@ export const ManagementView: React.FC = () => {
   // 5. Seed Demo Data Mutation
   const seedMutation = useMutation({
     mutationFn: async (options?: { force?: boolean }) => {
-      const res = await fetch(`${apiUrl}/api/v1/management/seed`, {
+      const res = await authFetch(`${apiUrl}/api/v1/management/seed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: options?.force ?? true }),
@@ -300,7 +301,7 @@ export const ManagementView: React.FC = () => {
   // 6. Reap Jobs Mutation
   const reapMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${apiUrl}/api/v1/management/reap-jobs`, {
+      const res = await authFetch(`${apiUrl}/api/v1/management/reap-jobs`, {
         method: 'POST',
       });
       const json = await res.json();
@@ -321,7 +322,7 @@ export const ManagementView: React.FC = () => {
   // 7. Create Backup Mutation
   const createBackupMutation = useMutation({
     mutationFn: async ({ description, includeExecutions }: { description?: string; includeExecutions: boolean }) => {
-      const res = await fetch(`${apiUrl}/api/v1/management/backups`, {
+      const res = await authFetch(`${apiUrl}/api/v1/management/backups`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description, includeExecutions }),
@@ -346,7 +347,7 @@ export const ManagementView: React.FC = () => {
   // 8. Delete Backup Mutation
   const deleteBackupMutation = useMutation({
     mutationFn: async (backupId: string) => {
-      const res = await fetch(`${apiUrl}/api/v1/management/backups/${backupId}`, {
+      const res = await authFetch(`${apiUrl}/api/v1/management/backups/${backupId}`, {
         method: 'DELETE',
       });
       const json = await res.json();
@@ -377,7 +378,7 @@ export const ManagementView: React.FC = () => {
       backupId?: string;
       backupData?: any;
     }) => {
-      const res = await fetch(`${apiUrl}/api/v1/management/backups/restore`, {
+      const res = await authFetch(`${apiUrl}/api/v1/management/backups/restore`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, confirmation, backupId, backupData }),
@@ -401,7 +402,7 @@ export const ManagementView: React.FC = () => {
 
   const handleDownloadBackup = async (backup: BackupMetadata) => {
     try {
-      const res = await fetch(`${apiUrl}/api/v1/management/backups/${backup.id}/download`);
+      const res = await authFetch(`${apiUrl}/api/v1/management/backups/${backup.id}/download`);
       if (!res.ok) throw new Error('Failed to download backup snapshot');
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
