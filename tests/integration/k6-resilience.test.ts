@@ -583,6 +583,48 @@ describe('Phase 4: Class C Resilience & Load Testing (Grafana k6 & Rate Limiting
       expect(metrics.failedCount).toBe(3);
     });
 
+    it('parseK6Summary accurately parses native k6 export format without .values wrapper', () => {
+      const flatFixture = {
+        metrics: {
+          http_req_duration: {
+            avg: 124.05,
+            min: 59.39,
+            med: 80.59,
+            max: 879.38,
+            'p(90)': 115.61,
+            'p(95)': 424.9,
+            'p(99)': 550.0,
+          },
+          http_req_failed: {
+            passes: 5,
+            fails: 95,
+            value: 0.05,
+          },
+          http_reqs: {
+            count: 100,
+            rate: 25.0,
+          },
+          iterations: {
+            count: 100,
+            rate: 25.0,
+          },
+        },
+      };
+
+      const metrics = parseK6Summary(flatFixture);
+      expect(metrics.durationAvg).toBe(124.05);
+      expect(metrics.durationMin).toBe(59.39);
+      expect(metrics.durationMed).toBe(80.59);
+      expect(metrics.durationMax).toBe(879.38);
+      expect(metrics.durationP90).toBe(115.61);
+      expect(metrics.durationP95).toBe(424.9);
+      expect(metrics.durationP99).toBe(550.0);
+      expect(metrics.reqsTotal).toBe(100);
+      expect(metrics.rps).toBe(25.0);
+      expect(metrics.failedRate).toBe(0.05);
+      expect(metrics.failedCount).toBe(5);
+    });
+
     it('volume exchange: writes script, executes runner, parses real summary.json, and destroys scratch dir', async () => {
       let capturedHostPath = '';
       const customK6Summary = {

@@ -62,10 +62,15 @@ export function extractAuthToken(request: FastifyRequest): string | null {
     return xApiKey.trim();
   }
 
+  const xAdminKey = request.headers['x-admin-key'] || request.headers['admin-key'];
+  if (typeof xAdminKey === 'string' && xAdminKey.trim().length > 0) {
+    return xAdminKey.trim();
+  }
+
   // Also support API key / token in query parameters for direct browser viewing & report downloads
   const query = request.query as Record<string, unknown> | undefined;
   if (query) {
-    const candidate = query.apiKey || query.api_key || query.token || query.key;
+    const candidate = query.apiKey || query.api_key || query.adminKey || query.admin_key || query.token || query.key;
     if (typeof candidate === 'string' && candidate.trim().length > 0) {
       return candidate.trim();
     }
@@ -186,12 +191,22 @@ export function registerAuthHooks(fastify: FastifyInstance, options: AuthPluginO
       }
     }
 
-    // 6. Verify against Admin Key
+    // 6. Verify against explicit X-Admin-Key header if provided
+    const rawAdminKey = request.headers['x-admin-key'] || request.headers['admin-key'];
+    const adminHeaderKey = typeof rawAdminKey === 'string' && rawAdminKey.trim().length > 0
+      ? rawAdminKey.trim()
+      : null;
+
+    if (adminHeaderKey && effectiveAdminKey && timingSafeCompare(adminHeaderKey, effectiveAdminKey)) {
+      request.auth = { role: 'admin', keyId: 'admin-header-key', tenantId: defaultTenantId };
+    }
+
+    // 7. Verify token against Admin Key
     if (!request.auth && effectiveAdminKey && timingSafeCompare(token, effectiveAdminKey)) {
       request.auth = { role: 'admin', keyId: 'admin-key', tenantId: defaultTenantId };
     }
 
-    // 7. Verify against Operator Key
+    // 8. Verify token against Operator Key
     if (!request.auth && effectiveApiKey && timingSafeCompare(token, effectiveApiKey)) {
       request.auth = { role: 'operator', keyId: 'operator-key', tenantId: defaultTenantId };
     }

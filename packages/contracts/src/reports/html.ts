@@ -33,15 +33,30 @@ export function generateHtmlExecutiveReport(input: ReportInput): string {
   const failedRatio = metricMap['http_req_failed_ratio'];
   const rateLimitEnforced = metricMap['rate_limiting_enforced'];
 
-  const gateDecision = releaseGate?.decision || (posture.score >= 80 ? 'passed' : 'failed');
+  const hasEngineFailures = executions.some((e) => e.status === 'failed' || Boolean(e.errorMessage));
+  const failedEngines = executions.filter((e) => e.status === 'failed' || Boolean(e.errorMessage));
+
+  const rawGateDecision = releaseGate?.decision || (posture.score >= 80 ? 'passed' : 'failed');
+  const gateDecision = hasEngineFailures
+    ? (failedEngines.length === executions.length && executions.length > 0
+        ? 'failed'
+        : rawGateDecision === 'passed'
+          ? 'warning'
+          : rawGateDecision)
+    : rawGateDecision;
+
   const gateColor =
     gateDecision === 'passed' ? '#10b981' : gateDecision === 'warning' ? '#f59e0b' : '#ef4444';
   const gateTitle =
     gateDecision === 'passed'
       ? 'RELEASE GATE: PASSED (Compliant)'
       : gateDecision === 'warning'
-        ? 'RELEASE GATE: WARNING (Manual Review Required)'
-        : 'RELEASE GATE: BLOCKED (Non-Compliant)';
+        ? (hasEngineFailures
+            ? 'RELEASE GATE: WARNING (Partial Engine Execution Failure)'
+            : 'RELEASE GATE: WARNING (Manual Review Required)')
+        : (hasEngineFailures && failedEngines.length === executions.length
+            ? 'RELEASE GATE: BLOCKED (Scanner Engine Failure)'
+            : 'RELEASE GATE: BLOCKED (Non-Compliant)');
 
   const gradeColor =
     posture.grade === 'A'
@@ -68,6 +83,38 @@ export function generateHtmlExecutiveReport(input: ReportInput): string {
     }
   }
 
+  const executionRows = executions
+    .map((e) => {
+      const isFailed = e.status === 'failed' || Boolean(e.errorMessage);
+      const statusColor = isFailed ? '#ef4444' : '#10b981';
+      const statusText = isFailed ? 'FAILED' : 'COMPLETED';
+
+      return `
+      <tr>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; vertical-align: top;">
+          <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; text-transform: uppercase; background-color: ${statusColor}22; color: ${statusColor}; border: 1px solid ${statusColor}44;">
+            ${statusText}
+          </span>
+        </td>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-weight: 600; color: #f4f4f5; vertical-align: top; font-family: monospace; font-size: 13px;">
+          ${escapeHtml(e.engineId)}
+          ${
+            e.errorMessage
+              ? `<div style="font-weight: 400; font-size: 11px; color: #ef4444; margin-top: 4px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #ef444415; border: 1px solid #ef444430; padding: 6px 10px; border-radius: 6px;">
+                  <strong>Execution Error:</strong> ${escapeHtml(e.errorMessage)}
+                </div>`
+              : ''
+          }
+        </td>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-size: 12px; color: #a1a1aa; vertical-align: top; font-family: monospace;">
+          ${escapeHtml(e.executionClass || 'native')}
+        </td>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #27272a; font-family: monospace; font-size: 12px; color: #a1a1aa; vertical-align: top;">
+          ${e.durationMs !== undefined ? `${e.durationMs} ms` : 'N/A'}
+        </td>
+      </tr>`;
+    })
+    .join('');
 
   const findingsRows = findings
     .map((f) => {
@@ -276,6 +323,38 @@ export function generateHtmlExecutiveReport(input: ReportInput): string {
             <div style="color: #a1a1aa; font-size: 10px;">LOW</div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Test Engine Orchestration & Telemetry Card -->
+    <div class="card">
+      <h2 style="font-size: 16px; margin-top: 0; margin-bottom: 16px; border-bottom: 1px solid #27272a; padding-bottom: 8px;">
+        Test Engine Orchestration &amp; Execution Telemetry (${executions.length} engines)
+      </h2>
+      ${
+        hasEngineFailures
+          ? `<div style="background: #ef444415; border: 1px solid #ef444440; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; color: #fca5a5; font-size: 13px;">
+              <strong>⚠️ Engine Execution Failure Warning:</strong> ${failedEngines.length} engine(s) encountered execution errors or timeouts. Verification is incomplete.
+            </div>`
+          : ''
+      }
+      ${
+        executions.length === 0
+          ? '<div style="color: #a1a1aa; font-size: 12px;">No engine execution telemetry recorded for this test run.</div>'
+          : `<table>
+        <thead>
+          <tr>
+            <th style="width: 120px;">Status</th>
+            <th>Engine Identifier</th>
+            <th style="width: 160px;">Execution Class</th>
+            <th style="width: 120px;">Duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${executionRows}
+        </tbody>
+      </table>`
+      }
     </div>
 
     ${
@@ -356,7 +435,11 @@ export function generateHtmlExecutiveReport(input: ReportInput): string {
       </h2>
       ${
         findings.length === 0
-          ? '<div style="color: #10b981; font-weight: 600; padding: 20px 0;">✔ Zero vulnerabilities or policy violations detected. Endpoint satisfies all compliance checks.</div>'
+          ? hasEngineFailures && failedEngines.length === executions.length
+            ? '<div style="color: #ef4444; font-weight: 600; padding: 20px 0;">⚠️ No findings detected because all configured scanner engines failed or timed out during execution. This target has NOT passed security verification.</div>'
+            : hasEngineFailures
+              ? '<div style="color: #f59e0b; font-weight: 600; padding: 20px 0;">⚠️ Zero findings recorded from completed engines, but one or more engines failed to execute. Review engine telemetry above.</div>'
+              : '<div style="color: #10b981; font-weight: 600; padding: 20px 0;">✔ Zero vulnerabilities or policy violations detected. Endpoint satisfies all compliance checks.</div>'
           : `<table>
         <thead>
           <tr>

@@ -29,13 +29,30 @@ import { Pagination } from './Pagination.js';
 import { LiveRunMonitor } from './LiveRunMonitor.js';
 import { LatencyDistributionChart } from './LatencyDistributionChart.js';
 import { useAppStore } from '../store/useAppStore.js';
-import { getStoredApiKey } from '../api/client.js';
+import { getStoredApiKey, authFetch } from '../api/client.js';
+
+interface TargetScope {
+  allowedHosts?: string[];
+  allowedPorts?: number[];
+  excludedPaths?: string[];
+  testing?: {
+    activeScanning?: boolean;
+    loadTesting?: boolean;
+    chaosTesting?: boolean;
+  };
+  limits?: {
+    maxRps?: number;
+    maxConcurrency?: number;
+    maxDuration?: string;
+  };
+}
 
 interface Target {
   id: string;
   projectId: string;
   name: string;
   baseUrl: string;
+  scope?: TargetScope;
 }
 
 interface TestRunSummary {
@@ -112,7 +129,7 @@ const RunMetricsDetails: React.FC<{ runId: string; apiUrl: string }> = ({ runId,
   const { data: metrics = [], isLoading } = useQuery<MetricItem[]>({
     queryKey: ['test-run-metrics', runId],
     queryFn: async () => {
-      const res = await fetch(`${apiUrl}/api/v1/test-runs/${runId}/metrics`);
+      const res = await authFetch(`${apiUrl}/api/v1/test-runs/${runId}/metrics`);
       const json = await res.json();
       return json.data || [];
     },
@@ -235,6 +252,77 @@ const RunMetricsDetails: React.FC<{ runId: string; apiUrl: string }> = ({ runId,
   );
 };
 
+interface ExecutionItem {
+  id: string;
+  engineId: string;
+  executionClass: string;
+  status: 'completed' | 'failed' | 'running' | 'cancelled';
+  durationMs?: number;
+  errorMessage?: string;
+}
+
+const RunExecutionsDetails: React.FC<{ runId: string; apiUrl: string }> = ({ runId, apiUrl }) => {
+  const { data: executions = [], isLoading } = useQuery<ExecutionItem[]>({
+    queryKey: ['test-run-executions', runId],
+    queryFn: async () => {
+      const res = await authFetch(`${apiUrl}/api/v1/test-runs/${runId}/executions`);
+      const json = await res.json();
+      return json.data || [];
+    },
+  });
+
+  if (isLoading) {
+    return <div className="text-xs text-muted-foreground animate-pulse py-2">Loading engine tasks...</div>;
+  }
+
+  if (executions.length === 0) return null;
+
+  return (
+    <div className="space-y-2 pt-3 border-t border-border/50">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+          <Cpu className="w-3.5 h-3.5 text-blue-400" />
+          Test Engine Execution Tasks ({executions.length})
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {executions.map((exec) => {
+          const isFailed = exec.status === 'failed' || Boolean(exec.errorMessage);
+          return (
+            <div
+              key={exec.id}
+              className={`p-2.5 rounded-lg border text-xs font-mono space-y-1 ${
+                isFailed
+                  ? 'bg-rose-950/20 border-rose-500/30 text-rose-300'
+                  : 'bg-card/70 border-border/60 text-foreground'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold flex items-center gap-1.5">
+                  {isFailed ? (
+                    <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  )}
+                  {exec.engineId}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  {exec.durationMs !== undefined ? `${exec.durationMs}ms` : ''}
+                </span>
+              </div>
+              {exec.errorMessage && (
+                <div className="text-[11px] text-rose-400 bg-rose-950/40 p-1.5 rounded border border-rose-800/40 break-words font-sans">
+                  <strong>Error:</strong> {exec.errorMessage}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 export const RunsView: React.FC = () => {
   const queryClient = useQueryClient();
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
@@ -243,6 +331,7 @@ export const RunsView: React.FC = () => {
   const authQueryParam = effectiveApiKey ? `&apiKey=${encodeURIComponent(effectiveApiKey)}` : '';
 
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
+  const [targetEndpoint, setTargetEndpoint] = useState<string>('');
   const [evaluatingRunId, setEvaluatingRunId] = useState<string | null>(null);
   const [executionMode, setExecutionMode] = useState<'class_a' | 'class_b' | 'class_c' | 'declarative'>('class_a');
   const [loadVus, setLoadVus] = useState<number>(5);
@@ -260,7 +349,6 @@ export const RunsView: React.FC = () => {
     'engine-container-trivy',
   ]);
   const [enableActiveScan, setEnableActiveScan] = useState<boolean>(false);
-  const [isSimulated, setIsSimulated] = useState<boolean>(true);
   const [declarativeYaml, setDeclarativeYaml] = useState(DEFAULT_DECLARATIVE_YAML);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [activeStreamingRunId, setActiveStreamingRunId] = useState<string | null>(null);
@@ -279,7 +367,7 @@ export const RunsView: React.FC = () => {
   // Delete Test Run mutation
   const deleteRunMutation = useMutation({
     mutationFn: async (runId: string) => {
-      const res = await fetch(`${apiUrl}/api/v1/test-runs/${runId}`, {
+      const res = await authFetch(`${apiUrl}/api/v1/test-runs/${runId}`, {
         method: 'DELETE',
       });
       const json = await res.json();
@@ -297,17 +385,20 @@ export const RunsView: React.FC = () => {
   const { data: targets = [] } = useQuery<Target[]>({
     queryKey: ['targets'],
     queryFn: async () => {
-      const res = await fetch(`${apiUrl}/api/v1/targets`);
+      const res = await authFetch(`${apiUrl}/api/v1/targets`);
       const json = await res.json();
       return json.data || [];
     },
   });
 
+  const selectedTarget = targets.find((t) => t.id === selectedTargetId) || null;
+  const targetMaxConcurrency = selectedTarget?.scope?.limits?.maxConcurrency ?? 20;
+
   // 2. Fetch Test Runs
   const { data: testRuns = [], isLoading: isLoadingRuns, refetch } = useQuery<TestRun[]>({
     queryKey: ['test-runs'],
     queryFn: async () => {
-      const res = await fetch(`${apiUrl}/api/v1/test-runs`);
+      const res = await authFetch(`${apiUrl}/api/v1/test-runs`);
       const json = await res.json();
       return (json.data || []).sort(
         (a: TestRun, b: TestRun) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
@@ -321,6 +412,16 @@ export const RunsView: React.FC = () => {
       if (!selectedTargetId) throw new Error('Please select a target');
       const target = targets.find((t) => t.id === selectedTargetId);
       if (!target) throw new Error('Target not found');
+
+      if (executionMode === 'class_c' && loadVus > targetMaxConcurrency) {
+        showToast(
+          `Requested concurrency (${loadVus} VUs) exceeds target safety limit (${targetMaxConcurrency} VUs). Edit target in Authorized Targets to increase.`,
+          'error',
+        );
+        throw new Error(
+          `Requested concurrency (${loadVus} VUs) exceeds target scope safety limit of ${targetMaxConcurrency} VUs`,
+        );
+      }
 
       let profileId = 'native-class-a';
       let engineIds = selectedEngines;
@@ -340,7 +441,7 @@ export const RunsView: React.FC = () => {
       }
 
       // Create Run
-      const createRes = await fetch(`${apiUrl}/api/v1/test-runs`, {
+      const createRes = await authFetch(`${apiUrl}/api/v1/test-runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -350,7 +451,7 @@ export const RunsView: React.FC = () => {
           metadata: {
             definitionYaml: executionMode === 'declarative' ? declarativeYaml : undefined,
             activeScan: executionMode === 'class_b' ? enableActiveScan : false,
-            simulated: executionMode === 'class_b' ? isSimulated : false,
+            endpoint: targetEndpoint.trim() || undefined,
             vus: executionMode === 'class_c' ? loadVus : undefined,
             durationSec: executionMode === 'class_c' ? loadDurationSec : undefined,
             maxP95Ms: executionMode === 'class_c' ? loadMaxP95Ms : undefined,
@@ -363,7 +464,7 @@ export const RunsView: React.FC = () => {
       const runId = createJson.data.id;
 
       // Execute Run
-      const execRes = await fetch(`${apiUrl}/api/v1/test-runs/${runId}/execute`, {
+      const execRes = await authFetch(`${apiUrl}/api/v1/test-runs/${runId}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -371,7 +472,7 @@ export const RunsView: React.FC = () => {
           definitionYaml: executionMode === 'declarative' ? declarativeYaml : undefined,
           options: {
             activeScan: enableActiveScan,
-            simulated: isSimulated,
+            endpoint: targetEndpoint.trim() || undefined,
             vus: loadVus,
             durationSec: loadDurationSec,
             maxP95Ms: loadMaxP95Ms,
@@ -481,6 +582,38 @@ export const RunsView: React.FC = () => {
                 </option>
               ))}
             </select>
+            {selectedTarget && (
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-1 px-1">
+                <span>Allowed Ports: {selectedTarget.scope?.allowedPorts?.join(', ')}</span>
+                <span className="font-mono text-amber-500 font-medium">
+                  Max Concurrency: {targetMaxConcurrency} VUs
+                </span>
+              </div>
+            )}
+            <div className="mt-2.5">
+              <label className="block text-xs font-medium text-foreground mb-1">
+                Endpoint / Subpath <span className="text-[11px] text-muted-foreground font-normal">(optional, e.g. /health, /api/v1/health)</span>
+              </label>
+              <input
+                type="text"
+                placeholder={selectedTarget ? `${selectedTarget.baseUrl}/... (default: root /)` : 'e.g. /health or /api/v1/health'}
+                value={targetEndpoint}
+                onChange={(e) => setTargetEndpoint(e.target.value)}
+                className="w-full px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-muted-foreground/60"
+              />
+              <span className="text-[10px] text-muted-foreground block mt-0.5">
+                Target URL:{' '}
+                <span className="font-mono text-foreground">
+                  {selectedTarget
+                    ? targetEndpoint.trim()
+                      ? targetEndpoint.startsWith('/')
+                        ? `${selectedTarget.baseUrl}${targetEndpoint.trim()}`
+                        : `${selectedTarget.baseUrl}/${targetEndpoint.trim()}`
+                      : selectedTarget.baseUrl
+                    : 'None selected'}
+                </span>
+              </span>
+            </div>
           </div>
 
           {/* Execution Mode */}
@@ -607,17 +740,10 @@ export const RunsView: React.FC = () => {
                     Enable Active Scanning (Requires Scope Opt-In)
                   </span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isSimulated}
-                    onChange={(e) => setIsSimulated(e.target.checked)}
-                    className="rounded border-border text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="text-blue-400 font-mono text-[11px]">
-                    Fast Lab Mode (Simulated Containers)
-                  </span>
-                </label>
+                <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-mono">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Real Execution Mode (Strict Security Gate)</span>
+                </div>
               </div>
             </div>
 
@@ -675,16 +801,33 @@ export const RunsView: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="p-3 rounded-lg border border-border bg-background/50 space-y-1.5">
-                <label className="text-xs text-muted-foreground block">Virtual Users (VUs Concurrency)</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-muted-foreground block">Virtual Users (VUs Concurrency)</label>
+                  <span className="text-[10px] font-mono text-amber-500 font-semibold">
+                    Scope Limit: {targetMaxConcurrency} VUs
+                  </span>
+                </div>
                 <input
                   type="number"
                   min={1}
-                  max={50}
+                  max={targetMaxConcurrency}
                   value={loadVus}
                   onChange={(e) => setLoadVus(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  className="w-full px-2.5 py-1.5 bg-background border border-border rounded text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className={`w-full px-2.5 py-1.5 bg-background border rounded text-sm text-foreground focus:outline-none focus:ring-1 ${
+                    loadVus > targetMaxConcurrency
+                      ? 'border-red-500 focus:ring-red-500'
+                      : 'border-border focus:ring-blue-500'
+                  }`}
                 />
-                <span className="text-[10px] text-muted-foreground block">Clamped by target scope limit</span>
+                {loadVus > targetMaxConcurrency ? (
+                  <span className="text-[10px] text-red-400 block font-medium">
+                    ⚠️ Exceeds target scope limit of {targetMaxConcurrency} VUs. Edit target in Authorized Targets tab to increase.
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-muted-foreground block">
+                    Target scope limit: {targetMaxConcurrency} VUs max
+                  </span>
+                )}
               </div>
 
               <div className="p-3 rounded-lg border border-border bg-background/50 space-y-1.5">
@@ -1018,6 +1161,9 @@ export const RunsView: React.FC = () => {
                                 </span>
                               </div>
                             </div>
+
+                            {/* Test Engine Execution Tasks */}
+                            <RunExecutionsDetails runId={run.id} apiUrl={apiUrl} />
 
                             {/* Quantitative Latency & SLA Metrics */}
                             <RunMetricsDetails runId={run.id} apiUrl={apiUrl} />

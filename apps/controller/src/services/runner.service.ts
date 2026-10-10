@@ -300,8 +300,25 @@ export class TestRunnerService extends EventEmitter {
       delete sanitizedOptions.mockReport;
       delete sanitizedOptions.skipVerification;
 
+      // Resolve custom target subpath/endpoint if supplied in options or metadata
+      let resolvedTargetUrl = target.baseUrl;
+      const customEndpoint =
+        typeof sanitizedOptions.endpoint === 'string' && sanitizedOptions.endpoint.trim().length > 0
+          ? sanitizedOptions.endpoint.trim()
+          : typeof sanitizedMetadata.endpoint === 'string' && sanitizedMetadata.endpoint.trim().length > 0
+            ? sanitizedMetadata.endpoint.trim()
+            : undefined;
+
+      if (customEndpoint) {
+        try {
+          resolvedTargetUrl = new URL(customEndpoint, target.baseUrl).toString();
+        } catch {
+          // Keep base URL if endpoint is invalid
+        }
+      }
+
       const engineInput = {
-        targetUrl: target.baseUrl,
+        targetUrl: resolvedTargetUrl,
         customHeaders: options?.customHeaders,
         options: {
           ...sanitizedMetadata,
@@ -447,17 +464,20 @@ export class TestRunnerService extends EventEmitter {
           }
         }
 
-        const isSuccess = result.success && result.findings.filter((f) => f.severity === 'critical' || f.severity === 'high').length === 0;
+        const isSuccess = result.success && result.findings.length === 0;
         if (isSuccess) {
           totalPassedTests++;
         } else {
           totalFailedTests++;
         }
 
+        const isExecutionFailed = Boolean(result.error);
+        const executionStatus = isExecutionFailed ? 'failed' : 'completed';
+
         await db
           .update(testExecutions)
           .set({
-            status: result.success ? 'completed' : 'failed',
+            status: executionStatus,
             completedAt: new Date(),
             durationMs: result.durationMs,
             errorMessage: result.error,
@@ -468,7 +488,7 @@ export class TestRunnerService extends EventEmitter {
         executionResults.push({
           id: executionRow.id,
           engineId: engine.id,
-          status: result.success ? 'completed' : 'failed',
+          status: executionStatus,
           durationMs: result.durationMs,
           error: result.error,
         });
@@ -477,7 +497,7 @@ export class TestRunnerService extends EventEmitter {
           testRunId,
           engineId: engine.id,
           executionId: executionRow.id,
-          status: result.success ? 'completed' : 'failed',
+          status: executionStatus,
           durationMs: result.durationMs,
           findingsCount: result.findings.length,
           error: result.error,
@@ -560,9 +580,12 @@ export class TestRunnerService extends EventEmitter {
       findingsCount: severityCounts,
     };
 
+    const allEnginesFailed =
+      enginesToRun.length > 0 && executionResults.every((e) => e.status === 'failed');
+
     const finalStatus = isCancelled
       ? 'cancelled'
-      : severityCounts.critical > 0
+      : (severityCounts.critical > 0 || allEnginesFailed)
         ? 'failed'
         : 'completed';
 

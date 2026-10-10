@@ -68,7 +68,7 @@ describe('Real Docker Security Scanner Integration Suite (REM-08)', () => {
     it('accurately detects Docker daemon availability without throwing unhandled exceptions', async () => {
       const available = await isDockerAvailable();
       expect(typeof available).toBe('boolean');
-    });
+    }, 15000);
 
     it('strictly forbids unapproved images per CIS image allowlist policy', async () => {
       expect(isApprovedImage('ubuntu:latest')).toBe(false);

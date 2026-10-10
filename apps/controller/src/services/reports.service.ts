@@ -1,4 +1,4 @@
-import { eq, and, ne, desc, or } from 'drizzle-orm';
+import { eq, and, ne, desc, or, lt } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { testExecutions, testRuns, reports, findings as findingsTable } from './db/schema.js';
 import { testRunsService } from './test-runs.service.js';
@@ -57,7 +57,12 @@ export class ReportsService {
   ): Promise<FindingDiffSummary> {
     const { db } = getDatabase();
 
-    // 1. Find previous completed or failed test run on the same target
+    // 1. Find previous completed or failed test run on the same target (strictly created before the current run)
+    const currentRunCreatedAt =
+      currentTestRun.createdAt instanceof Date
+        ? currentTestRun.createdAt
+        : new Date(currentTestRun.createdAt);
+
     const prevRuns = await db
       .select()
       .from(testRuns)
@@ -65,6 +70,7 @@ export class ReportsService {
         and(
           eq(testRuns.targetId, currentTestRun.targetId),
           ne(testRuns.id, currentTestRun.id),
+          lt(testRuns.createdAt, currentRunCreatedAt),
           or(eq(testRuns.status, 'completed'), eq(testRuns.status, 'failed')),
         ),
       )

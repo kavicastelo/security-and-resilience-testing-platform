@@ -66,7 +66,7 @@ export function checkForbiddenSimulationOptions(
   const record = data as Record<string, unknown>;
 
   for (const key of FORBIDDEN_SIMULATION_KEYS) {
-    if (key in record && record[key] !== undefined) {
+    if (key in record && record[key] !== undefined && record[key] !== false) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Simulation options are not permitted via the public API',
@@ -78,7 +78,7 @@ export function checkForbiddenSimulationOptions(
   if (record.options && typeof record.options === 'object') {
     const opts = record.options as Record<string, unknown>;
     for (const key of FORBIDDEN_SIMULATION_KEYS) {
-      if (key in opts && opts[key] !== undefined) {
+      if (key in opts && opts[key] !== undefined && opts[key] !== false) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Simulation options are not permitted via the public API',

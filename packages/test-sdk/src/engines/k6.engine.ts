@@ -53,14 +53,32 @@ export function calculatePercentile(sortedValues: number[], percentile: number):
  */
 export function parseK6Summary(raw: unknown): K6SummaryMetrics {
   const root = (raw || {}) as {
-    metrics?: Record<string, { values?: Record<string, number> }>;
+    metrics?: Record<string, Record<string, unknown>>;
   };
   const metrics = root.metrics || {};
 
-  const durVals = metrics['http_req_duration']?.values || {};
-  const failVals = metrics['http_req_failed']?.values || {};
-  const reqVals = metrics['http_reqs']?.values || {};
-  const iterVals = metrics['iterations']?.values || {};
+  const getMetricVals = (name: string): Record<string, number> => {
+    const m = metrics[name];
+    if (!m) return {};
+    if (typeof m.values === 'object' && m.values !== null) {
+      return m.values as Record<string, number>;
+    }
+    return m as Record<string, number>;
+  };
+
+  const durVals = getMetricVals('http_req_duration');
+  const failVals = getMetricVals('http_req_failed');
+  const reqVals = getMetricVals('http_reqs');
+  const iterVals = getMetricVals('iterations');
+
+  const failedRate =
+    failVals['rate'] ??
+    failVals['value'] ??
+    (typeof failVals['passes'] === 'number' &&
+    typeof failVals['fails'] === 'number' &&
+    failVals['passes'] + failVals['fails'] > 0
+      ? failVals['passes'] / (failVals['passes'] + failVals['fails'])
+      : 0);
 
   return {
     durationAvg: durVals['avg'] ?? 0,
@@ -72,7 +90,7 @@ export function parseK6Summary(raw: unknown): K6SummaryMetrics {
     durationP99: durVals['p(99)'] ?? durVals['p99'] ?? 0,
     reqsTotal: reqVals['count'] ?? 0,
     rps: reqVals['rate'] ?? 0,
-    failedRate: failVals['rate'] ?? 0,
+    failedRate,
     failedCount: failVals['passes'] ?? 0,
     iterations: iterVals['count'] ?? 0,
   };

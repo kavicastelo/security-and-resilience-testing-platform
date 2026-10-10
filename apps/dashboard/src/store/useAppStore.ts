@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import { getStoredApiKey, setStoredApiKey, clearStoredApiKey } from '../api/client.js';
+import {
+  getStoredApiKey,
+  setStoredApiKey,
+  clearStoredApiKey,
+  getStoredAdminKey,
+  setStoredAdminKey,
+  clearStoredAdminKey,
+} from '../api/client.js';
 
 export interface ToastMessage {
   id: string;
@@ -19,6 +26,10 @@ export interface AppState {
   apiKey: string;
   setApiKey: (key: string, persist?: boolean) => void;
   clearApiKey: () => void;
+  adminKey: string;
+  setAdminKey: (key: string, persist?: boolean) => void;
+  clearAdminKey: () => void;
+  setCredentials: (apiKey: string, adminKey?: string, persist?: boolean) => void;
   toast: ToastMessage | null;
   showToast: (message: string, type?: ToastMessage['type']) => void;
   hideToast: () => void;
@@ -43,9 +54,41 @@ export const useAppStore = create<AppState>((set) => ({
   },
   clearApiKey: () => {
     clearStoredApiKey();
-    set({ apiKey: '' });
+    set({ apiKey: '', adminKey: '' });
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('security-lab:auth-changed', { detail: { apiKey: '' } }));
+      window.dispatchEvent(new CustomEvent('security-lab:auth-changed', { detail: { apiKey: '', adminKey: '' } }));
+    }
+  },
+  adminKey: getStoredAdminKey(),
+  setAdminKey: (key: string, persist = true) => {
+    setStoredAdminKey(key, persist);
+    set({ adminKey: key.trim() });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('security-lab:auth-changed', { detail: { adminKey: key.trim() } }));
+    }
+  },
+  clearAdminKey: () => {
+    clearStoredAdminKey();
+    set({ adminKey: '' });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('security-lab:auth-changed', { detail: { adminKey: '' } }));
+    }
+  },
+  setCredentials: (apiKey: string, adminKey?: string, persist = true) => {
+    setStoredApiKey(apiKey, persist);
+    if (adminKey !== undefined && adminKey.trim().length > 0) {
+      setStoredAdminKey(adminKey, persist);
+    } else {
+      clearStoredAdminKey();
+    }
+    const resolvedAdmin = adminKey ? adminKey.trim() : apiKey.trim();
+    set({ apiKey: apiKey.trim(), adminKey: resolvedAdmin, isAuthModalOpen: false });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('security-lab:auth-changed', {
+          detail: { apiKey: apiKey.trim(), adminKey: resolvedAdmin },
+        }),
+      );
     }
   },
 

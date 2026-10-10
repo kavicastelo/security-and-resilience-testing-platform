@@ -1,5 +1,8 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { eq } from 'drizzle-orm';
 import { CreateTestRunInputSchema, ExecuteTestRunInputSchema } from '@security-lab/domain';
+import { getDatabase } from '../services/db.js';
+import { testExecutions } from '../services/db/schema.js';
 import { testRunsService } from '../services/test-runs.service.js';
 import { ExecuteRunOptions } from '../services/runner.service.js';
 import { executionManager } from '../services/execution-manager.js';
@@ -108,7 +111,43 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     });
   });
 
-  // 3b. Real-Time Execution SSE Stream
+  // 3b. Get TestRun Executions
+  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/executions', async (request, reply) => {
+    const tenantId = extractTenantScope(request);
+    const run = await testRunsService.getTestRunById(request.params.id, tenantId);
+    if (!run) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'TESTRUN_NOT_FOUND',
+          message: `TestRun with ID "${request.params.id}" not found`,
+        },
+      });
+    }
+
+    const { db } = getDatabase();
+    const rows = await db
+      .select()
+      .from(testExecutions)
+      .where(eq(testExecutions.testRunId, request.params.id))
+      .orderBy(testExecutions.startedAt);
+
+    return reply.send({
+      success: true,
+      data: rows.map((e) => ({
+        id: e.id,
+        engineId: e.engineId,
+        executionClass: e.executionClass,
+        status: e.status,
+        durationMs: e.durationMs,
+        errorMessage: e.errorMessage,
+        startedAt: e.startedAt,
+        completedAt: e.completedAt,
+      })),
+    });
+  });
+
+  // 3c. Real-Time Execution SSE Stream
   fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/stream', {
     config: {
       rateLimit: false,

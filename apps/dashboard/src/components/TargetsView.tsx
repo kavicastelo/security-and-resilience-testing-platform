@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Pagination } from './Pagination.js';
 import { useAppStore } from '../store/useAppStore.js';
+import { authFetch } from '../api/client.js';
 
 interface TargetScope {
   allowedHosts: string[];
@@ -60,7 +61,7 @@ export const TargetsView: React.FC = () => {
   const { data: targets = [], isLoading } = useQuery<Target[]>({
     queryKey: ['targets'],
     queryFn: async () => {
-      const res = await fetch(`${apiUrl}/api/v1/targets`);
+      const res = await authFetch(`${apiUrl}/api/v1/targets`);
       if (!res.ok) throw new Error('Failed to fetch targets');
       const json = await res.json();
       return json.data || [];
@@ -87,6 +88,8 @@ export const TargetsView: React.FC = () => {
   const [newTargetPorts, setNewTargetPorts] = useState('80, 443');
   const [activeScanningOpt, setActiveScanningOpt] = useState(false);
   const [loadTestingOpt, setLoadTestingOpt] = useState(false);
+  const [newMaxRps, setNewMaxRps] = useState(100);
+  const [newMaxConcurrency, setNewMaxConcurrency] = useState(50);
   const [creationError, setCreationError] = useState<string | null>(null);
 
   // Edit target modal state
@@ -123,7 +126,7 @@ export const TargetsView: React.FC = () => {
   const validateMutation = useMutation({
     mutationFn: async () => {
       if (!selectedTargetId) throw new Error('Select a target');
-      const res = await fetch(`${apiUrl}/api/v1/targets/${selectedTargetId}/validate-scope`, {
+      const res = await authFetch(`${apiUrl}/api/v1/targets/${selectedTargetId}/validate-scope`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -154,12 +157,12 @@ export const TargetsView: React.FC = () => {
     mutationFn: async () => {
       setCreationError(null);
       // Fetch or create default project first
-      const projRes = await fetch(`${apiUrl}/api/v1/projects`);
+      const projRes = await authFetch(`${apiUrl}/api/v1/projects`);
       const projJson = await projRes.json();
       let projectId = projJson.data?.[0]?.id;
 
       if (!projectId) {
-        const createProj = await fetch(`${apiUrl}/api/v1/projects`, {
+        const createProj = await authFetch(`${apiUrl}/api/v1/projects`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: 'Default Enterprise Project' }),
@@ -173,14 +176,38 @@ export const TargetsView: React.FC = () => {
         .map((h) => h.trim())
         .filter(Boolean);
 
+      if (hosts.length === 0 && newTargetUrl) {
+        try {
+          const parsedHost = new URL(newTargetUrl).hostname;
+          if (parsedHost) hosts.push(parsedHost);
+        } catch {
+          // ignore
+        }
+      }
+
       const parsedPorts = newTargetPorts
         .split(',')
         .map((p) => parseInt(p.trim(), 10))
         .filter((p) => !isNaN(p) && p > 0 && p <= 65535);
 
+      if (parsedPorts.length === 0 && newTargetUrl) {
+        try {
+          const parsed = new URL(newTargetUrl);
+          if (parsed.port) {
+            parsedPorts.push(parseInt(parsed.port, 10));
+          } else if (parsed.protocol === 'https:') {
+            parsedPorts.push(443);
+          } else if (parsed.protocol === 'http:') {
+            parsedPorts.push(80);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       const ports = parsedPorts.length > 0 ? parsedPorts : [80, 443];
 
-      const res = await fetch(`${apiUrl}/api/v1/projects/${projectId}/targets`, {
+      const res = await authFetch(`${apiUrl}/api/v1/projects/${projectId}/targets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -192,6 +219,11 @@ export const TargetsView: React.FC = () => {
             activeScanning: activeScanningOpt,
             loadTesting: loadTestingOpt,
             chaosTesting: false,
+          },
+          limits: {
+            maxRps: newMaxRps,
+            maxConcurrency: newMaxConcurrency,
+            maxDuration: '10m',
           },
         }),
       });
@@ -226,14 +258,38 @@ export const TargetsView: React.FC = () => {
         .map((h) => h.trim())
         .filter(Boolean);
 
+      if (hosts.length === 0 && editTargetUrl) {
+        try {
+          const parsedHost = new URL(editTargetUrl).hostname;
+          if (parsedHost) hosts.push(parsedHost);
+        } catch {
+          // ignore
+        }
+      }
+
       const parsedPorts = editTargetPorts
         .split(',')
         .map((p) => parseInt(p.trim(), 10))
         .filter((p) => !isNaN(p) && p > 0 && p <= 65535);
 
+      if (parsedPorts.length === 0 && editTargetUrl) {
+        try {
+          const parsed = new URL(editTargetUrl);
+          if (parsed.port) {
+            parsedPorts.push(parseInt(parsed.port, 10));
+          } else if (parsed.protocol === 'https:') {
+            parsedPorts.push(443);
+          } else if (parsed.protocol === 'http:') {
+            parsedPorts.push(80);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       const ports = parsedPorts.length > 0 ? parsedPorts : [80, 443];
 
-      const res = await fetch(`${apiUrl}/api/v1/targets/${editingTarget.id}`, {
+      const res = await authFetch(`${apiUrl}/api/v1/targets/${editingTarget.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -275,7 +331,7 @@ export const TargetsView: React.FC = () => {
   // Target delete mutation
   const deleteTargetMutation = useMutation({
     mutationFn: async (targetId: string) => {
-      const res = await fetch(`${apiUrl}/api/v1/targets/${targetId}`, {
+      const res = await authFetch(`${apiUrl}/api/v1/targets/${targetId}`, {
         method: 'DELETE',
       });
       const json = await res.json();
@@ -402,6 +458,28 @@ export const TargetsView: React.FC = () => {
                 className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
+            <div>
+              <label className="block text-muted-foreground mb-1">Max RPS Limit</label>
+              <input
+                type="number"
+                min={1}
+                max={5000}
+                value={newMaxRps}
+                onChange={(e) => setNewMaxRps(parseInt(e.target.value, 10) || 50)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div>
+              <label className="block text-muted-foreground mb-1">Max Concurrency (VUs)</label>
+              <input
+                type="number"
+                min={1}
+                max={1000}
+                value={newMaxConcurrency}
+                onChange={(e) => setNewMaxConcurrency(parseInt(e.target.value, 10) || 20)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
           </div>
 
           <div className="flex items-center space-x-6 pt-2 text-xs">
@@ -516,11 +594,22 @@ export const TargetsView: React.FC = () => {
               />
             </div>
             <div>
-              <label className="block text-muted-foreground mb-1">Max Concurrency</label>
+              <label className="block text-muted-foreground mb-1">Max RPS (Rate Limit)</label>
               <input
                 type="number"
                 min={1}
-                max={200}
+                max={5000}
+                value={editMaxRps}
+                onChange={(e) => setEditMaxRps(parseInt(e.target.value, 10) || 50)}
+                className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-muted-foreground mb-1">Max Concurrency (Allowed k6 VUs)</label>
+              <input
+                type="number"
+                min={1}
+                max={1000}
                 value={editMaxConcurrency}
                 onChange={(e) => setEditMaxConcurrency(parseInt(e.target.value, 10) || 10)}
                 className="w-full px-3 py-2 rounded-md bg-accent border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -708,11 +797,13 @@ export const TargetsView: React.FC = () => {
                     </div>
                     <div>
                       <span className="text-[11px]">Max RPS: </span>
-                      <span className="font-mono text-foreground">{target.scope.limits?.maxRps}</span>
+                      <span className="font-mono text-foreground">{target.scope.limits?.maxRps ?? 100}</span>
                     </div>
                     <div>
                       <span className="text-[11px]">Max Concurrency: </span>
-                      <span className="font-mono text-foreground">{target.scope.limits?.maxConcurrency}</span>
+                      <span className="font-mono text-foreground font-semibold text-amber-400">
+                        {target.scope.limits?.maxConcurrency ?? 20} VUs
+                      </span>
                     </div>
                   </div>
                 </div>
