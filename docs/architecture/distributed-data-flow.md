@@ -1,9 +1,8 @@
-# Phase 16: Distributed Execution End-to-End Data Flow
+# Distributed Execution End-to-End Data Flow
 
 ```text
-DOCUMENT: docs/architecture/phase-16-data-flow.md
+DOCUMENT: docs/architecture/distributed-data-flow.md
 STATUS: RATIFIED SPECIFICATION
-PHASE: Phase 16 — Distributed Agent Trust Boundary & Secure Execution Plane
 REVISION: 1.0.0
 ```
 

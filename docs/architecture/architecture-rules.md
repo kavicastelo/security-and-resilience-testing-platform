@@ -7,7 +7,7 @@ STATUS: RATIFIED SPECIFICATION
 REVISION: 2.0.0
 ```
 
-Every AI agent and software engineer working on this repository must strictly obey the following **25 architectural rules**:
+Every contributor and security engineer working on this platform must strictly obey the following **25 architectural rules**:
 
 ---
 

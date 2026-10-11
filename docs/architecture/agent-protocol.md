@@ -1,9 +1,8 @@
-# Phase 16: Agent-to-Controller Communication Protocol Specification
+# Agent-to-Controller Communication Protocol Specification
 
 ```text
-DOCUMENT: docs/architecture/phase-16-agent-protocol.md
+DOCUMENT: docs/architecture/agent-protocol.md
 STATUS: RATIFIED SPECIFICATION
-PHASE: Phase 16 — Distributed Agent Trust Boundary & Secure Execution Plane
 PROTOCOL VERSION: 1.0.0
 COMPATIBLE CONTROLLER VERSIONS: >= 0.2.0
 ```
@@ -29,7 +28,7 @@ The Security Lab Agent Protocol is a resilient, outbound-only, REST/JSON and Ser
 - `X-Agent-Version`: Semantic version of agent daemon (e.g. `0.2.0`).
 - `X-Controller-Version`: Semantic version of controller (e.g. `0.2.0`).
 
-### Active Protocol Constants (Phase 16.8)
+### Active Protocol Constants
 - `CURRENT_PROTOCOL_VERSION`: `'1.0.0'`
 - `MIN_SUPPORTED_PROTOCOL_VERSION`: `'1.0.0'`
 - `CONTROLLER_VERSION`: `'0.2.0'`
@@ -53,7 +52,6 @@ AND (required_tags <@ ${tagsJson}::jsonb OR required_tags = '[]'::jsonb)
 - An agent without `engine-zap` will never be leased a job requiring ZAP scanning.
 - An agent in `vpc-dev` will never be leased a job targeted strictly to `vpc-prod`.
 - Jobs with empty requirement arrays remain 100% backward-compatible and claimable by any agent in the tenant.
-
 
 ---
 
@@ -195,7 +193,6 @@ AND (required_tags <@ ${tagsJson}::jsonb OR required_tags = '[]'::jsonb)
   }
 }
 ```
-*Note on Cancellation*: If a job was cancelled by a user in the UI, `cancelledJobIds` includes `["7a94f6c1-..."]`. The agent daemon immediately aborts the corresponding worker's `AbortController`.
 
 ---
 

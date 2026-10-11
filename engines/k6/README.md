@@ -23,5 +23,6 @@ Heavy worker runner executing Grafana k6 performance scenarios to evaluate appli
 
 ### Implementation Status:
 * **Status**: `VERIFIED`
-* **Verified Phase**: [Phase 05 — Real Performance & Resilience Engine (Grafana k6)](../../prompts/phase-05-resilience-k6-runner.md)
-* **Behavior**: In-process `fetch()` loop replaced with dynamic k6 ES-module script generation and real summary JSON export transport via mounted scratch volumes.
+* **Architecture Reference**: [Test Engine Architecture](../../docs/architecture/test-engine-architecture.md)
+* **Verification Suite**: `tests/integration/k6-resilience.test.ts`
+* **Behavior**: Dynamic k6 ES-module script generation and real summary JSON export transport via mounted scratch volumes.

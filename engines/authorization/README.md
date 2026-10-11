@@ -21,7 +21,7 @@ In-process native engine for automated, contract-driven testing of Broken Object
 ### Implementation Status:
 * **Status**: `VERIFIED`
 * **Current Behavior**: Fully implemented and registered in `EngineRegistry`. Executes cross-identity test permutations, evaluates owner baseline vs. non-owner attack responses, and emits high-fidelity findings with forensic evidence and reproducible curl commands.
-* **Verified Phase**: [Phase 08 — Authorization & BOLA/IDOR Testing Framework](../../prompts/phase-08-authorization-bola-testing-framework.md)
+* **Verification Suite**: `tests/integration/authorization-engine.test.ts`
 
 ---
 

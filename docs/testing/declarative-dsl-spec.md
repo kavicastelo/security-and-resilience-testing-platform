@@ -1,10 +1,18 @@
-# Declarative Test DSL v2 — Specification & Architecture Guide
+# Declarative Test DSL — Specification & Architecture Guide
+
+```text
+DOCUMENT: docs/testing/declarative-dsl-spec.md
+STATUS: RATIFIED SPECIFICATION
+REVISION: 2.0.0
+```
+
+---
 
 ## 1. Overview
 
-The **Security Lab Declarative Test DSL v2** is an expressive, declarative test definition format designed for API security auditing, protocol validation, and multi-step stateful security workflows.
+The **Security Lab Declarative Test DSL** is an expressive, declarative test definition format designed for API security auditing, protocol validation, and multi-step stateful security workflows.
 
-DSL v2 expands beyond isolated single-request checks by adding:
+The Declarative Test DSL supports:
 1. **Request Payloads**: Support for JSON objects, URL-encoded forms, and raw text.
 2. **Variable Extraction & Chaining**: Extraction of response fields (tokens, IDs, cookies) into a workflow context for dynamic use in subsequent test steps.
 3. **Path & Query Templating**: Dynamic substitution of path parameters (`/items/{itemId}`) and query string parameters.
@@ -123,5 +131,5 @@ flowchart TD
    All dynamically interpolated URLs are re-checked against `TargetScope.allowedHosts` and `TargetScope.allowedPorts` before dispatching. Even if an attacker attempts an SSRF escape through variable interpolation (`${untrustedDomain}`), the request is blocked.
 2. **Prototype Pollution Defense**:
    Variable lookup and object interpolation explicitly forbid sensitive keys (`__proto__`, `constructor`, `prototype`).
-3. **Backward Compatibility**:
-   DSL v1 test specifications without bodies, extractions, or pathParams continue to validate and execute with identical semantics.
+3. **Execution Safety**:
+   Step timeouts, non-destructive assertions, and automatic teardown prevent resource leakage.

@@ -1,9 +1,8 @@
-# Phase 16: Distributed Agent Security Model & Trust Architecture
+# Platform Security Model & Trust Architecture
 
 ```text
-DOCUMENT: docs/architecture/phase-16-agent-security-model.md
+DOCUMENT: docs/security/security-model.md
 STATUS: RATIFIED SPECIFICATION
-PHASE: Phase 16 — Distributed Agent Trust Boundary & Secure Execution Plane
 REVISION: 1.0.0
 ```
 
@@ -28,7 +27,7 @@ The core architectural invariant of Security Lab is:
 The platform spans 11 discrete architectural actors across multiple network and process boundaries. Every boundary is governed by strict security controls:
 
 | Boundary | Interacting Actors | Authentication | Authorization | Integrity | Confidentiality | Replay Protection | Tenant Isolation | Auditability | Failure Behavior |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **TB-01** | User / Dashboard / CLI ➔ Controller | Session Cookie / API Token | RBAC (Admin, Tester, Viewer) | TLS 1.3 / HTTPS | TLS 1.3 | Nonce / CSRF Token | Scoped to user's assigned Tenant | Auth log + API access log | 401 Unauthorized / 403 Forbidden |
 | **TB-02** | Controller ➔ Database (PostgreSQL) | DB User Password / IAM Auth | Connection Role (least privilege) | TLS within DB cluster | Encrypted at rest + TLS in transit | DB Transaction MVCC | Foreign key constraint on `tenant_id` + Row-level filtering | PostgreSQL transaction log | Fail-closed: 503 DB Unavailable |
 | **TB-03** | Agent ➔ Controller (Enrollment) | Pre-shared Tenant Enrollment Key (`tek_...`) | Verified against active Tenant ID in DB | SHA-256 HMAC of registration payload | TLS 1.3 | Enrollment Nonce + Expiry timestamp | Agent permanently bound to Tenant UUID | `agent.enrolled` audit event | 401 Invalid or Expired Enrollment Key |
@@ -46,7 +45,7 @@ The platform spans 11 discrete architectural actors across multiple network and 
 ## 3. Agent Identity & Credential Lifecycle Architecture
 
 ### 3.1 Enrollment Keys vs. Agent Tokens
-To eliminate the critical vulnerability where anonymous callers register agents under arbitrary tenants, authentication is decoupled into a two-tiered key hierarchy:
+To eliminate the vulnerability where anonymous callers register agents under arbitrary tenants, authentication is decoupled into a two-tiered key hierarchy:
 
 ```text
 [ Tenant Admin in Dashboard/CLI ]
@@ -79,7 +78,7 @@ To eliminate the critical vulnerability where anonymous callers register agents 
 
 ---
 
-## 4. Tenant Isolation Architecture (Enforced in Phase 16.2)
+## 4. Tenant Isolation Architecture
 
 ### 4.1 Rejection of Client-Controlled Tenant Headers (Rule 5)
 In the Security Lab multi-tenant execution architecture, the HTTP request header `x-tenant-id` is **never** used as an authorization authority for agent operations:
@@ -136,9 +135,9 @@ All job state transition endpoints (`POST /api/v1/agents/jobs/:jobId/progress`, 
 
 ### 4.3 Automated Verification
 These isolation invariants are provably verified by:
-- `tests/security/tenant-isolation.test.ts` (11 adversarial multi-tenant integration tests).
-- `tests/security/distributed-agent-boundaries.test.ts` (6 boundary and regression tests).
-- `tests/integration/agent-orchestration.test.ts` (8 multi-tenant SaaS integration tests).
+- `tests/security/tenant-isolation.test.ts` (multi-tenant integration tests).
+- `tests/security/distributed-agent-boundaries.test.ts` (boundary and regression tests).
+- `tests/integration/agent-orchestration.test.ts` (multi-tenant SaaS integration tests).
 
 ---
 
@@ -162,7 +161,8 @@ When submitting the completion report:
    ```
 3. The controller recalculates `JobDispatchSecret` and verifies `ResultSignature`.
 4. If the signature matches, the controller verifies that `job.status === 'running' || job.status === 'dispatched'`, and that the caller holds the active unexpired lease.
-### 5.2 Target Scope Attestation & Distributed SSRF Defense (Enforced in Phase 16.5)
+
+### 5.2 Target Scope Attestation & Distributed SSRF Defense
 
 To prevent scope expansion or redirection where a compromised or tampered job payload directs an agent in a customer VPC to scan internal networks or cloud metadata:
 
@@ -201,7 +201,7 @@ To prevent scope expansion or redirection where a compromised or tampered job pa
 
 ### 5.3 Automated Scope Security Verification
 The cryptographic scope attestation and SSRF protections are provably verified by:
-- `tests/security/scope-propagation-ssrf.test.ts` (12 adversarial scope tampering and SSRF tests).
+- `tests/security/scope-propagation-ssrf.test.ts` (adversarial scope tampering and SSRF tests).
 - `tests/integration/agent-orchestration.test.ts` (end-to-end remote runner execution).
 - `tests/security/result-integrity-idempotency.test.ts` (result attestation & worker signing).
 
@@ -234,7 +234,7 @@ Mounting `/var/run/docker.sock` into an agent container grants effective root on
 ```
 
 ### 6.3 Security Policy for Agent Container Runners
-For the ratified architecture (verified in Phase 16.7):
+For the ratified architecture:
 1. **Zero Socket Exposure**: The agent deployment manifest (`infrastructure/k8s/agent.yaml`) contains zero `/var/run/docker.sock` volume mounts. Pods run unprivileged with `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, and `capabilities.drop: ['ALL']`.
 2. **Execution Profiles**:
    - **Profile 1: In-Cluster Native Scanning (Kubernetes)**: In-pod execution restricted to Class A native in-process engines (`native-http`, `auth-audit`, `declarative-dsl`).
@@ -244,9 +244,6 @@ For the ratified architecture (verified in Phase 16.7):
    - **Network Isolation**: `--network=host`, `--net=host`, and `container:...` modes are strictly rejected with `ContainerSecurityError`.
    - **Volume Traversal Prevention**: Host socket paths (`/var/run/docker.sock`, `/run`, `docker_engine`), host roots (`/`), system directories (`/etc`, `/proc`, `/sys`), and relative traversal paths (`..`) are blocked. Volume mounts are strictly confined to ephemeral subdirectories within `os.tmpdir()`.
    - **CIS Benchmark Flags**: Mandatory `--security-opt=no-new-privileges:true`, `--cap-drop=ALL`, `--read-only`, `--user=10001:10001`, `--pids-limit=100`, and `--tmpfs=/tmp:rw,noexec,nosuid,size=65536k`.
-4. **Automated Verification**:
-   - `tests/security/platform-security.test.ts` (Section 7: AST audit of `infrastructure/k8s/agent.yaml`, digest pinning, network rejection, volume traversal).
-   - `tests/security/distributed-agent-boundaries.test.ts` (Test 6: SEC-06 verified zero socket exposure).
 
 ---
 

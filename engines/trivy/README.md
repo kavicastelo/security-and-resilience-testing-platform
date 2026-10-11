@@ -22,5 +22,6 @@ Isolated containerized runner executing Aqua Security Trivy for container image,
 
 ### Implementation Status:
 * **Status**: `VERIFIED`
-* **Verified Phase**: [Phase 04 — Container Scanner Runners (ZAP & Trivy)](../../prompts/phase-04-container-scanner-runners-zap-trivy.md)
+* **Architecture Reference**: [Test Engine Architecture](../../docs/architecture/test-engine-architecture.md)
+* **Verification Suite**: `tests/integration/docker-scanners.test.ts`
 * **Behavior**: Full volume mount transport and target resolution implemented. Report files are read from mounted scratch volumes, normalized, and all scratch directories are destroyed in `finally` blocks.
