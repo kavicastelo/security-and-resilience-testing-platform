@@ -152,8 +152,8 @@ Clone the repository and install workspace dependencies:
 
 ```bash
 # Clone the repository
-git clone https://github.com/security-lab/security-lab.git
-cd security-lab
+git clone https://github.com/kavicastelo/security-and-resilience-testing-platform.git
+cd security-and-resilience-testing-platform
 
 # Install monorepo dependencies
 pnpm install
