@@ -21,5 +21,6 @@ Isolated containerized test runner integrating OWASP Zed Attack Proxy (ZAP) for 
 
 ### Implementation Status:
 * **Status**: `VERIFIED`
-* **Verified Phase**: [Phase 04 — Container Scanner Runners (ZAP & Trivy)](../../prompts/phase-04-container-scanner-runners-zap-trivy.md)
+* **Architecture Reference**: [Test Engine Architecture](../../docs/architecture/test-engine-architecture.md)
+* **Verification Suite**: `tests/integration/docker-scanners.test.ts`
 * **Behavior**: Full volume mount transport implemented. Ephemeral host scratch directory is mounted to `/zap/wrk:rw`, `report.json` is parsed from the host filesystem, alerts are normalized into platform findings, and all scratch files are destroyed on completion.

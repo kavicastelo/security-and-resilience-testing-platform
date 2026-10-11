@@ -1,7 +1,13 @@
-# Policy Engine v2 & Release Governance Specification
+# Policy Engine & Release Governance Specification
+
+```text
+DOCUMENT: docs/architecture/policy-engine.md
+STATUS: RATIFIED SPECIFICATION
+REVISION: 1.0.0
+```
 
 ## 1. Overview
-The **Security Lab Policy Engine (v2)** provides deterministic, declarative policy-as-code governance for continuous integration and continuous delivery (CI/CD) pipelines. It transforms raw vulnerability findings, load test metrics, and test execution metadata into an authoritative, cryptographically sealed release decision (`passed`, `warning`, or `failed`).
+The **Security Lab Policy Engine** provides deterministic, declarative policy-as-code governance for continuous integration and continuous delivery (CI/CD) pipelines. It transforms raw vulnerability findings, load test metrics, and test execution metadata into an authoritative, cryptographically sealed release decision (`passed`, `warning`, or `failed`).
 
 ---
 
@@ -85,7 +91,7 @@ rules:
 
 ## 3. Waiver Lifecycle & Expiration Enforcement
 
-Temporary security exceptions frequently become permanent security debt. Policy Engine v2 strictly enforces temporal boundaries on all finding waivers:
+Temporary security exceptions frequently become permanent security debt. The Policy Engine strictly enforces temporal boundaries on all finding waivers:
 
 1. **Waiver Matching**:
    Each finding's unique SHA-256 fingerprint is checked against `policy.waivers`:
@@ -105,7 +111,7 @@ Temporary security exceptions frequently become permanent security debt. Policy 
 
 ## 4. Cryptographic Release Sealing
 
-To satisfy **Rule 15** (immutable audit trails), each evaluated release is cryptographically sealed with a SHA-256 digest:
+To guarantee immutable audit trails, each evaluated release is cryptographically sealed with a SHA-256 digest:
 
 $$\text{evaluatorHash} = \text{SHA-256}\Big(\text{policyId} : \text{testRunId} : \text{decision} : \text{timestamp.toISOString()}\Big)$$
 

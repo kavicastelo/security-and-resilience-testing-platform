@@ -1,10 +1,9 @@
 # SaaS Control Plane & Distributed Agent Architecture
 
 ```text
-STATUS: ACTIVE
-PHASE: Phase 15 — Distributed Agent Architecture & Hybrid Cloud / SaaS Foundation
+DOCUMENT: docs/architecture/saas-and-agent-architecture.md
+STATUS: RATIFIED SPECIFICATION
 REVISION: 1.0.0
-AUTHORS: Principal Cloud Infrastructure Architect & SaaS Systems Specialist
 ```
 
 ---

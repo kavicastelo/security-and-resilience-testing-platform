@@ -2,7 +2,7 @@
 
 The Security Lab CLI (`@security-lab/cli`, executable as `security-lab`) provides developer-first security and resilience quality gates for modern engineering teams.
 
-Starting in **Phase 13**, the CLI features a **Standalone Local Execution Runner** (`--local`), enabling engineers and CI/CD pipelines to run fast, in-process Class A security audits directly on local branches without starting PostgreSQL or the Fastify controller daemon.
+The CLI features a **Standalone Local Execution Runner** (`--local`), enabling engineers and CI/CD pipelines to run fast, in-process Class A security audits directly on local branches without starting PostgreSQL or the Fastify controller daemon.
 
 ---
 

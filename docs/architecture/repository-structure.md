@@ -4,9 +4,10 @@
 security-lab/
 │
 ├── apps/
-│   ├── dashboard/          # React / Vite / Tailwind / shadcn frontend UI
+│   ├── dashboard/          # React / Vite / Tailwind UI dashboard
 │   ├── controller/         # Fastify orchestration controller application
-│   └── cli/                # Commander-based CLI tool
+│   ├── cli/                # Commander-based CLI tool
+│   └── agent/              # Distributed execution worker daemon
 │
 ├── packages/
 │   ├── domain/             # Framework-agnostic core domain models & Zod schemas

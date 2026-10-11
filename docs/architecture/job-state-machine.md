@@ -1,9 +1,8 @@
-# Phase 16: Distributed Job State Machine & Lease Management
+# Distributed Job State Machine & Lease Management
 
 ```text
-DOCUMENT: docs/architecture/phase-16-job-state-machine.md
+DOCUMENT: docs/architecture/job-state-machine.md
 STATUS: RATIFIED SPECIFICATION
-PHASE: Phase 16 — Distributed Agent Trust Boundary & Secure Execution Plane
 REVISION: 1.0.0
 ```
 
@@ -94,12 +93,12 @@ WITH claimable AS (
 )
 UPDATE agent_jobs
 SET status = 'leased',
-    agent_id = $5,
-    lease_id = gen_random_uuid(),
-    lease_expires_at = NOW() + INTERVAL '5 minutes',
-    dispatched_at = NOW(),
-    attempts = attempts + 1,
-    updated_at = NOW()
+     agent_id = $5,
+     lease_id = gen_random_uuid(),
+     lease_expires_at = NOW() + INTERVAL '5 minutes',
+     dispatched_at = NOW(),
+     attempts = attempts + 1,
+     updated_at = NOW()
 FROM claimable
 WHERE agent_jobs.id = claimable.id
 RETURNING agent_jobs.*;

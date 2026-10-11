@@ -20,7 +20,7 @@ In-process native engine for automated, non-invasive security auditing of authen
 ### Implementation Status:
 * **Status**: `VERIFIED`
 * **Current Behavior**: Fully implemented and registered in `EngineRegistry`. Supports token tampering mutations, comprehensive cookie attribute audits, session fixation verification, and login rate limiting evaluation.
-* **Verified Phase**: [Phase 07 — Authentication Testing Framework](../../prompts/phase-07-authentication-testing-framework.md)
+* **Verification Suite**: `tests/integration/authentication-engine.test.ts`
 
 ---
 

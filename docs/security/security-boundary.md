@@ -1,5 +1,11 @@
 # Security Boundaries & Defensive Controls
 
+```text
+DOCUMENT: docs/security/security-boundary.md
+STATUS: RATIFIED SPECIFICATION
+REVISION: 1.0.0
+```
+
 ## 1. Operating Principle
 
 Security Lab is designed exclusively for authorized testing of enterprise systems owned or operated under explicit legal authority. To enforce this principle, the architecture implements a multi-layer defense-in-depth model that places deterministic security gates between user input, orchestration pipelines, and raw network dispatch.
@@ -124,4 +130,3 @@ Arbitrary Docker images (e.g. `ubuntu`, `alpine`, `node`, `attacker-registry.com
 * Silent mock fallbacks have been completely removed from production execution paths.
 * When Docker is uninstalled, daemon is unreachable, or a container exits with an execution failure, `DockerRunner` fails fast and returns an explicit, descriptive error.
 * Simulated / mock execution is strictly opt-in and will only execute if explicitly requested via `options.simulated === true` or configured in the environment via `SECURITY_LAB_MOCK_CONTAINERS === 'true'`.
-
