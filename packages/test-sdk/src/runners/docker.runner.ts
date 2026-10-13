@@ -272,6 +272,18 @@ export class DockerRunner implements IDockerRunner {
       proc.on('close', (code) => {
         if (timeout) clearTimeout(timeout);
         if (timedOut || aborted) return;
+        if (
+          code !== 0 &&
+          (stderr.includes('failed to connect to the docker API') ||
+            stderr.includes('Is the docker daemon running') ||
+            stderr.includes('error during connect'))
+        ) {
+          return reject(
+            new DockerExecutionError(
+              `Docker execution failed for image ${options.image}: ${stderr.trim()}. Ensure Docker daemon is running.`,
+            ),
+          );
+        }
         resolve({
           exitCode: code ?? 0,
           stdout,

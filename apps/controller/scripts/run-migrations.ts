@@ -25,7 +25,7 @@ async function runMigrations() {
 
     const migrationsDir = path.resolve(__dirname, '../../../infrastructure/postgres/migrations');
     const files = fs.readdirSync(migrationsDir)
-      .filter((f) => f.endsWith('.sql'))
+      .filter((f) => f.endsWith('.sql') && !f.endsWith('.down.sql'))
       .sort();
 
     const applied = await sql<{ version: string }[]>`SELECT version FROM _schema_migrations`;

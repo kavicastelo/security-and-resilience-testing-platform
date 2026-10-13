@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { CreateTargetInputSchema } from '@security-lab/domain';
 import { targetsService } from '../services/targets.service.js';
 import { extractTenantScope } from '../services/tenant-context.js';
+import { requireAdmin, requireEngineer, requireAuditor } from '../plugins/rbac.js';
+
+import { targetVerificationService, VerificationMethodType } from '../services/target-verification.js';
 
 const ValidateScopeRequestSchema = z.object({
   candidateUrl: z.string().url(),
@@ -11,10 +14,15 @@ const ValidateScopeRequestSchema = z.object({
   requestedConcurrency: z.number().int().positive().optional(),
 });
 
+const VerifyTargetRequestSchema = z.object({
+  method: z.enum(['DNS_TXT', 'HTTP_WELL_KNOWN', 'AUTO']).default('AUTO').optional(),
+});
+
 export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. Create Target in Project
   fastify.post<{ Params: { projectId: string } }>(
     '/api/v1/projects/:projectId/targets',
+    { preHandler: [requireEngineer] },
     async (request, reply) => {
       const payload = {
         ...(request.body as object),
@@ -56,6 +64,7 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   // 2. List Targets by Project
   fastify.get<{ Params: { projectId: string } }>(
     '/api/v1/projects/:projectId/targets',
+    { preHandler: [requireAuditor] },
     async (request, reply) => {
       const tenantId = extractTenantScope(request);
       const targetList = await targetsService.listTargetsByProject(request.params.projectId, tenantId);
@@ -67,7 +76,7 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   );
 
   // 3. List All Targets
-  fastify.get('/api/v1/targets', async (request, reply) => {
+  fastify.get('/api/v1/targets', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
     const targetList = await targetsService.listAllTargets(tenantId);
     return reply.send({
@@ -77,7 +86,7 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   });
 
   // 4. Get Target by ID
-  fastify.get<{ Params: { id: string } }>('/api/v1/targets/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/v1/targets/:id', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
     const target = await targetsService.getTargetById(request.params.id, tenantId);
     if (!target) {
@@ -99,6 +108,7 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   // 5. Pre-flight Scope Boundary Validation
   fastify.post<{ Params: { id: string } }>(
     '/api/v1/targets/:id/validate-scope',
+    { preHandler: [requireAuditor] },
     async (request, reply) => {
       const parseResult = ValidateScopeRequestSchema.safeParse(request.body);
       if (!parseResult.success) {
@@ -197,11 +207,11 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     }
   };
 
-  fastify.put<{ Params: { id: string }; Body: unknown }>('/api/v1/targets/:id', handleUpdateTarget);
-  fastify.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/targets/:id', handleUpdateTarget);
+  fastify.put<{ Params: { id: string }; Body: unknown }>('/api/v1/targets/:id', { preHandler: [requireEngineer] }, handleUpdateTarget);
+  fastify.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/targets/:id', { preHandler: [requireEngineer] }, handleUpdateTarget);
 
   // 7. Delete Target
-  fastify.delete<{ Params: { id: string } }>('/api/v1/targets/:id', async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/api/v1/targets/:id', { preHandler: [requireAdmin] }, async (request, reply) => {
     const { id } = request.params;
     const tenantId = extractTenantScope(request);
     const deleted = await targetsService.deleteTarget(id, tenantId);
@@ -220,4 +230,86 @@ export const targetsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       data: { id, deleted: true },
     });
   });
+
+  // 8. Get Ownership Verification Challenge Instructions
+  fastify.get<{ Params: { id: string } }>(
+    '/api/v1/targets/:id/challenge',
+    { preHandler: [requireAuditor] },
+    async (request, reply) => {
+      try {
+        const tenantId = extractTenantScope(request);
+        const instructions = await targetVerificationService.getChallengeInstructions(
+          request.params.id,
+          tenantId,
+        );
+        return reply.send({
+          success: true,
+          data: instructions,
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Target not found';
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'TARGET_NOT_FOUND',
+            message,
+          },
+        });
+      }
+    },
+  );
+
+  // 9. Trigger Ownership Verification Challenge Check
+  fastify.post<{ Params: { id: string }; Body: unknown }>(
+    '/api/v1/targets/:id/verify',
+    { preHandler: [requireEngineer] },
+    async (request, reply) => {
+      const parseResult = VerifyTargetRequestSchema.safeParse(request.body || {});
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid verification options',
+            details: parseResult.error.format(),
+          },
+        });
+      }
+
+      const method = (parseResult.data.method as VerificationMethodType) || 'AUTO';
+      try {
+        const tenantId = extractTenantScope(request);
+        const result = await targetVerificationService.verifyTargetOwnership(
+          request.params.id,
+          method,
+          tenantId,
+        );
+
+        if (!result.verified) {
+          return reply.status(422).send({
+            success: false,
+            error: {
+              code: 'OWNERSHIP_VERIFICATION_FAILED',
+              message: result.message,
+              details: result.details,
+            },
+          });
+        }
+
+        return reply.send({
+          success: true,
+          data: result,
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Target verification failed';
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'TARGET_NOT_FOUND',
+            message,
+          },
+        });
+      }
+    },
+  );
 };

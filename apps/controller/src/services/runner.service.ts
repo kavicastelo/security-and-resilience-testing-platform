@@ -18,6 +18,7 @@ import {
   EngineLifecycleEvent,
   RunLifecycleEvent,
 } from './execution-events.js';
+import { isLocalHost } from './target-verification.js';
 
 import {
   validateUrlAgainstScope,
@@ -161,6 +162,90 @@ export class TestRunnerService extends EventEmitter {
             engineId: 'scope-boundary-gate',
             status: 'failed',
             error: scopeError,
+          },
+        ],
+        findings: [],
+      };
+    }
+
+    // 2.1 Enforce Target Ownership Verification for active scans on external targets
+    let isLocal = false;
+    try {
+      isLocal = isLocalHost(new URL(target.baseUrl).hostname);
+    } catch {
+      isLocal = false;
+    }
+
+    const profile = (testRun.profileId || '').toLowerCase();
+    const isActiveProfile =
+      profile === 'active' ||
+      profile === 'active-scan' ||
+      profile === 'active-scanning' ||
+      profile === 'dast' ||
+      profile === 'fuzzing' ||
+      profile === 'active_scan';
+    const isExplicitActive =
+      (testRun.metadata as Record<string, unknown> | undefined)?.activeScanning === true;
+    const hasActiveEngines =
+      Array.isArray(options?.engineIds) &&
+      options!.engineIds.some((e) => e.includes('zap') || e.includes('active') || e.includes('fuzz'));
+
+    const isActiveRun = isActiveProfile || isExplicitActive || hasActiveEngines;
+
+    if (!isLocal && target.verificationStatus !== 'VERIFIED' && isActiveRun) {
+      const verificationError = `Target unverified: External target "${target.baseUrl}" requires verified ownership before active scanning can run (status: ${target.verificationStatus || 'PENDING'}).`;
+      runLogger.warn(`Execution aborted: ${verificationError}`);
+
+      const [failedExec] = await db
+        .insert(testExecutions)
+        .values({
+          testRunId,
+          engineId: 'target-ownership-gate',
+          executionClass: 'class_a_native',
+          status: 'failed',
+          startedAt: new Date(),
+          completedAt: new Date(),
+          durationMs: 0,
+          errorMessage: verificationError,
+        })
+        .returning();
+
+      const failedSummary: TestRunSummary = {
+        totalTests: 1,
+        passedTests: 0,
+        failedTests: 1,
+        errorTests: 1,
+        findingsCount: { critical: 1, high: 0, medium: 0, low: 0, info: 0 },
+      };
+
+      const updatedRun = await testRunsService.updateTestRunStatus(testRunId, 'failed', failedSummary);
+
+      this.emit('engine', {
+        testRunId,
+        engineId: 'target-ownership-gate',
+        executionId: failedExec ? failedExec.id : crypto.randomUUID(),
+        status: 'failed',
+        durationMs: 0,
+        findingsCount: 0,
+        error: verificationError,
+        timestamp: new Date().toISOString(),
+      } satisfies EngineLifecycleEvent);
+
+      this.emit('run', {
+        testRunId,
+        status: 'failed',
+        summary: failedSummary,
+        timestamp: new Date().toISOString(),
+      } satisfies RunLifecycleEvent);
+
+      return {
+        testRun: updatedRun,
+        executions: [
+          {
+            id: failedExec ? failedExec.id : crypto.randomUUID(),
+            engineId: 'target-ownership-gate',
+            status: 'failed',
+            error: verificationError,
           },
         ],
         findings: [],

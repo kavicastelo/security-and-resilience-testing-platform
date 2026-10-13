@@ -28,14 +28,29 @@ export const tenants = pgTable('tenants', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const workspaces = pgTable('workspaces', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull(),
+  slug: varchar('slug', { length: 100 }).notNull().unique(),
+  description: text('description'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id')
+    .notNull()
+    .references(() => workspaces.id, { onDelete: 'cascade' })
+    .default('00000000-0000-0000-0000-000000000000'),
   tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 100 }).notNull().unique(),
   description: text('description'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  index('idx_projects_workspace_id').on(table.workspaceId),
+]);
 
 export const environments = pgTable(
   'environments',
@@ -67,12 +82,18 @@ export const targets = pgTable(
     name: varchar('name', { length: 100 }).notNull(),
     baseUrl: text('base_url').notNull(),
     scope: jsonb('scope').$type<TargetScope>().notNull(),
+    verificationToken: varchar('verification_token', { length: 64 }),
+    verificationStatus: varchar('verification_status', { length: 32 }).notNull().default('PENDING'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    verificationMethod: varchar('verification_method', { length: 32 }),
+    encryptedAuthData: jsonb('encrypted_auth_data'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index('idx_targets_project_id').on(table.projectId),
     index('idx_targets_tenant_id').on(table.tenantId),
+    index('idx_targets_verification_status').on(table.verificationStatus),
   ],
 );
 
@@ -486,6 +507,7 @@ export const agentAuditEvents = pgTable(
   'agent_audit_events',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id, { onDelete: 'cascade' }),
@@ -503,3 +525,75 @@ export const agentAuditEvents = pgTable(
     index('idx_agent_audit_events_event_type').on(table.eventType),
   ],
 );
+
+export const users = pgTable('users', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  name: varchar('name', { length: 100 }).notNull(),
+  passwordHash: varchar('password_hash', { length: 255 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const workspaceMemberships = pgTable(
+  'workspace_memberships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: varchar('role', { length: 30 }).$type<'ADMIN' | 'ENGINEER' | 'AUDITOR'>().notNull().default('ENGINEER'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_workspace_memberships_workspace_id').on(table.workspaceId),
+    index('idx_workspace_memberships_user_id').on(table.userId),
+  ],
+);
+
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
+    keyPrefix: varchar('key_prefix', { length: 16 }).notNull(),
+    role: varchar('role', { length: 30 }).$type<'ADMIN' | 'ENGINEER' | 'AUDITOR'>().notNull().default('ENGINEER'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_api_keys_workspace_id').on(table.workspaceId),
+    index('idx_api_keys_key_hash').on(table.keyHash),
+  ],
+);
+
+export const auditEvents = pgTable(
+  'audit_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+    actorId: varchar('actor_id', { length: 100 }).notNull(),
+    eventType: varchar('event_type', { length: 100 }).notNull(),
+    details: jsonb('details').notNull().default({}),
+    ipAddress: varchar('ip_address', { length: 45 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_audit_events_workspace_id').on(table.workspaceId),
+    index('idx_audit_events_actor_id').on(table.actorId),
+    index('idx_audit_events_event_type').on(table.eventType),
+  ],
+);
+

@@ -18,6 +18,7 @@ import { contractsRoutes } from '../routes/contracts.js';
 import { tenantsRoutes } from '../routes/tenants.js';
 import { agentsRoutes } from '../routes/agents.js';
 import { managementRoutes } from '../routes/management.js';
+import { workspacesRoutes } from '../routes/workspaces.js';
 import { agentJobReaper } from '../services/agent-dispatcher.service.js';
 import { registerAuthHooks, AuthPluginOptions } from '../plugins/auth.js';
 import { SharedRateLimitStore } from '../services/rate-limit-store.js';
@@ -169,6 +170,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(policiesRoutes);
   app.register(contractsRoutes);
   app.register(tenantsRoutes, { prefix: '/api/v1/tenants' });
+  app.register(workspacesRoutes);
   app.register(agentsRoutes, { prefix: '/api/v1/agents' });
   app.register(managementRoutes, { prefix: '/api/v1/management' });
 

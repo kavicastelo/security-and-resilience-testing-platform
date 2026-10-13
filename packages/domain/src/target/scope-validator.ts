@@ -108,7 +108,7 @@ export function validateUrlAgainstScope(
 
   // 5. Excluded paths protection
   const pathname = parsed.pathname;
-  for (const excludedPath of scope.excludedPaths) {
+  for (const excludedPath of (scope.excludedPaths || [])) {
     const cleanExcluded = excludedPath.trim();
     if (
       cleanExcluded &&

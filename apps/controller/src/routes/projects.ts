@@ -2,10 +2,19 @@ import { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } fro
 import { CreateProjectInputSchema } from '@security-lab/domain';
 import { projectsService } from '../services/projects.service.js';
 import { extractTenantId, extractTenantScope } from '../services/tenant-context.js';
+import { requireAdmin, requireEngineer, requireAuditor } from '../plugins/rbac.js';
 
 export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-  // 1. Create Project
-  fastify.post('/api/v1/projects', async (request, reply) => {
+  const getWorkspaceScope = (req: FastifyRequest): string | undefined => {
+    // ADMIN can access projects across all workspaces unless explicitly constrained by workspaceId header
+    if (req.user?.role === 'ADMIN' && !req.headers['x-workspace-id']) {
+      return undefined;
+    }
+    return req.workspaceId;
+  };
+
+  // 1. Create Project (ADMIN, ENGINEER)
+  fastify.post('/api/v1/projects', { preHandler: [requireEngineer] }, async (request, reply) => {
     const parseResult = CreateProjectInputSchema.safeParse(request.body);
     if (!parseResult.success) {
       return reply.status(400).send({
@@ -20,7 +29,8 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
     try {
       const tenantId = extractTenantId(request);
-      const project = await projectsService.createProject(parseResult.data, tenantId);
+      const workspaceId = request.workspaceId;
+      const project = await projectsService.createProject(parseResult.data, tenantId, workspaceId);
       return reply.status(201).send({
         success: true,
         data: project,
@@ -37,20 +47,22 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
   });
 
-  // 2. List Projects
-  fastify.get('/api/v1/projects', async (request, reply) => {
+  // 2. List Projects (ADMIN, ENGINEER, AUDITOR)
+  fastify.get('/api/v1/projects', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
-    const projectsList = await projectsService.listProjects(tenantId);
+    const workspaceId = getWorkspaceScope(request);
+    const projectsList = await projectsService.listProjects(tenantId, workspaceId);
     return reply.send({
       success: true,
       data: projectsList,
     });
   });
 
-  // 3. Get Project by ID
-  fastify.get<{ Params: { id: string } }>('/api/v1/projects/:id', async (request, reply) => {
+  // 3. Get Project by ID (ADMIN, ENGINEER, AUDITOR)
+  fastify.get<{ Params: { id: string } }>('/api/v1/projects/:id', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
-    const project = await projectsService.getProjectById(request.params.id, tenantId);
+    const workspaceId = getWorkspaceScope(request);
+    const project = await projectsService.getProjectById(request.params.id, tenantId, workspaceId);
     if (!project) {
       return reply.status(404).send({
         success: false,
@@ -67,17 +79,18 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     });
   });
 
-  // 4. Update Project (PUT / PATCH)
+  // 4. Update Project (ADMIN, ENGINEER)
   const handleUpdateProject = async (
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ) => {
     const tenantId = extractTenantScope(request);
+    const workspaceId = getWorkspaceScope(request);
     const { id } = request.params;
     const body = (request.body as { name?: string; description?: string }) || {};
 
     try {
-      const updated = await projectsService.updateProject(id, body, tenantId);
+      const updated = await projectsService.updateProject(id, body, tenantId, workspaceId);
       if (!updated) {
         return reply.status(404).send({
           success: false,
@@ -104,14 +117,15 @@ export const projectsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
   };
 
-  fastify.put<{ Params: { id: string } }>('/api/v1/projects/:id', handleUpdateProject);
-  fastify.patch<{ Params: { id: string } }>('/api/v1/projects/:id', handleUpdateProject);
+  fastify.put<{ Params: { id: string } }>('/api/v1/projects/:id', { preHandler: [requireEngineer] }, handleUpdateProject);
+  fastify.patch<{ Params: { id: string } }>('/api/v1/projects/:id', { preHandler: [requireEngineer] }, handleUpdateProject);
 
-  // 5. Delete Project
-  fastify.delete<{ Params: { id: string } }>('/api/v1/projects/:id', async (request, reply) => {
+  // 5. Delete Project (ADMIN only)
+  fastify.delete<{ Params: { id: string } }>('/api/v1/projects/:id', { preHandler: [requireAdmin] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
+    const workspaceId = getWorkspaceScope(request);
     const { id } = request.params;
-    const deleted = await projectsService.deleteProject(id, tenantId);
+    const deleted = await projectsService.deleteProject(id, tenantId, workspaceId);
     if (!deleted) {
       return reply.status(404).send({
         success: false,

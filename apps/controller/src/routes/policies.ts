@@ -2,10 +2,11 @@ import { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { PolicyWaiver } from '@security-lab/domain';
 import { policiesService, CreatePolicyInput } from '../services/policies.service.js';
 import { extractTenantId, extractTenantScope } from '../services/tenant-context.js';
+import { requireAdmin, requireAuditor } from '../plugins/rbac.js';
 
 export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. List Policies
-  fastify.get('/api/v1/policies', async (request, reply) => {
+  fastify.get('/api/v1/policies', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
     const list = await policiesService.listPolicies(tenantId);
     return reply.send({
@@ -15,7 +16,7 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 2. Get Default Policy
-  fastify.get('/api/v1/policies/default', async (_request, reply) => {
+  fastify.get('/api/v1/policies/default', { preHandler: [requireAuditor] }, async (_request, reply) => {
     const policy = await policiesService.getDefaultPolicy();
     return reply.send({
       success: true,
@@ -24,7 +25,7 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 3. Get Policy by ID
-  fastify.get<{ Params: { id: string } }>('/api/v1/policies/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/v1/policies/:id', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
     const policy = await policiesService.getPolicyById(request.params.id, tenantId);
     if (!policy) {
@@ -44,7 +45,7 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 4. Create Policy
-  fastify.post<{ Body: CreatePolicyInput }>('/api/v1/policies', async (request, reply) => {
+  fastify.post<{ Body: CreatePolicyInput }>('/api/v1/policies', { preHandler: [requireAdmin] }, async (request, reply) => {
     try {
       const tenantId = extractTenantId(request);
       const created = await policiesService.createPolicy(request.body, tenantId);
@@ -102,14 +103,14 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
   };
 
-  fastify.put<{ Params: { id: string }; Body: unknown }>('/api/v1/policies/:id', handleUpdatePolicy);
-  fastify.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/policies/:id', handleUpdatePolicy);
+  fastify.put<{ Params: { id: string }; Body: unknown }>('/api/v1/policies/:id', { preHandler: [requireAdmin] }, handleUpdatePolicy);
+  fastify.patch<{ Params: { id: string }; Body: unknown }>('/api/v1/policies/:id', { preHandler: [requireAdmin] }, handleUpdatePolicy);
 
   // 5b. Add Waiver to Policy
   fastify.post<{
     Params: { id: string };
     Body: PolicyWaiver;
-  }>('/api/v1/policies/:id/waivers', async (request, reply) => {
+  }>('/api/v1/policies/:id/waivers', { preHandler: [requireAdmin] }, async (request, reply) => {
     try {
       const tenantId = extractTenantScope(request);
       const updated = await policiesService.addWaiver(request.params.id, request.body, tenantId);
@@ -128,7 +129,7 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   fastify.post<{
     Body: PolicyWaiver & { policyId?: string };
-  }>('/api/v1/policies/waivers', async (request, reply) => {
+  }>('/api/v1/policies/waivers', { preHandler: [requireAdmin] }, async (request, reply) => {
     try {
       const tenantId = extractTenantScope(request);
       const { policyId, ...waiver } = request.body;
@@ -147,7 +148,7 @@ export const policiesRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 6. Delete Policy
-  fastify.delete<{ Params: { id: string } }>('/api/v1/policies/:id', async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/api/v1/policies/:id', { preHandler: [requireAdmin] }, async (request, reply) => {
     const { id } = request.params;
     try {
       const tenantId = extractTenantScope(request);

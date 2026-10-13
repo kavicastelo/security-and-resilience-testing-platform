@@ -1,0 +1,31 @@
+{
+  "name": "@security-lab/injection-fuzzer",
+  "version": "0.1.0",
+  "description": "Context-aware injection fuzzer with ephemeral OAST listener support",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@security-lab/contracts": "workspace:*",
+    "@security-lab/domain": "workspace:*",
+    "@security-lab/engine-sdk": "workspace:*",
+    "@security-lab/logger": "workspace:*",
+    "@security-lab/test-runner": "workspace:*",
+    "@security-lab/test-sdk": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

@@ -19,6 +19,7 @@
     "@fastify/sensible": "^6.0.3",
     "@security-lab/config": "workspace:*",
     "@security-lab/contracts": "workspace:*",
+    "@security-lab/crypto": "workspace:*",
     "@security-lab/domain": "workspace:*",
     "@security-lab/evidence": "workspace:*",
     "@security-lab/logger": "workspace:*",
