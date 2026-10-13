@@ -2,6 +2,7 @@ import os from 'node:os';
 import { AgentConfig } from './config.js';
 import { AgentClient, IncompatibleProtocolError } from './client.js';
 import { AgentWorker } from './worker.js';
+import { loadOrCreateAgentKeypair } from './crypto-attestation.js';
 import { logger } from '@security-lab/logger';
 
 export class AgentDaemon {
@@ -25,6 +26,9 @@ export class AgentDaemon {
       previousMasterKey: config.previousMasterKey,
     });
     this.agentId = config.agentId;
+    if (this.agentId) {
+      this.client.setAgentId(this.agentId);
+    }
   }
 
   async start(): Promise<void> {
@@ -34,9 +38,39 @@ export class AgentDaemon {
     logger.info(`Starting Security Lab Execution Agent: "${this.config.name}"`);
     logger.info(`Target Control Plane URL: ${this.config.controllerUrl}`);
 
-    // 1. Ensure Agent is Registered and has a valid Token
+    // 1. Ensure Agent is Registered and has a valid Token or Keypair
     try {
-      if (!this.client.getToken() || !this.agentId) {
+      if (this.config.authMode === 'asymmetric') {
+        const keypair = loadOrCreateAgentKeypair(this.config.keyDir || './.agent-keys');
+        this.client.setKeypair(keypair);
+
+        if (!this.agentId) {
+          logger.info('Enrolling agent with asymmetric Ed25519 attestation...');
+          const enrollment = await this.client.enroll(
+            {
+              name: this.config.name,
+              publicKey: keypair.publicKey,
+              tags: this.config.tags,
+              capabilities: this.config.capabilities,
+              systemInfo: {
+                os: os.platform(),
+                arch: os.arch(),
+                nodeVersion: process.version,
+                cpuCount: os.cpus().length,
+                totalMemoryMb: Math.round(os.totalmem() / 1024 / 1024),
+                hostname: os.hostname(),
+              },
+            },
+            this.config.enrollmentKey,
+            this.config.tenantId,
+          );
+          this.agentId = enrollment.agentId;
+          this.client.setAgentId(enrollment.agentId);
+          logger.info(`Agent enrolled with asymmetric key. Agent ID: ${this.agentId}`);
+        } else {
+          this.client.setAgentId(this.agentId);
+        }
+      } else if (!this.client.getToken() || !this.agentId) {
         logger.info('No agent token provided; enrolling agent dynamically with control plane...');
         const registration = await this.client.register(
           {
@@ -57,7 +91,10 @@ export class AgentDaemon {
         );
 
         this.agentId = registration.agentId;
+        this.client.setAgentId(registration.agentId);
         logger.info(`Agent enrolled successfully. Agent ID: ${this.agentId}`);
+      } else {
+        this.client.setAgentId(this.agentId);
       }
     } catch (regErr: unknown) {
       if (regErr instanceof IncompatibleProtocolError) {

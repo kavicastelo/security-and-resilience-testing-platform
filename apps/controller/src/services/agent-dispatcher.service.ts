@@ -5,6 +5,8 @@ import { agents, agentJobs, targets, testExecutions } from './db/schema.js';
 import {
   AgentRegistrationRequest,
   AgentRegistrationResponse,
+  AgentEnrollmentRequest,
+  AgentEnrollmentResponse,
   AgentJobDispatch,
   AgentJobCompletionReport,
   AgentSummary,
@@ -24,6 +26,8 @@ import { executionManager } from './execution-manager.js';
 import { logger } from '@security-lab/logger';
 import { DEFAULT_TENANT_ID } from './tenants.service.js';
 import { agentAuditService } from './agent-audit.service.js';
+import { computeKeyFingerprint } from '@security-lab/crypto';
+import { telemetryRegistry } from '../telemetry.js';
 
 export const agentStateMetrics = {
   jobs_leased_total: 0,
@@ -82,6 +86,7 @@ export class AgentDispatcherService {
     const rawToken = `agt_sec_${crypto.randomBytes(32).toString('hex')}`;
     const tokenHash = hashAgentToken(rawToken);
     const tokenExpiresAt = new Date(Date.now() + tokenExpiresInDays * 86400000);
+    const fingerprint = input.publicKey ? computeKeyFingerprint(input.publicKey) : null;
 
     const [inserted] = await db
       .insert(agents)
@@ -89,6 +94,9 @@ export class AgentDispatcherService {
         tenantId,
         name: input.name.trim(),
         tokenHash,
+        publicKey: input.publicKey ? input.publicKey.trim() : null,
+        fingerprint,
+        authMode: input.publicKey ? 'asymmetric' : 'token',
         status: 'offline',
         capabilities: input.capabilities || [],
         tags: input.tags || [],
@@ -126,6 +134,78 @@ export class AgentDispatcherService {
       name: inserted.name,
       token: rawToken,
       tokenExpiresAt: inserted.expiresAt?.toISOString(),
+      status: inserted.status as 'online' | 'busy' | 'draining' | 'offline',
+      tags: inserted.tags as string[],
+      capabilities: inserted.capabilities as string[],
+      createdAt: inserted.createdAt.toISOString(),
+    };
+  }
+
+  /**
+   * Enrolls a new distributed execution agent using asymmetric cryptographic attestation (Phase 15).
+   * Binds the agent's Ed25519 public key and records key fingerprint.
+   */
+  async enrollAgent(
+    input: AgentEnrollmentRequest,
+    tenantId: string = DEFAULT_TENANT_ID,
+  ): Promise<AgentEnrollmentResponse> {
+    const { db } = getDatabase();
+    if (!db) throw new Error('Database unavailable');
+
+    const fingerprint = computeKeyFingerprint(input.publicKey);
+    const fallbackToken = `agt_sec_${crypto.randomBytes(32).toString('hex')}`;
+    const tokenHash = hashAgentToken(fallbackToken);
+    const tokenExpiresAt = new Date(Date.now() + 365 * 86400000);
+
+    const [inserted] = await db
+      .insert(agents)
+      .values({
+        tenantId,
+        name: input.name.trim(),
+        tokenHash,
+        publicKey: input.publicKey.trim(),
+        fingerprint,
+        enrollmentToken: input.enrollmentToken || null,
+        authMode: 'asymmetric',
+        status: 'offline',
+        capabilities: input.capabilities || [],
+        tags: input.tags || [],
+        systemInfo: input.systemInfo || {},
+        expiresAt: tokenExpiresAt,
+      })
+      .returning();
+
+    if (!inserted) {
+      throw new Error('Failed to enroll agent in database');
+    }
+
+    logger.info(
+      { agentId: inserted.id, tenantId, name: inserted.name, fingerprint },
+      'Enrolled new distributed execution agent with asymmetric key attestation',
+    );
+
+    await agentAuditService.recordAuditEvent({
+      tenantId: inserted.tenantId,
+      agentId: inserted.id,
+      eventType: 'agent.enrolled',
+      actorType: 'admin',
+      actorId: 'attestation_enrollment',
+      metadata: {
+        agentName: inserted.name,
+        fingerprint,
+        authMode: 'asymmetric',
+        tags: inserted.tags,
+        capabilities: inserted.capabilities,
+      },
+    });
+
+    return {
+      agentId: inserted.id,
+      tenantId: inserted.tenantId,
+      name: inserted.name,
+      publicKey: inserted.publicKey!,
+      fingerprint,
+      authMode: 'asymmetric',
       status: inserted.status as 'online' | 'busy' | 'draining' | 'offline',
       tags: inserted.tags as string[],
       capabilities: inserted.capabilities as string[],
@@ -332,6 +412,11 @@ export class AgentDispatcherService {
       }
     }
 
+    if (updated) {
+      telemetryRegistry.recordAgentHeartbeat(updated.id, updated.tenantId, updated.status);
+      telemetryRegistry.recordActiveLeases(updated.id, updated.tenantId, renewedLeases.length);
+    }
+
     return { acknowledged: !!updated, renewedLeases, cancelledJobIds };
   }
 
@@ -535,6 +620,7 @@ export class AgentDispatcherService {
     if (!claimedRows || claimedRows.length === 0) return [];
 
     agentStateMetrics.jobs_leased_total += claimedRows.length;
+    telemetryRegistry.incrementJobsLeased(claimedRows.length);
 
     for (const row of claimedRows) {
       await agentAuditService.recordAuditEvent({
@@ -1072,6 +1158,8 @@ export class AgentDispatcherService {
       },
     });
 
+    telemetryRegistry.incrementJobsCompleted(1);
+
     return { status: 'completed', deduplicated: false };
   }
 
@@ -1213,6 +1301,8 @@ export class AgentDispatcherService {
         error,
       },
     });
+
+    telemetryRegistry.incrementJobsFailed(1);
 
     return { status: 'failed', success: true };
   }

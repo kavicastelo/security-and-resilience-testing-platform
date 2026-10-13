@@ -92,6 +92,17 @@ async function handleExecute(msg: WorkerExecuteMessage): Promise<void> {
           mod.webCrawlerEngine ||
           mod.injectionFuzzerEngine ||
           mod.graphQLSecurityEngine ||
+          mod.authzMatrixEngine ||
+          mod.businessLogicEngine ||
+          mod.nativeLoadEngine ||
+          mod.chaosMitmEngine ||
+          mod.httpSmugglingEngine ||
+          mod.databaseSecurityEngine ||
+          mod.dbSecurityEngine ||
+          mod.k8sInfraAuditEngine ||
+          mod.k8sAuditEngine ||
+          mod.sbomSupplyChainEngine ||
+          mod.sbomEngine ||
           mod.engine;
         if (resolved) engine = resolved;
       } catch {

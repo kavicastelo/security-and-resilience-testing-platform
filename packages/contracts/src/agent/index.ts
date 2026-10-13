@@ -19,8 +19,19 @@ export const AgentRegistrationRequestSchema = z.object({
   tags: z.array(z.string()).default([]),
   capabilities: z.array(z.string()).default([]),
   systemInfo: AgentSystemInfoSchema.optional(),
+  publicKey: z.string().optional(),
 });
 export type AgentRegistrationRequest = z.infer<typeof AgentRegistrationRequestSchema>;
+
+export const AgentEnrollmentRequestSchema = z.object({
+  name: z.string().min(2).max(100),
+  publicKey: z.string().min(10, 'Valid public key required'),
+  tags: z.array(z.string()).default([]),
+  capabilities: z.array(z.string()).default([]),
+  systemInfo: AgentSystemInfoSchema.optional(),
+  enrollmentToken: z.string().optional(),
+});
+export type AgentEnrollmentRequest = z.infer<typeof AgentEnrollmentRequestSchema>;
 
 export const CreateTenantEnrollmentKeySchema = z.object({
   name: z.string().min(2).max(100),
@@ -55,6 +66,21 @@ export const AgentRegistrationResponseSchema = z.object({
   createdAt: z.string(),
 });
 export type AgentRegistrationResponse = z.infer<typeof AgentRegistrationResponseSchema>;
+
+export const AgentEnrollmentResponseSchema = z.object({
+  agentId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  name: z.string(),
+  publicKey: z.string(),
+  fingerprint: z.string(),
+  authMode: z.literal('asymmetric'),
+  status: AgentStatusSchema,
+  tags: z.array(z.string()),
+  capabilities: z.array(z.string()),
+  createdAt: z.string(),
+});
+export type AgentEnrollmentResponse = z.infer<typeof AgentEnrollmentResponseSchema>;
+
 
 export const AgentHeartbeatRequestSchema = z.object({
   agentId: z.string().uuid(),

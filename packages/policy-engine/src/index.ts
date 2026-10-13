@@ -225,6 +225,20 @@ export function evaluatePolicy(
       }
     }
 
+    // E2. Check maximum allowable P99 latency SLA
+    if (condition.maxP99LatencyMs !== undefined && metrics.length > 0) {
+      const p99Metric = metrics.find((m) => m.name === 'http_req_duration_p99');
+      if (p99Metric && p99Metric.value > condition.maxP99LatencyMs) {
+        violations.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          action,
+          reason: `P99 latency of ${Math.round(p99Metric.value)}ms exceeds maximum allowed policy threshold of ${condition.maxP99LatencyMs}ms`,
+          category: 'latency',
+        });
+      }
+    }
+
     // F. Check maximum allowable error rate percentage
     if (condition.maxErrorRatePercent !== undefined && metrics.length > 0) {
       const errorMetric = metrics.find((m) => m.name === 'http_req_failed_ratio');

@@ -446,6 +446,10 @@ export const agents = pgTable(
       .references(() => tenants.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 100 }).notNull(),
     tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    publicKey: text('public_key'),
+    fingerprint: varchar('fingerprint', { length: 64 }),
+    enrollmentToken: varchar('enrollment_token', { length: 64 }),
+    authMode: varchar('auth_mode', { length: 20 }).notNull().default('token'),
     status: varchar('status', { length: 30 }).notNull().default('offline'),
     capabilities: jsonb('capabilities').notNull().default([]),
     tags: jsonb('tags').notNull().default([]),
@@ -463,8 +467,12 @@ export const agents = pgTable(
     index('idx_agents_status').on(table.status),
     index('idx_agents_expires_at').on(table.expiresAt),
     index('idx_agents_revoked_at').on(table.revokedAt),
+    index('idx_agents_fingerprint').on(table.fingerprint),
+    index('idx_agents_enrollment_token').on(table.enrollmentToken),
+    index('idx_agents_auth_mode').on(table.authMode),
   ],
 );
+
 
 export const agentJobs = pgTable(
   'agent_jobs',

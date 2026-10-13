@@ -19,6 +19,7 @@ export interface ScopeCheckOptions {
   requestedRps?: number;
   requestedConcurrency?: number;
   allowUnresolvedDns?: boolean;
+  allowedProtocols?: string[];
 }
 
 /**
@@ -40,13 +41,14 @@ export function validateUrlAgainstScope(
   } catch {
     return {
       valid: false,
-      violations: [`Invalid URL format: "${candidateUrl}" could not be parsed as a standard HTTP/HTTPS URI`],
+      violations: [`Invalid URL format: "${candidateUrl}" could not be parsed as a standard URI`],
     };
   }
 
-  // 1. Protocol check: strictly HTTP and HTTPS permitted
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    violations.push(`Protocol "${parsed.protocol}" is forbidden. Only "http:" and "https:" are permitted.`);
+  // 1. Protocol check: defaults to HTTP and HTTPS, or options.allowedProtocols
+  const allowedProtocols = options.allowedProtocols || ['http:', 'https:'];
+  if (!allowedProtocols.includes(parsed.protocol)) {
+    violations.push(`Protocol "${parsed.protocol}" is forbidden. Allowed: ${allowedProtocols.join(', ')}`);
   }
 
   // 2. Hostname canonicalization and cloud metadata protection
@@ -98,7 +100,13 @@ export function validateUrlAgainstScope(
     ? parseInt(parsed.port, 10)
     : parsed.protocol === 'https:'
       ? 443
-      : 80;
+      : parsed.protocol === 'postgres:' || parsed.protocol === 'postgresql:'
+        ? 5432
+        : parsed.protocol === 'mysql:'
+          ? 3306
+          : parsed.protocol === 'redis:'
+            ? 6379
+            : 80;
 
   if (!scope.allowedPorts.includes(effectivePort)) {
     violations.push(

@@ -14,6 +14,12 @@ export interface AgentConfig {
   allowLocalTesting?: boolean;
   masterKey?: string;
   previousMasterKey?: string;
+  authMode?: 'asymmetric' | 'token' | 'hmac';
+  keyDir?: string;
+  mtlsEnabled?: boolean;
+  mtlsCaCert?: string;
+  mtlsClientCert?: string;
+  mtlsClientKey?: string;
 }
 
 export function loadAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
@@ -82,5 +88,13 @@ export function loadAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConf
         env.VITEST === 'true'),
     masterKey: overrides.masterKey || env.AGENT_MASTER_SECRET || env.SECURITY_LAB_AGENT_MASTER_SECRET,
     previousMasterKey: overrides.previousMasterKey || env.AGENT_MASTER_SECRET_PREVIOUS,
+    authMode: overrides.authMode || (env.AGENT_AUTH_MODE as 'asymmetric' | 'token' | 'hmac') || 'asymmetric',
+    keyDir: overrides.keyDir || env.AGENT_KEY_DIR || './.agent-keys',
+    mtlsEnabled:
+      overrides.mtlsEnabled ??
+      (env.MTLS_ENABLED === 'true' || env.SECURITY_LAB_MTLS_ENABLED === 'true'),
+    mtlsCaCert: overrides.mtlsCaCert || env.MTLS_CA_CERT,
+    mtlsClientCert: overrides.mtlsClientCert || env.MTLS_CLIENT_CERT,
+    mtlsClientKey: overrides.mtlsClientKey || env.MTLS_CLIENT_KEY,
   };
 }

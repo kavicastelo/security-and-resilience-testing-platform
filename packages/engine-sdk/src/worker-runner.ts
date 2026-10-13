@@ -284,6 +284,22 @@ export class WorkerRunner {
                 engineModulePath = '@security-lab/injection-fuzzer';
               } else if (engineId === 'engine-graphql-security') {
                 engineModulePath = '@security-lab/graphql-security';
+              } else if (engineId === 'engine-authz-matrix') {
+                engineModulePath = '@security-lab/authz-matrix';
+              } else if (engineId === 'engine-business-logic') {
+                engineModulePath = '@security-lab/business-logic';
+              } else if (engineId === 'engine-native-load') {
+                engineModulePath = '@security-lab/native-load';
+              } else if (engineId === 'engine-chaos-mitm') {
+                engineModulePath = '@security-lab/chaos-mitm';
+              } else if (engineId === 'engine-http-smuggling') {
+                engineModulePath = '@security-lab/http-smuggling';
+              } else if (engineId === 'engine-db-security') {
+                engineModulePath = '@security-lab/db-security';
+              } else if (engineId === 'engine-k8s-infra-audit') {
+                engineModulePath = '@security-lab/k8s-infra-audit';
+              } else if (engineId === 'engine-sbom-supply-chain') {
+                engineModulePath = '@security-lab/sbom-supply-chain';
               }
 
               const executeFunctionSource =
