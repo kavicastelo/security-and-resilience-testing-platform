@@ -23,6 +23,7 @@ export const PolicyRuleConditionSchema = z.object({
   maxCountBySeverity: z.record(FindingSeveritySchema, z.number().int().nonnegative()).optional(),
   disallowCategories: z.array(z.string()).optional(),
   maxP95LatencyMs: z.number().positive().optional(),
+  maxP99LatencyMs: z.number().positive().optional(),
   maxErrorRatePercent: z.number().min(0).max(100).optional(),
   requiredProfiles: z.array(z.string()).optional(),
   endpointSlas: z.array(EndpointSlaSchema).optional(),

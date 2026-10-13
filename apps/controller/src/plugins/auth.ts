@@ -109,6 +109,7 @@ function isPublicRoute(url: string, method: string): boolean {
     cleanUrl === '' ||
     cleanUrl === '/health' ||
     cleanUrl === '/ready' ||
+    cleanUrl === '/metrics' ||
     cleanUrl === '/api/v1/health' ||
     cleanUrl === '/api/v1/ready' ||
     cleanUrl === '/favicon.ico'
@@ -139,6 +140,7 @@ function isAgentDaemonRoute(url: string): boolean {
   const cleanUrl = (url || '').split('?')[0]!.replace(/\/$/, '');
   if (!cleanUrl.startsWith('/api/v1/agents')) return false;
   if (cleanUrl.endsWith('/register')) return true;
+  if (cleanUrl.endsWith('/enroll')) return true;
   if (cleanUrl.endsWith('/heartbeat')) return true;
   if (cleanUrl.endsWith('/poll')) return true;
   if (cleanUrl.includes('/jobs/') && !cleanUrl.endsWith('/dispatch')) return true;

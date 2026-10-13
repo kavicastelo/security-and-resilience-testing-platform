@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "references": [
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/crypto" },
+    { "path": "../../packages/logger" },
+    { "path": "../../packages/engine-sdk" },
+    { "path": "../../packages/test-runner" }
+  ],
+  "include": ["src/**/*"]
+}

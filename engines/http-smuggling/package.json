@@ -1,0 +1,33 @@
+{
+  "name": "@security-lab/http-smuggling",
+  "version": "0.1.0",
+  "description": "Raw TCP/TLS socket verification for HTTP request smuggling (CL.TE, TE.CL, TE.TE) and reverse proxy header poisoning",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@security-lab/contracts": "workspace:*",
+    "@security-lab/crypto": "workspace:*",
+    "@security-lab/domain": "workspace:*",
+    "@security-lab/engine-sdk": "workspace:*",
+    "@security-lab/logger": "workspace:*",
+    "@security-lab/scope-engine": "workspace:*",
+    "@security-lab/test-runner": "workspace:*",
+    "yaml": "^2.9.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

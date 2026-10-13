@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import {
   AgentRegistrationRequestSchema,
+  AgentEnrollmentRequestSchema,
   AgentHeartbeatRequestSchema,
   AgentPollRequestSchema,
   AgentJobProgressReportSchema,
@@ -18,6 +19,7 @@ import { enrollmentKeysService } from '../services/enrollment-keys.service.js';
 import { extractTenantId } from '../services/tenant-context.js';
 import { DEFAULT_TENANT_ID } from '../services/tenants.service.js';
 import { agentAuditService } from '../services/agent-audit.service.js';
+import { authenticateAgentRequest } from '../plugins/agent-auth.js';
 import { logger } from '@security-lab/logger';
 import { z } from 'zod';
 
@@ -148,25 +150,74 @@ export async function agentsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Helper to authenticate Bearer token for agent requests
-  async function requireAgentAuth(request: FastifyRequest, reply: FastifyReply) {
+  // 1b. POST /api/v1/agents/enroll (Phase 15: Asymmetric Cryptographic Enrollment)
+  fastify.post('/enroll', async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      reply.status(401).send({
-        success: false,
-        error: { code: 'UNAUTHORIZED', message: 'Missing or invalid Bearer authorization token' },
-      });
-      return null;
+    let rawKey: string | undefined;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      rawKey = authHeader.replace('Bearer ', '').trim();
+    } else if (request.body && typeof request.body === 'object' && 'enrollmentToken' in request.body) {
+      rawKey = (request.body as { enrollmentToken?: string }).enrollmentToken;
     }
 
-    const token = authHeader.replace('Bearer ', '').trim();
-    const authResult = await agentDispatcherService.authenticateAgent(token);
+    if (!rawKey) {
+      return reply.status(401).send({
+        success: false,
+        error: {
+          code: 'AGENT_UNAUTHORIZED',
+          message: 'Missing enrollment token or Tenant Enrollment Key. Provide "Authorization: Bearer tek_<slug>_<hex>"',
+        },
+      });
+    }
+
+    const validation = await enrollmentKeysService.validateAndConsumeEnrollmentKey(rawKey);
+    if (!validation.valid || !validation.tek) {
+      return reply.status(401).send({
+        success: false,
+        error: {
+          code: validation.errorCode || 'INVALID_ENROLLMENT_KEY',
+          message: validation.error || 'Invalid or expired enrollment token',
+        },
+      });
+    }
+
+    const parseResult = AgentEnrollmentRequestSchema.safeParse(request.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: parseResult.error.errors.map((e) => e.message).join(', '),
+        },
+      });
+    }
+
+    try {
+      const tenantId = validation.tek.tenantId;
+      const enrollment = await agentDispatcherService.enrollAgent(parseResult.data, tenantId);
+      return reply.status(201).send({
+        success: true,
+        data: enrollment,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'AGENT_ENROLLMENT_FAILED', message: msg },
+      });
+    }
+  });
+
+  // Helper to authenticate agent requests via Ed25519 asymmetric signature or Bearer token
+  async function requireAgentAuth(request: FastifyRequest, reply: FastifyReply) {
+    const authResult = await authenticateAgentRequest(request);
     if (!authResult.agent) {
       reply.status(401).send({
         success: false,
         error: {
           code: authResult.code || 'UNAUTHORIZED',
-          message: authResult.error || 'Invalid or revoked agent token',
+          message: authResult.error || 'Invalid or missing agent credentials',
         },
       });
       return null;
@@ -227,6 +278,10 @@ export async function agentsRoutes(fastify: FastifyInstance) {
           max: 120,
           timeWindow: '1 minute',
           keyGenerator: (request: FastifyRequest) => {
+            const xAgentId = request.headers['x-agent-id'];
+            if (typeof xAgentId === 'string' && xAgentId.trim().length > 0) {
+              return `agent:${xAgentId.trim()}`;
+            }
             const authHeader = request.headers.authorization;
             if (authHeader && authHeader.startsWith('Bearer ')) {
               return authHeader.replace('Bearer ', '').trim();

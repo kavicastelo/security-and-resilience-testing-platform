@@ -19,6 +19,7 @@ import { tenantsRoutes } from '../routes/tenants.js';
 import { agentsRoutes } from '../routes/agents.js';
 import { managementRoutes } from '../routes/management.js';
 import { workspacesRoutes } from '../routes/workspaces.js';
+import { metricsRoutes } from '../routes/metrics.js';
 import { agentJobReaper } from '../services/agent-dispatcher.service.js';
 import { registerAuthHooks, AuthPluginOptions } from '../plugins/auth.js';
 import { SharedRateLimitStore } from '../services/rate-limit-store.js';
@@ -126,8 +127,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     },
     allowList: (request) => {
       const url = request.url;
-      // SSE streams, events, and health check are completely exempt from rate limiting
-      return url.includes('/stream') || url.includes('/events') || url === '/health';
+      // SSE streams, events, health check, and metrics are completely exempt from rate limiting
+      return url.includes('/stream') || url.includes('/events') || url === '/health' || url === '/metrics';
     },
     errorResponseBuilder: (request, context) => {
       const retryAfter = Math.ceil(context.ttl / 1000) || 60;
@@ -160,6 +161,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   // Register Routes
   app.register(healthRoutes);
+  app.register(metricsRoutes);
   app.register(projectsRoutes);
   app.register(environmentsRoutes);
   app.register(targetsRoutes);
