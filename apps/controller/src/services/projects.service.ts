@@ -2,16 +2,17 @@ import { eq, and } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { projects } from './db/schema.js';
 import { CreateProjectInput, Project } from '@security-lab/domain';
-
 import { DEFAULT_TENANT_ID } from './tenants.service.js';
+import { DEFAULT_WORKSPACE_ID } from './auth-token.service.js';
 
 export class ProjectsService {
-  async createProject(input: CreateProjectInput, tenantId?: string): Promise<Project> {
+  async createProject(input: CreateProjectInput, tenantId?: string, workspaceId?: string): Promise<Project> {
     const { db } = getDatabase();
     const [inserted] = await db
       .insert(projects)
       .values({
         tenantId: tenantId || DEFAULT_TENANT_ID,
+        workspaceId: workspaceId || DEFAULT_WORKSPACE_ID,
         name: input.name,
         description: input.description,
       })
@@ -30,11 +31,15 @@ export class ProjectsService {
     };
   }
 
-  async listProjects(tenantId?: string): Promise<Project[]> {
+  async listProjects(tenantId?: string, workspaceId?: string): Promise<Project[]> {
     const { db } = getDatabase();
     const query = db.select().from(projects);
-    const rows = tenantId
-      ? await query.where(eq(projects.tenantId, tenantId)).orderBy(projects.name)
+    const conditions = [];
+    if (tenantId) conditions.push(eq(projects.tenantId, tenantId));
+    if (workspaceId) conditions.push(eq(projects.workspaceId, workspaceId));
+
+    const rows = conditions.length > 0
+      ? await query.where(and(...conditions)).orderBy(projects.name)
       : await query.orderBy(projects.name);
 
     return rows.map((r) => ({
@@ -46,12 +51,13 @@ export class ProjectsService {
     }));
   }
 
-  async getProjectById(id: string, tenantId?: string): Promise<Project | null> {
+  async getProjectById(id: string, tenantId?: string, workspaceId?: string): Promise<Project | null> {
     const { db } = getDatabase();
-    const condition = tenantId
-      ? and(eq(projects.id, id), eq(projects.tenantId, tenantId))
-      : eq(projects.id, id);
-    const [row] = await db.select().from(projects).where(condition);
+    const conditions = [eq(projects.id, id)];
+    if (tenantId) conditions.push(eq(projects.tenantId, tenantId));
+    if (workspaceId) conditions.push(eq(projects.workspaceId, workspaceId));
+
+    const [row] = await db.select().from(projects).where(and(...conditions));
     if (!row) return null;
     return {
       id: row.id,
@@ -62,7 +68,7 @@ export class ProjectsService {
     };
   }
 
-  async updateProject(id: string, input: Partial<CreateProjectInput>, tenantId?: string): Promise<Project | null> {
+  async updateProject(id: string, input: Partial<CreateProjectInput>, tenantId?: string, workspaceId?: string): Promise<Project | null> {
     const { db } = getDatabase();
     const updateValues: Record<string, unknown> = {
       updatedAt: new Date(),
@@ -71,14 +77,14 @@ export class ProjectsService {
     if (input.name !== undefined) updateValues.name = input.name;
     if (input.description !== undefined) updateValues.description = input.description;
 
-    const condition = tenantId
-      ? and(eq(projects.id, id), eq(projects.tenantId, tenantId))
-      : eq(projects.id, id);
+    const conditions = [eq(projects.id, id)];
+    if (tenantId) conditions.push(eq(projects.tenantId, tenantId));
+    if (workspaceId) conditions.push(eq(projects.workspaceId, workspaceId));
 
     const [updated] = await db
       .update(projects)
       .set(updateValues)
-      .where(condition)
+      .where(and(...conditions))
       .returning();
 
     if (!updated) return null;
@@ -92,12 +98,13 @@ export class ProjectsService {
     };
   }
 
-  async deleteProject(id: string, tenantId?: string): Promise<boolean> {
+  async deleteProject(id: string, tenantId?: string, workspaceId?: string): Promise<boolean> {
     const { db } = getDatabase();
-    const condition = tenantId
-      ? and(eq(projects.id, id), eq(projects.tenantId, tenantId))
-      : eq(projects.id, id);
-    const deleted = await db.delete(projects).where(condition).returning();
+    const conditions = [eq(projects.id, id)];
+    if (tenantId) conditions.push(eq(projects.tenantId, tenantId));
+    if (workspaceId) conditions.push(eq(projects.workspaceId, workspaceId));
+
+    const deleted = await db.delete(projects).where(and(...conditions)).returning();
     return deleted.length > 0;
   }
 }

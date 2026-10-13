@@ -117,9 +117,10 @@ export function scrubSecrets(data: unknown, seen = new WeakSet<object>()): unkno
 
 export interface RecordAuditEventInput {
   tenantId: string;
+  workspaceId?: string;
   agentId?: string | null;
   eventType: string;
-  actorType: 'agent' | 'admin' | 'system';
+  actorType: 'agent' | 'admin' | 'system' | 'user';
   actorId: string;
   metadata?: Record<string, unknown>;
   ipAddress?: string | null;
@@ -127,6 +128,7 @@ export interface RecordAuditEventInput {
 
 export interface GetAuditEventsOptions {
   tenantId: string;
+  workspaceId?: string;
   agentId?: string;
   eventType?: string;
   limit?: number;
@@ -163,6 +165,7 @@ export class AgentAuditService {
         .insert(agentAuditEvents)
         .values({
           tenantId: input.tenantId,
+          workspaceId: input.workspaceId || undefined,
           agentId: input.agentId || null,
           eventType: input.eventType,
           actorType: input.actorType,

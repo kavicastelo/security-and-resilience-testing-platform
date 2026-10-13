@@ -1,0 +1,31 @@
+{
+  "name": "@security-lab/test-runner",
+  "version": "0.1.0",
+  "description": "Hardened test execution client with dynamic circuit breaking and DNS pinning",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@security-lab/contracts": "workspace:*",
+    "@security-lab/crypto": "workspace:*",
+    "@security-lab/domain": "workspace:*",
+    "@security-lab/logger": "workspace:*",
+    "@security-lab/scope-engine": "workspace:*",
+    "@security-lab/engine-sdk": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

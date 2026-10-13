@@ -12,7 +12,29 @@ import {
 
 import { DEFAULT_TENANT_ID } from './tenants.service.js';
 
+import { isLocalHost, generateChallengeToken } from './target-verification.js';
+import { encryptObject, decryptObject } from '@security-lab/crypto';
+
 export class TargetsService {
+  private mapRowToTarget(r: any): Target {
+    const rawAuth = r.encryptedAuthData ?? r.encrypted_auth_data;
+    return {
+      id: r.id,
+      projectId: r.projectId,
+      name: r.name,
+      baseUrl: r.baseUrl,
+      scope: r.scope,
+      verificationToken: r.verificationToken ?? null,
+      verificationStatus: (r.verificationStatus as any) || 'PENDING',
+      verifiedAt: r.verifiedAt ?? null,
+      verificationMethod: (r.verificationMethod as any) ?? null,
+      authConfigured: Boolean(rawAuth),
+      authType: rawAuth?.type || (rawAuth ? 'ENCRYPTED' : undefined),
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    };
+  }
+
   async createTarget(input: CreateTargetInput, tenantId?: string): Promise<Target> {
     const { db } = getDatabase();
 
@@ -52,6 +74,21 @@ export class TargetsService {
       }
     }
 
+    let isLocal = false;
+    try {
+      isLocal = isLocalHost(new URL(input.baseUrl).hostname);
+    } catch {
+      isLocal = false;
+    }
+
+    const verificationToken = generateChallengeToken();
+    const verificationStatus = isLocal ? 'VERIFIED' : 'PENDING';
+    const verificationMethod = isLocal ? 'LOCAL_OVERRIDE' : null;
+    const verifiedAt = isLocal ? new Date() : null;
+
+    const rawAuth = input.authFlow;
+    const encryptedAuthData = rawAuth ? encryptObject(rawAuth) : null;
+
     const [inserted] = await db
       .insert(targets)
       .values({
@@ -60,6 +97,11 @@ export class TargetsService {
         name: input.name,
         baseUrl: input.baseUrl,
         scope,
+        verificationToken,
+        verificationStatus,
+        verificationMethod,
+        verifiedAt,
+        encryptedAuthData,
       })
       .returning();
 
@@ -67,15 +109,7 @@ export class TargetsService {
       throw new Error('Failed to insert target');
     }
 
-    return {
-      id: inserted.id,
-      projectId: inserted.projectId,
-      name: inserted.name,
-      baseUrl: inserted.baseUrl,
-      scope: inserted.scope,
-      createdAt: inserted.createdAt,
-      updatedAt: inserted.updatedAt,
-    };
+    return this.mapRowToTarget(inserted);
   }
 
   async listTargetsByProject(projectId: string, tenantId?: string): Promise<Target[]> {
@@ -91,15 +125,7 @@ export class TargetsService {
       .where(and(...conditions))
       .orderBy(targets.name);
 
-    return rows.map((r) => ({
-      id: r.id,
-      projectId: r.projectId,
-      name: r.name,
-      baseUrl: r.baseUrl,
-      scope: r.scope,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    }));
+    return rows.map((r) => this.mapRowToTarget(r));
   }
 
   async listAllTargets(tenantId?: string): Promise<Target[]> {
@@ -108,15 +134,7 @@ export class TargetsService {
     const rows = tenantId
       ? await query.where(eq(targets.tenantId, tenantId)).orderBy(targets.name)
       : await query.orderBy(targets.name);
-    return rows.map((r) => ({
-      id: r.id,
-      projectId: r.projectId,
-      name: r.name,
-      baseUrl: r.baseUrl,
-      scope: r.scope,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    }));
+    return rows.map((r) => this.mapRowToTarget(r));
   }
 
   async getTargetById(id: string, tenantId?: string): Promise<Target | null> {
@@ -134,15 +152,7 @@ export class TargetsService {
 
     if (!row) return null;
 
-    return {
-      id: row.id,
-      projectId: row.projectId,
-      name: row.name,
-      baseUrl: row.baseUrl,
-      scope: row.scope,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
+    return this.mapRowToTarget(row);
   }
 
   async updateTarget(
@@ -210,6 +220,9 @@ export class TargetsService {
     };
     if (input.name !== undefined) updateValues.name = input.name;
     if (input.baseUrl !== undefined) updateValues.baseUrl = input.baseUrl;
+    if ((input as any).authFlow !== undefined) {
+      updateValues.encryptedAuthData = (input as any).authFlow ? encryptObject((input as any).authFlow) : null;
+    }
 
     const updateConditions = [eq(targets.id, id)];
     if (tenantId) {
@@ -224,15 +237,28 @@ export class TargetsService {
 
     if (!updated) return null;
 
-    return {
-      id: updated.id,
-      projectId: updated.projectId,
-      name: updated.name,
-      baseUrl: updated.baseUrl,
-      scope: updated.scope,
-      createdAt: updated.createdAt,
-      updatedAt: updated.updatedAt,
-    };
+    return this.mapRowToTarget(updated);
+  }
+
+  async getDecryptedAuthData<T = unknown>(targetId: string, tenantId?: string): Promise<T | null> {
+    const { db } = getDatabase();
+    const conditions = [eq(targets.id, targetId)];
+    if (tenantId) {
+      conditions.push(eq(targets.tenantId, tenantId));
+    }
+
+    const [row] = await db
+      .select({ encryptedAuthData: targets.encryptedAuthData })
+      .from(targets)
+      .where(and(...conditions))
+      .limit(1);
+
+    if (!row?.encryptedAuthData) return null;
+    try {
+      return decryptObject<T>(row.encryptedAuthData as any);
+    } catch {
+      return null;
+    }
   }
 
   async deleteTarget(id: string, tenantId?: string): Promise<boolean> {

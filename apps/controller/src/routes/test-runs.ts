@@ -15,6 +15,7 @@ import {
   EngineLifecycleEvent,
   ExecutionProgressEvent,
 } from '../services/execution-events.js';
+import { requireEngineer, requireAuditor } from '../plugins/rbac.js';
 
 export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   const defaultScanMax = process.env.NODE_ENV === 'production' ? 10 : 500;
@@ -41,6 +42,7 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     config: {
       rateLimit: scanRateLimitConfig,
     },
+    preHandler: [requireEngineer],
   }, async (request, reply) => {
     const parseResult = CreateTestRunInputSchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -61,17 +63,19 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
     try {
       const tenantId = extractTenantScope(request);
-      const testRun = await testRunsService.createTestRun(parseResult.data, tenantId);
+      const workspaceId = request.user?.role === 'ADMIN' && !request.headers['x-workspace-id'] ? undefined : request.workspaceId;
+      const testRun = await testRunsService.createTestRun(parseResult.data, tenantId, workspaceId);
       return reply.status(201).send({
         success: true,
         data: testRun,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to create TestRun';
+      const isUnverified = message.includes('TARGET_UNVERIFIED');
       return reply.status(400).send({
         success: false,
         error: {
-          code: 'TESTRUN_CREATION_FAILED',
+          code: isUnverified ? 'TARGET_UNVERIFIED' : 'TESTRUN_CREATION_FAILED',
           message,
         },
       });
@@ -81,7 +85,7 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // 2. List TestRuns
   fastify.get<{
     Querystring: { projectId?: string; targetId?: string };
-  }>('/api/v1/test-runs', async (request, reply) => {
+  }>('/api/v1/test-runs', { preHandler: [requireAuditor] }, async (request, reply) => {
     const { projectId, targetId } = request.query;
     const tenantId = extractTenantScope(request);
     const runs = await testRunsService.listTestRuns({ projectId, targetId }, tenantId);
@@ -92,7 +96,7 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 3. Get TestRun by ID
-  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
     const run = await testRunsService.getTestRunById(request.params.id, tenantId);
     if (!run) {
@@ -112,7 +116,7 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 3b. Get TestRun Executions
-  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/executions', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/executions', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
     const run = await testRunsService.getTestRunById(request.params.id, tenantId);
     if (!run) {

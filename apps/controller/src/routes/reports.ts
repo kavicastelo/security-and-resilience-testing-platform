@@ -3,6 +3,7 @@ import { reportsService, ReportFormat } from '../services/reports.service.js';
 import { artifactStorageService } from '../services/artifact-storage.service.js';
 import { testRunsService } from '../services/test-runs.service.js';
 import { extractTenantScope } from '../services/tenant-context.js';
+import { requireAuditor } from '../plugins/rbac.js';
 
 export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   const defaultReportMax = process.env.NODE_ENV === 'production' ? 30 : 200;
@@ -27,6 +28,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         }),
       },
     },
+    preHandler: [requireAuditor],
   }, async (request, reply) => {
     const { id } = request.params;
     const format = request.query.format || 'html';
@@ -65,7 +67,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   // 2. List Persisted Reports for a TestRun
   fastify.get<{
     Params: { id: string };
-  }>('/api/v1/test-runs/:id/reports', async (request, reply) => {
+  }>('/api/v1/test-runs/:id/reports', { preHandler: [requireAuditor] }, async (request, reply) => {
     const { id } = request.params;
     const tenantId = extractTenantScope(request);
 
@@ -108,7 +110,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   // 3. Download a Specific Stored Report by ID
   fastify.get<{
     Params: { id: string; reportId: string };
-  }>('/api/v1/test-runs/:id/reports/:reportId/download', async (request, reply) => {
+  }>('/api/v1/test-runs/:id/reports/:reportId/download', { preHandler: [requireAuditor] }, async (request, reply) => {
     const { id, reportId } = request.params;
     const tenantId = extractTenantScope(request);
 
@@ -154,7 +156,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   // 4. List Stored Artifacts for a TestRun
   fastify.get<{
     Params: { id: string };
-  }>('/api/v1/test-runs/:id/artifacts', async (request, reply) => {
+  }>('/api/v1/test-runs/:id/artifacts', { preHandler: [requireAuditor] }, async (request, reply) => {
     const { id } = request.params;
     const tenantId = extractTenantScope(request);
 
@@ -190,7 +192,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
   // 5. Download a Specific Artifact by ID
   fastify.get<{
     Params: { id: string; artifactId: string };
-  }>('/api/v1/test-runs/:id/artifacts/:artifactId/download', async (request, reply) => {
+  }>('/api/v1/test-runs/:id/artifacts/:artifactId/download', { preHandler: [requireAuditor] }, async (request, reply) => {
     const { id, artifactId } = request.params;
     const tenantId = extractTenantScope(request);
 

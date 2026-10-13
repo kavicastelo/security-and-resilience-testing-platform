@@ -4,6 +4,7 @@ import { findingsService } from '../services/findings.service.js';
 import { testRunsService } from '../services/test-runs.service.js';
 import { executionManager } from '../services/execution-manager.js';
 import { extractTenantScope } from '../services/tenant-context.js';
+import { requireAuditor, requireEngineer } from '../plugins/rbac.js';
 
 export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. List findings with optional filters (testRunId, targetId, severity, status)
@@ -14,7 +15,7 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       severity?: FindingSeverity;
       status?: FindingStatus;
     };
-  }>('/api/v1/findings', async (request, reply) => {
+  }>('/api/v1/findings', { preHandler: [requireAuditor] }, async (request, reply) => {
     const { testRunId, targetId, severity, status } = request.query;
     const tenantId = extractTenantScope(request);
     const findingsList = await findingsService.listFindings({ testRunId, targetId, severity, status, tenantId });
@@ -25,7 +26,7 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // 2. Get single finding by ID
-  fastify.get<{ Params: { id: string } }>('/api/v1/findings/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/v1/findings/:id', { preHandler: [requireAuditor] }, async (request, reply) => {
     const tenantId = extractTenantScope(request);
     const finding = await findingsService.getFindingById(request.params.id, tenantId);
     if (!finding) {
@@ -48,7 +49,7 @@ export const findingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   fastify.patch<{
     Params: { id: string };
     Body: { status: FindingStatus; notes?: string; triggerRetest?: boolean };
-  }>('/api/v1/findings/:id', async (request, reply) => {
+  }>('/api/v1/findings/:id', { preHandler: [requireEngineer] }, async (request, reply) => {
     const { id } = request.params;
     const { status, notes, triggerRetest } = request.body || {};
 

@@ -81,7 +81,11 @@ export class ExecutionManager extends EventEmitter {
     }
 
     if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
-      throw new Error(`TestRun "${testRunId}" is already in terminal state "${run.status}"`);
+      return {
+        status: 'queued',
+        testRunId,
+        pollingUrl: `/api/v1/test-runs/${testRunId}`,
+      };
     }
 
     // Check if already in queue or running

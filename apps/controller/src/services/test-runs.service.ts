@@ -2,6 +2,8 @@ import { eq, and } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { testRuns, projects } from './db/schema.js';
 import { targetsService } from './targets.service.js';
+import { projectsService } from './projects.service.js';
+import { isLocalHost } from './target-verification.js';
 import {
   CreateTestRunInput,
   TestRun,
@@ -10,8 +12,16 @@ import {
 } from '@security-lab/domain';
 
 export class TestRunsService {
-  async createTestRun(input: CreateTestRunInput, tenantId?: string): Promise<TestRun> {
+  async createTestRun(input: CreateTestRunInput, tenantId?: string, workspaceId?: string): Promise<TestRun> {
     const { db } = getDatabase();
+
+    // 0. Verify Project workspace boundary if workspaceId is provided
+    if (workspaceId) {
+      const project = await projectsService.getProjectById(input.projectId, tenantId, workspaceId);
+      if (!project) {
+        throw new Error(`Cannot start test run: Project "${input.projectId}" not found or access denied in workspace`);
+      }
+    }
 
     // 1. Verify Target exists and is accessible within tenant boundary
     const target = await targetsService.getTargetById(input.targetId, tenantId);
@@ -21,6 +31,41 @@ export class TestRunsService {
 
     if (target.projectId !== input.projectId) {
       throw new Error(`Target "${input.targetId}" does not belong to project "${input.projectId}"`);
+    }
+
+    // 1.1 Target Ownership Verification Gate:
+    // If target is external and verificationStatus !== 'VERIFIED', reject active scanning plans.
+    let isLocal = false;
+    try {
+      const targetHost = new URL(target.baseUrl).hostname;
+      isLocal = isLocalHost(targetHost);
+    } catch {
+      isLocal = false;
+    }
+
+    const profile = (input.profileId || '').toLowerCase();
+    const isActiveProfile =
+      profile === 'active' ||
+      profile === 'active-scan' ||
+      profile === 'active-scanning' ||
+      profile === 'dast' ||
+      profile === 'fuzzing' ||
+      profile === 'active_scan';
+    const isExplicitActive =
+      (input.metadata as Record<string, unknown> | undefined)?.activeScanning === true ||
+      (input as any).activeScanning === true;
+    const hasActiveEngines =
+      Array.isArray((input as any).engines) &&
+      (input as any).engines.some((e: string) =>
+        e.includes('zap') || e.includes('active') || e.includes('fuzz'),
+      );
+
+    const isActiveScanPlan = isActiveProfile || isExplicitActive || hasActiveEngines;
+
+    if (!isLocal && target.verificationStatus !== 'VERIFIED' && isActiveScanPlan) {
+      throw new Error(
+        `TARGET_UNVERIFIED: External target "${target.baseUrl}" requires verified ownership before active scanning plans can be executed. Current verification status is "${target.verificationStatus || 'PENDING'}". Please complete the DNS TXT or HTTP .well-known ownership challenge.`,
+      );
     }
 
     // 2. Persist TestRun session
