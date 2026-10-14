@@ -37,7 +37,10 @@ import {
   TestExecutionRecord,
 } from '@security-lab/contracts';
 import { generateExecutivePdfReport } from '@security-lab/reporter';
-import { formatSuccess, formatError, formatWarning, formatInfo } from '../output/formatters.js';
+import { formatSuccess, formatWarning, formatInfo } from '../output/formatters.js';
+import { createSpinner } from '../output/spinner.js';
+import { renderFindingsTable, renderSummaryBox } from '../output/table.js';
+import { formatTerminalDiff } from '../output/diff.js';
 
 export interface LocalRunnerOptions {
   configPath?: string;
@@ -275,11 +278,7 @@ export class LocalRunner {
     for (const engine of enginesToRun) {
       const executionId = crypto.randomUUID();
       const startTime = Date.now();
-
-      if (!silent) {
-        // eslint-disable-next-line no-console
-        console.log(formatInfo(`Executing engine: ${pc.bold(engine.id)}...`));
-      }
+      const spinner = !silent ? createSpinner(`Executing engine: ${pc.bold(engine.id)}...`).start() : null;
 
       const execContext: ExecutionContext = {
         correlationId: crypto.randomUUID(),
@@ -397,16 +396,20 @@ export class LocalRunner {
           errorMessage: result.error,
         });
 
-        if (!silent) {
-          const statusIcon = result.success ? pc.green('✔') : pc.yellow('⚠');
-          // eslint-disable-next-line no-console
-          console.log(
-            `  ${statusIcon} ${pc.bold(engine.id)} completed in ${durationMs}ms with ${
-              engineFindings.length === 0
-                ? pc.green('0 findings')
-                : pc.red(`${engineFindings.length} findings`)
-            }`,
-          );
+        if (!silent && spinner) {
+          const findingsText =
+            engineFindings.length === 0
+              ? pc.green('0 findings')
+              : pc.red(`${engineFindings.length} findings`);
+          if (result.success) {
+            spinner.succeed(
+              `${pc.bold(engine.id)} completed in ${durationMs}ms with ${findingsText}`,
+            );
+          } else {
+            spinner.warn(
+              `${pc.bold(engine.id)} completed with warnings in ${durationMs}ms (${findingsText})`,
+            );
+          }
         }
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -418,9 +421,8 @@ export class LocalRunner {
           errorMessage: errorMsg,
         });
 
-        if (!silent) {
-          // eslint-disable-next-line no-console
-          console.log(formatError(`${engine.id} failed: ${errorMsg}`));
+        if (!silent && spinner) {
+          spinner.fail(`${engine.id} failed: ${errorMsg}`);
         }
       }
     }
@@ -753,46 +755,46 @@ ${findingsTableRows}
 
     if (findings.length === 0) {
       // eslint-disable-next-line no-console
-      console.log(pc.green('  ✔ Zero security or resilience defects detected.'));
+      console.log(pc.green('  ✔ Zero security or resilience defects detected.\n'));
     } else {
-      for (const f of findings) {
-        const sevColor =
-          f.severity === 'critical'
-            ? pc.bgRed(pc.bold(' CRITICAL '))
-            : f.severity === 'high'
-              ? pc.red(pc.bold('[HIGH]'))
-              : f.severity === 'medium'
-                ? pc.yellow(pc.bold('[MEDIUM]'))
-                : pc.blue(pc.bold('[LOW]'));
+      // eslint-disable-next-line no-console
+      console.log('\n' + renderFindingsTable(findings) + '\n');
 
-        // eslint-disable-next-line no-console
-        console.log(`\n  ${sevColor} ${pc.bold(f.title)}`);
-        // eslint-disable-next-line no-console
-        console.log(`    Category:       ${f.category}`);
-        // eslint-disable-next-line no-console
-        console.log(`    Description:    ${f.description}`);
-        if (f.recommendation) {
+      for (const f of findings) {
+        const patchDiff = (f.metadata?.patchDiff as string) || (f.metadata?.diff as string);
+        if (patchDiff) {
           // eslint-disable-next-line no-console
-          console.log(`    ${pc.green('Remediation:   ')} ${pc.green(f.recommendation)}`);
-        }
-        const curlCmd = (f.metadata?.reproductionCurl as string) || '';
-        if (curlCmd) {
+          console.log(`  ${pc.bold(pc.cyan('AI Remediation Patch Diff'))} for ${pc.bold(f.title)}:`);
           // eslint-disable-next-line no-console
-          console.log(`    ${pc.cyan('Reproduction:')}`);
-          // eslint-disable-next-line no-console
-          console.log(`      ${pc.gray(curlCmd.split('\n').join('\n      '))}`);
+          console.log(formatTerminalDiff(patchDiff, { showLineNumbers: true }) + '\n');
         }
       }
     }
 
     // eslint-disable-next-line no-console
-    console.log(pc.bold(pc.cyan('\n───────────────────────────────────────────────────────────────────────')));
+    console.log(pc.bold(pc.cyan('───────────────────────────────────────────────────────────────────────\n')));
+
+    const verdictColor =
+      decision === 'passed' ? pc.green : decision === 'warning' ? pc.yellow : pc.red;
+    const verdictText =
+      decision === 'passed'
+        ? 'PASSED (Compliant)'
+        : decision === 'warning'
+          ? 'WARNING (Manual Review Required)'
+          : 'BLOCKED (Policy Violations Detected)';
+
     // eslint-disable-next-line no-console
-    console.log(pc.bold('RELEASE GOVERNANCE VERDICT:'));
-    // eslint-disable-next-line no-console
-    console.log(`  Posture Score:    ${pc.bold(`${score.score} / 100`)} (Grade ${pc.bold(score.grade)})`);
-    // eslint-disable-next-line no-console
-    console.log(`  Severity Breakdown: Critical: ${score.findingCounts.critical} | High: ${score.findingCounts.high} | Medium: ${score.findingCounts.medium} | Low: ${score.findingCounts.low}`);
+    console.log(
+      renderSummaryBox('Security Lab — Release Governance Verdict', [
+        { label: 'Posture Score', value: `${score.score} / 100 (Grade ${score.grade})`, color: (v) => pc.bold(v) },
+        { label: 'Release Gate Verdict', value: verdictText, color: (v) => pc.bold(verdictColor(v)) },
+        { label: 'Critical Vulnerabilities', value: score.findingCounts.critical, color: (v) => score.findingCounts.critical > 0 ? pc.red(pc.bold(v)) : pc.green(v) },
+        { label: 'High Vulnerabilities', value: score.findingCounts.high, color: (v) => score.findingCounts.high > 0 ? pc.red(pc.bold(v)) : pc.green(v) },
+        { label: 'Medium Vulnerabilities', value: score.findingCounts.medium, color: (v) => score.findingCounts.medium > 0 ? pc.yellow(v) : pc.gray(v) },
+        { label: 'Low Vulnerabilities', value: score.findingCounts.low, color: (v) => pc.blue(v) },
+        { label: 'Evaluated Rules', value: gateResult.evaluatedRulesCount },
+      ]),
+    );
 
     if (decision === 'passed') {
       // eslint-disable-next-line no-console
@@ -804,6 +806,8 @@ ${findingsTableRows}
         // eslint-disable-next-line no-console
         console.log(`  ${pc.yellow('•')} ${v.ruleName}: ${v.reason}`);
       }
+      // eslint-disable-next-line no-console
+      console.log('');
     } else {
       // eslint-disable-next-line no-console
       console.log(pc.bold(pc.red(`\n✖ RELEASE GATE: BLOCKED (${gateResult.violations.length} policy violations)\n`)));
@@ -811,6 +815,8 @@ ${findingsTableRows}
         // eslint-disable-next-line no-console
         console.log(`  ${pc.red('•')} ${v.ruleName}: ${v.reason}`);
       }
+      // eslint-disable-next-line no-console
+      console.log('');
     }
   }
 }

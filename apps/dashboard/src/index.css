@@ -33,6 +33,21 @@ code, kbd, samp, pre {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.6875rem;
+  line-height: 1;
+  font-weight: 600;
+  border-radius: 0.25rem;
+  background-color: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #94a3b8;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
 /* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -67,8 +82,22 @@ code, kbd, samp, pre {
   border: 1px solid rgba(255, 255, 255, 0.07);
 }
 
+.glass-card-hover {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card-hover:hover {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
 .glow-blue {
   box-shadow: 0 0 24px -4px rgba(59, 130, 246, 0.25);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 24px -4px rgba(0, 229, 255, 0.28);
 }
 
 .glow-emerald {
@@ -77,6 +106,26 @@ code, kbd, samp, pre {
 
 .glow-rose {
   box-shadow: 0 0 24px -4px rgba(244, 63, 94, 0.25);
+}
+
+.glow-hazard {
+  box-shadow: 0 0 24px -4px rgba(239, 68, 68, 0.3);
+}
+
+.glow-amber {
+  box-shadow: 0 0 24px -4px rgba(245, 158, 11, 0.25);
+}
+
+.glow-purple {
+  box-shadow: 0 0 24px -4px rgba(168, 85, 247, 0.28);
+}
+
+/* Cyber Grid Background Pattern */
+.bg-cyber-grid {
+  background-size: 32px 32px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
 }
 
 /* Animations */
@@ -106,6 +155,21 @@ code, kbd, samp, pre {
 
 .animate-radar-sweep {
   animation: radarSweep 4s linear infinite;
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s ease-in-out infinite;
 }
 
 /* Terminal & Code Block Styling */

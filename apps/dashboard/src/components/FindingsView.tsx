@@ -18,14 +18,18 @@ import {
   AlertOctagon,
   RotateCw,
   ShieldCheck,
-  Calendar,
-  UserCheck,
   Send,
   Loader2,
   FileCode2,
+  GitCompare,
+  Sparkles,
 } from 'lucide-react';
 import { Pagination } from './Pagination.js';
-import { EvidenceModal } from './EvidenceModal.js';
+import { ForensicWireInspectorModal } from './findings/ForensicWireInspectorModal.js';
+import { PolicyWaiverModal } from './findings/PolicyWaiverModal.js';
+import { FlappingIndicatorBadge } from './findings/FlappingIndicatorBadge.js';
+import { RegressionDiffView } from './findings/RegressionDiffView.js';
+import { AiRemediationStudioModal } from './remediation/AiRemediationStudioModal.js';
 import { useAppStore } from '../store/useAppStore.js';
 import { generateCurlSnippet } from '../lib/curl.js';
 
@@ -46,6 +50,9 @@ interface Finding {
   targetId: string;
   evidenceId?: string;
   firstDetectedAt: string;
+  isFlapping?: boolean;
+  flappingScore?: number;
+  metadata?: Record<string, unknown>;
 }
 
 interface Evidence {
@@ -75,6 +82,7 @@ export const FindingsView: React.FC = () => {
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
   const { showToast } = useAppStore();
 
+  const [viewMode, setViewMode] = useState<'triage' | 'diff'>('triage');
   const [selectedSeverity, setSelectedSeverity] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -85,10 +93,9 @@ export const FindingsView: React.FC = () => {
   // Triage Dialog States
   const [activeTriageFinding, setActiveTriageFinding] = useState<Finding | null>(null);
   const [evidenceModalFinding, setEvidenceModalFinding] = useState<Finding | null>(null);
+  const [aiStudioFinding, setAiStudioFinding] = useState<Finding | null>(null);
   const [triageType, setTriageType] = useState<'false_positive' | 'waiver' | null>(null);
   const [justificationNotes, setJustificationNotes] = useState<string>('');
-  const [waiverApprover, setWaiverApprover] = useState<string>('Lead Security Architect');
-  const [waiverDays, setWaiverDays] = useState<number>(30);
   const [retestingFindingId, setRetestingFindingId] = useState<string | null>(null);
 
   const copyToClipboard = (text: string, label: string) => {
@@ -106,6 +113,20 @@ export const FindingsView: React.FC = () => {
         (a: Finding, b: Finding) =>
           new Date(b.firstDetectedAt).getTime() - new Date(a.firstDetectedAt).getTime(),
       );
+    },
+  });
+
+  // 1b. Fetch Test Runs for run-over-run diffing
+  const { data: testRuns = [] } = useQuery<{ id: string; name?: string; status: string; createdAt: string }[]>({
+    queryKey: ['test-runs'],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`${apiUrl}/api/v1/test-runs`);
+        const json = await res.json();
+        return json.data || [];
+      } catch {
+        return [];
+      }
     },
   });
 
@@ -373,15 +394,69 @@ export const FindingsView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* View Header */}
-      <div>
-        <h2 className="text-xl font-bold tracking-tight text-foreground">Findings & Risk Posture</h2>
-        <p className="text-sm text-muted-foreground">
-          Forensically verified security defects, misconfigurations, and non-compliant response headers.
-        </p>
+      {/* View Header with Mode Toggle */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-1 border-b border-border">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight text-foreground">Findings &amp; Risk Posture</h2>
+          <p className="text-sm text-muted-foreground">
+            Forensically verified security defects, misconfigurations, and non-compliant response headers.
+          </p>
+        </div>
+
+        {/* View Mode Switcher */}
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-card/60 border border-border shrink-0">
+          <button
+            type="button"
+            onClick={() => setViewMode('triage')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              viewMode === 'triage'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/60'
+            }`}
+          >
+            <ShieldAlert className="w-3.5 h-3.5" />
+            <span>Triage Explorer</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-950 text-blue-200 border border-blue-800">
+              {findings.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setViewMode('diff')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              viewMode === 'diff'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/60'
+            }`}
+          >
+            <GitCompare className="w-3.5 h-3.5" />
+            <span>Run-over-Run Diff</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              Console
+            </span>
+          </button>
+        </div>
       </div>
 
-      {/* Metric Stat Cards */}
+      {viewMode === 'diff' ? (
+        <RegressionDiffView
+          allFindings={findings as any}
+          testRuns={testRuns}
+          onInspectEvidence={(f) => setEvidenceModalFinding(f as any)}
+          onOpenWaiver={(f) => {
+            setActiveTriageFinding(f as any);
+            setTriageType('waiver');
+          }}
+          onRetest={async (id) => {
+            await targetedRetestMutation.mutateAsync(id);
+          }}
+          onOpenAiStudio={(f) => setAiStudioFinding(f as any)}
+          retestingFindingId={retestingFindingId}
+        />
+      ) : (
+        <>
+          {/* Metric Stat Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div
           onClick={() => setSelectedSeverity('critical')}
@@ -586,6 +661,20 @@ export const FindingsView: React.FC = () => {
                         <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent text-muted-foreground border border-border/50">
                           {finding.category}
                         </span>
+
+                        {/* Flapping Indicator Badge */}
+                        {(finding.isFlapping ||
+                          (finding.flappingScore && finding.flappingScore > 0.4)) && (
+                          <FlappingIndicatorBadge
+                            findingId={finding.id}
+                            flappingScore={finding.flappingScore}
+                            isFlapping={finding.isFlapping}
+                            compact
+                            onRetest={() => targetedRetestMutation.mutate(finding.id)}
+                            isRetesting={retestingFindingId === finding.id}
+                          />
+                        )}
+
                         <button
                           type="button"
                           onClick={(e) => {
@@ -665,8 +754,6 @@ export const FindingsView: React.FC = () => {
                             setActiveTriageFinding(finding);
                             setTriageType('waiver');
                             setJustificationNotes('');
-                            setWaiverApprover('AppSec Lead');
-                            setWaiverDays(30);
                           }}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 transition-all font-medium text-xs shadow-sm cursor-pointer"
                         >
@@ -691,6 +778,20 @@ export const FindingsView: React.FC = () => {
                             }`}
                           />
                           <span>Retest Now</span>
+                        </button>
+
+                        {/* Button: AI Remediation & Patch Studio */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAiStudioFinding(finding);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 transition-all font-medium text-xs shadow-sm cursor-pointer"
+                          title="Open AI Patch Studio with side-by-side diff and verification loop"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                          <span>AI Patch Studio</span>
                         </button>
 
                         {/* Button: Full Forensic Evidence Modal */}
@@ -897,101 +998,53 @@ export const FindingsView: React.FC = () => {
           pageSizeOptions={[4, 6, 12, 20]}
         />
       </div>
+        </>
+      )}
 
-      {/* Interactive Finding Triage Modal (False Positive / Policy Waiver) */}
-      {triageType && activeTriageFinding && (
+      {/* Interactive False Positive Dialog */}
+      {triageType === 'false_positive' && activeTriageFinding && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
           <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden p-6 space-y-5">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border/70 pb-3">
               <div className="flex items-center gap-2.5">
-                {triageType === 'false_positive' ? (
-                  <AlertOctagon className="w-5 h-5 text-amber-400" />
-                ) : (
-                  <ShieldCheck className="w-5 h-5 text-purple-400" />
-                )}
-                <div>
-                  <h3 className="text-base font-bold text-foreground">
-                    {triageType === 'false_positive'
-                      ? 'Mark Finding as False Positive'
-                      : 'Assign Security Policy Waiver'}
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    {triageType === 'false_positive'
-                      ? 'Suppress vulnerability alert with engineering justification comment'
-                      : 'Create temporary compliance exemption with active expiration'}
-                  </p>
-                </div>
+                <AlertOctagon className="w-5 h-5 text-amber-400" />
+                <h3 className="font-semibold text-foreground text-base">
+                  Mark as False Positive
+                </h3>
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setTriageType(null);
                   setActiveTriageFinding(null);
                 }}
-                className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+                className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-accent transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Target Finding Metadata Chip */}
-            <div className="p-3 rounded-xl bg-background/80 border border-border/60 text-xs space-y-1">
-              <span className="text-[10px] text-muted-foreground uppercase font-semibold">Target Finding:</span>
-              <div className="font-semibold text-foreground truncate">{activeTriageFinding.title}</div>
-              <div className="text-[11px] font-mono text-muted-foreground truncate">
+            {/* Target Finding Summary */}
+            <div className="p-3 rounded-xl bg-accent/30 border border-border/60 space-y-1 text-xs">
+              <div className="font-medium text-foreground">{activeTriageFinding.title}</div>
+              <div className="font-mono text-muted-foreground text-[11px] truncate">
                 Fingerprint: {activeTriageFinding.fingerprint}
               </div>
             </div>
 
-            {/* Form Fields */}
+            {/* Justification Input */}
             <div className="space-y-4 text-xs">
-              {triageType === 'waiver' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-muted-foreground font-medium flex items-center gap-1.5">
-                      <UserCheck className="w-3.5 h-3.5 text-purple-400" /> Approved By:
-                    </label>
-                    <input
-                      type="text"
-                      value={waiverApprover}
-                      onChange={(e) => setWaiverApprover(e.target.value)}
-                      placeholder="e.g. Lead AppSec Architect"
-                      className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground font-sans text-xs focus:ring-1 focus:ring-purple-500"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-muted-foreground font-medium flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5 text-purple-400" /> Expiry Duration:
-                    </label>
-                    <select
-                      value={waiverDays}
-                      onChange={(e) => setWaiverDays(Number(e.target.value))}
-                      className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground font-sans text-xs focus:ring-1 focus:ring-purple-500 cursor-pointer"
-                    >
-                      <option value={7}>7 Days (Short-term grace)</option>
-                      <option value={14}>14 Days (Sprint cycle)</option>
-                      <option value={30}>30 Days (Standard 1 Month)</option>
-                      <option value={60}>60 Days (2 Months)</option>
-                      <option value={90}>90 Days (Quarterly review)</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-
               <div className="space-y-1">
                 <label className="text-muted-foreground font-medium flex items-center gap-1.5">
                   <Send className="w-3.5 h-3.5 text-blue-400" />
-                  {triageType === 'false_positive' ? 'Justification Reason (Required):' : 'Waiver Rationale (Required):'}
+                  Justification Reason (Required):
                 </label>
                 <textarea
                   rows={3}
                   value={justificationNotes}
                   onChange={(e) => setJustificationNotes(e.target.value)}
-                  placeholder={
-                    triageType === 'false_positive'
-                      ? 'e.g. Verified header is stripped at edge CDN; target behavior is by design'
-                      : 'e.g. Legacy service pending migration in Q4; mitigating WAF controls in place'
-                  }
+                  placeholder="e.g. Verified header is stripped at edge CDN; target behavior is by design"
                   className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground font-sans text-xs focus:ring-1 focus:ring-blue-500 resize-none"
                 />
               </div>
@@ -1011,55 +1064,72 @@ export const FindingsView: React.FC = () => {
               </button>
               <button
                 type="button"
-                disabled={
-                  !justificationNotes.trim() ||
-                  (triageType === 'waiver' ? assignWaiverMutation.isPending : triageMutation.isPending)
-                }
+                disabled={!justificationNotes.trim() || triageMutation.isPending}
                 onClick={() => {
-                  if (triageType === 'false_positive') {
-                    triageMutation.mutate({
-                      findingId: activeTriageFinding.id,
-                      status: 'false_positive',
-                      notes: justificationNotes.trim(),
-                    });
-                  } else {
-                    assignWaiverMutation.mutate({
-                      finding: activeTriageFinding,
-                      reason: justificationNotes.trim(),
-                      approvedBy: waiverApprover.trim() || 'AppSec Engineer',
-                      days: waiverDays,
-                    });
-                  }
+                  triageMutation.mutate({
+                    findingId: activeTriageFinding.id,
+                    status: 'false_positive',
+                    notes: justificationNotes.trim(),
+                  });
                 }}
-                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-sm cursor-pointer disabled:opacity-50 ${
-                  triageType === 'false_positive'
-                    ? 'bg-amber-600 hover:bg-amber-500'
-                    : 'bg-purple-600 hover:bg-purple-500'
-                }`}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 transition-all shadow-sm cursor-pointer disabled:opacity-50"
               >
-                {(triageType === 'waiver' ? assignWaiverMutation.isPending : triageMutation.isPending) && (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                )}
-                <span>
-                  {triageType === 'false_positive' ? 'Confirm False Positive' : 'Assign Policy Waiver'}
-                </span>
+                {triageMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Confirm False Positive</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Forensic Evidence Full Modal */}
+      {/* Timed Policy Waiver Modal */}
+      <PolicyWaiverModal
+        isOpen={triageType === 'waiver' && !!activeTriageFinding}
+        onClose={() => {
+          setTriageType(null);
+          setActiveTriageFinding(null);
+        }}
+        finding={activeTriageFinding as any}
+        onSubmitWaiver={async (params) => {
+          await assignWaiverMutation.mutateAsync({
+            finding: params.finding as any,
+            reason: params.reason,
+            approvedBy: params.approvedBy,
+            days: params.days,
+          });
+        }}
+        isSubmitting={assignWaiverMutation.isPending}
+      />
+
+      {/* Military-Grade Forensic Evidence Wire Inspector */}
       {evidenceModalFinding && (
-        <EvidenceModal
+        <ForensicWireInspectorModal
           isOpen={!!evidenceModalFinding}
           onClose={() => setEvidenceModalFinding(null)}
           findingId={evidenceModalFinding.id}
           findingTitle={evidenceModalFinding.title}
           findingSeverity={evidenceModalFinding.severity}
           category={evidenceModalFinding.category}
-          evidence={evidence}
+          evidence={evidence as any}
           isLoading={isLoadingEvidence}
+        />
+      )}
+
+      {/* AI Remediation & Patch Studio Modal */}
+      {aiStudioFinding && (
+        <AiRemediationStudioModal
+          isOpen={!!aiStudioFinding}
+          onClose={() => setAiStudioFinding(null)}
+          finding={aiStudioFinding as any}
+          onApplyPatch={async (proposal) => {
+            await triageMutation.mutateAsync({
+              findingId: aiStudioFinding.id,
+              status: 'in_progress',
+              notes: `AI Patch accepted (${proposal.model || 'LLM'}): confidence ${Math.round(
+                proposal.confidenceScore * 100,
+              )}%, verification ${proposal.verifiedStatus}`,
+            });
+          }}
         />
       )}
     </div>

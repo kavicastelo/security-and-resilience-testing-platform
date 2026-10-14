@@ -23,37 +23,17 @@ import {
   Search,
   Copy,
   Terminal,
+  Layers,
 } from 'lucide-react';
 import { EvaluateReleaseModal } from './EvaluateReleaseModal.js';
 import { Pagination } from './Pagination.js';
 import { LiveRunMonitor } from './LiveRunMonitor.js';
 import { LatencyDistributionChart } from './LatencyDistributionChart.js';
+import { PlanStudioModal } from './plan-studio/PlanStudioModal.js';
+import { LiveRunDrawer } from './telemetry/LiveRunDrawer.js';
 import { useAppStore } from '../store/useAppStore.js';
 import { getStoredApiKey, authFetch } from '../api/client.js';
-
-interface TargetScope {
-  allowedHosts?: string[];
-  allowedPorts?: number[];
-  excludedPaths?: string[];
-  testing?: {
-    activeScanning?: boolean;
-    loadTesting?: boolean;
-    chaosTesting?: boolean;
-  };
-  limits?: {
-    maxRps?: number;
-    maxConcurrency?: number;
-    maxDuration?: string;
-  };
-}
-
-interface Target {
-  id: string;
-  projectId: string;
-  name: string;
-  baseUrl: string;
-  scope?: TargetScope;
-}
+import { Target } from '../api/targets.js';
 
 interface TestRunSummary {
   totalTests: number;
@@ -352,6 +332,12 @@ export const RunsView: React.FC = () => {
   const [declarativeYaml, setDeclarativeYaml] = useState(DEFAULT_DECLARATIVE_YAML);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [activeStreamingRunId, setActiveStreamingRunId] = useState<string | null>(null);
+  const [isPlanStudioOpen, setIsPlanStudioOpen] = useState(false);
+  const [telemetryDrawerRun, setTelemetryDrawerRun] = useState<{
+    id: string;
+    targetUrl?: string;
+    targetName?: string;
+  } | null>(null);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -490,6 +476,12 @@ export const RunsView: React.FC = () => {
       if (data?.testRun?.id) {
         setExpandedRunId(data.testRun.id);
         setActiveStreamingRunId(data.testRun.id);
+        const tgt = targets.find((t) => t.id === selectedTargetId);
+        setTelemetryDrawerRun({
+          id: data.testRun.id,
+          targetUrl: tgt?.baseUrl,
+          targetName: tgt?.name,
+        });
       }
     },
   });
@@ -545,13 +537,22 @@ export const RunsView: React.FC = () => {
             Execute in-process Class A security engines, Class B containerized scanners (ZAP / Trivy), and declarative YAML runners.
           </p>
         </div>
-        <button
-          onClick={() => refetch()}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-accent text-sm text-foreground transition-colors self-start md:self-auto"
-        >
-          <RotateCw className="w-4 h-4 text-muted-foreground" />
-          <span>Refresh</span>
-        </button>
+        <div className="flex items-center gap-2 self-start md:self-auto">
+          <button
+            onClick={() => setIsPlanStudioOpen(true)}
+            className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-sm font-semibold text-white shadow-md hover:glow-blue transition-all"
+          >
+            <Layers className="w-4 h-4" />
+            <span>Visual Test Plan Studio</span>
+          </button>
+          <button
+            onClick={() => refetch()}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-accent text-sm text-foreground transition-colors"
+          >
+            <RotateCw className="w-4 h-4 text-muted-foreground" />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
       {/* Execution Launcher Card */}
@@ -561,7 +562,17 @@ export const RunsView: React.FC = () => {
             <Play className="w-4 h-4 text-blue-400" />
             <span className="font-semibold text-sm text-foreground">Launch Security Test Run</span>
           </div>
-          <span className="text-xs font-mono text-muted-foreground">Unified TestEngine Dispatcher</span>
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={() => setIsPlanStudioOpen(true)}
+              className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Open Visual Plan Studio</span>
+            </button>
+            <span className="text-xs font-mono text-muted-foreground hidden sm:inline">• Unified TestEngine Dispatcher</span>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1090,18 +1101,21 @@ export const RunsView: React.FC = () => {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setActiveStreamingRunId(activeStreamingRunId === run.id ? null : run.id);
-                                if (!isExpanded) setExpandedRunId(run.id);
+                                setTelemetryDrawerRun({
+                                  id: run.id,
+                                  targetUrl: target?.baseUrl,
+                                  targetName: target?.name,
+                                });
                               }}
-                              title="Toggle Real-Time Telemetry Stream"
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono border transition-all cursor-pointer ${
-                                activeStreamingRunId === run.id || run.status === 'running'
-                                  ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm'
+                              title="Open Real-Time Telemetry Console & Streaming Terminal"
+                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-mono border transition-all cursor-pointer ${
+                                run.status === 'running'
+                                  ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm animate-pulse'
                                   : 'bg-accent/60 hover:bg-accent text-muted-foreground hover:text-foreground border-border/60'
                               }`}
                             >
-                              <Activity className={`w-3 h-3 text-blue-400 ${run.status === 'running' ? 'animate-pulse' : ''}`} />
-                              <span>Live Stream</span>
+                              <Activity className={`w-3.5 h-3.5 text-blue-400 ${run.status === 'running' ? 'animate-pulse' : ''}`} />
+                              <span>Live Console</span>
                             </button>
 
                             <button
@@ -1262,6 +1276,29 @@ export const RunsView: React.FC = () => {
         preselectedRunId={evaluatingRunId || undefined}
         apiUrl={apiUrl}
       />
+
+      {/* Visual Test Plan Studio Modal */}
+      <PlanStudioModal
+        targets={targets}
+        isOpen={isPlanStudioOpen}
+        onClose={() => setIsPlanStudioOpen(false)}
+        onRunLaunched={(runId) => {
+          setExpandedRunId(runId);
+          setActiveStreamingRunId(runId);
+          setTelemetryDrawerRun({ id: runId });
+        }}
+      />
+
+      {/* Real-Time Live Execution Telemetry Drawer / Console */}
+      {telemetryDrawerRun && (
+        <LiveRunDrawer
+          runId={telemetryDrawerRun.id}
+          targetUrl={telemetryDrawerRun.targetUrl}
+          targetName={telemetryDrawerRun.targetName}
+          isOpen={Boolean(telemetryDrawerRun)}
+          onClose={() => setTelemetryDrawerRun(null)}
+        />
+      )}
     </div>
   );
 };

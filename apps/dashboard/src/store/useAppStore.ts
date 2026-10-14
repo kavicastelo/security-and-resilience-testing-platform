@@ -14,15 +14,39 @@ export interface ToastMessage {
   type: 'success' | 'error' | 'info';
 }
 
+export type NavTab =
+  | 'overview'
+  | 'targets'
+  | 'runs'
+  | 'findings'
+  | 'policies'
+  | 'management'
+  | 'governance'
+  | 'api-security'
+  | 'auth-vault'
+  | 'authz-matrix'
+  | 'resilience'
+  | 'performance'
+  | 'infra-supply-chain'
+  | 'agent-fleet'
+  | 'compliance'
+  | 'integrations';
+
 export interface AppState {
-  activeTab: 'overview' | 'targets' | 'runs' | 'findings' | 'policies' | 'management';
-  setActiveTab: (tab: AppState['activeTab']) => void;
+  activeTab: NavTab;
+  setActiveTab: (tab: NavTab) => void;
   controllerStatus: 'checking' | 'connected' | 'disconnected';
   setControllerStatus: (status: AppState['controllerStatus']) => void;
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
   isAuthModalOpen: boolean;
   setIsAuthModalOpen: (open: boolean) => void;
+  isCommandPaletteOpen: boolean;
+  setIsCommandPaletteOpen: (open: boolean) => void;
+  currentTenantId: string;
+  setCurrentTenantId: (tenantId: string) => void;
+  currentWorkspaceId: string;
+  setCurrentWorkspaceId: (workspaceId: string) => void;
   apiKey: string;
   setApiKey: (key: string, persist?: boolean) => void;
   clearApiKey: () => void;
@@ -44,6 +68,12 @@ export const useAppStore = create<AppState>((set) => ({
   setIsMobileMenuOpen: (isMobileMenuOpen) => set({ isMobileMenuOpen }),
   isAuthModalOpen: false,
   setIsAuthModalOpen: (isAuthModalOpen) => set({ isAuthModalOpen }),
+  isCommandPaletteOpen: false,
+  setIsCommandPaletteOpen: (isCommandPaletteOpen) => set({ isCommandPaletteOpen }),
+  currentTenantId: 'default',
+  setCurrentTenantId: (currentTenantId) => set({ currentTenantId }),
+  currentWorkspaceId: 'default',
+  setCurrentWorkspaceId: (currentWorkspaceId) => set({ currentWorkspaceId }),
   apiKey: getStoredApiKey(),
   setApiKey: (key: string, persist = true) => {
     setStoredApiKey(key, persist);

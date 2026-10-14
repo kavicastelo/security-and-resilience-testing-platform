@@ -99,7 +99,19 @@ export const webhooksRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     },
   );
 
-  // 5. Inbound Issue Tracker Webhooks (GitHub / Jira issue closure triggers retest)
+  // 5. List delivery logs for a specific webhook
+  fastify.get<{ Params: { id: string }; Querystring: { limit?: number } }>(
+    '/api/v1/webhooks/:id/deliveries',
+    { preHandler: [requireAuditor] },
+    async (request, reply) => {
+      const { id } = request.params;
+      const limit = Number(request.query.limit) || 50;
+      const deliveries = await webhookQueueService.listDeliveries(id, limit);
+      return reply.send({ success: true, data: deliveries });
+    },
+  );
+
+  // 6. Inbound Issue Tracker Webhooks (GitHub / Jira issue closure triggers retest)
   fastify.post('/api/v1/integrations/github/webhook', async (request, reply) => {
     const event = (request.headers['x-github-event'] as string) || 'issues';
     const payload = (request.body as Record<string, unknown>) || {};
