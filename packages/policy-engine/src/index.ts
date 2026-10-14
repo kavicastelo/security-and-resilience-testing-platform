@@ -103,10 +103,17 @@ export function evaluatePolicy(
     }
   }
 
-  // 1. Separate findings into active vs waived
+  // 1. Separate findings into active vs waived or flapping-suppressed
   const activeFindings: Finding[] = [];
   for (const finding of findings) {
     const activeWaiver = waiverByFingerprint.get(finding.fingerprint);
+    const isFlapping =
+      finding.isFlapping === true ||
+      (typeof finding.flappingScore === 'number' && finding.flappingScore > 0.4) ||
+      finding.metadata?.unstableFlapping === true ||
+      (Array.isArray((finding.metadata as Record<string, unknown> | undefined)?.tags) &&
+        ((finding.metadata as Record<string, unknown>).tags as string[]).includes('UNSTABLE_FLAPPING'));
+
     if (activeWaiver) {
       waivedFindings.push({
         findingId: finding.id,
@@ -115,6 +122,22 @@ export function evaluatePolicy(
         reason: activeWaiver.reason,
         approvedBy: activeWaiver.approvedBy,
         expiresAt: activeWaiver.expiresAt as Date,
+      });
+    } else if (isFlapping) {
+      waivedFindings.push({
+        findingId: finding.id,
+        fingerprint: finding.fingerprint,
+        title: finding.title,
+        reason: `Suppressed from release gate due to high oscillation flapping (score: ${finding.flappingScore ?? 0.5} > 0.4)`,
+        approvedBy: 'system:flapping-detector',
+        expiresAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+      });
+      violations.push({
+        ruleId: 'flapping-suppressed',
+        ruleName: 'Flapping Finding Suppressed',
+        action: 'warn',
+        reason: `Finding "${finding.title}" (${finding.fingerprint}) is marked as UNSTABLE_FLAPPING (score > 0.4); release gate blocking is suppressed.`,
+        category: 'waiver',
       });
     } else {
       activeFindings.push(finding);

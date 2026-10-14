@@ -1,12 +1,13 @@
+/* global console */
 import net from 'node:net';
 
 const server = net.createServer((socket) => {
   const remote = net.connect(5432, '127.0.0.1');
   socket.pipe(remote).pipe(socket);
-  socket.on('error', (err) => {
+  socket.on('error', () => {
     // ignore socket reset
   });
-  remote.on('error', (err) => {
+  remote.on('error', () => {
     // ignore remote reset
   });
 });

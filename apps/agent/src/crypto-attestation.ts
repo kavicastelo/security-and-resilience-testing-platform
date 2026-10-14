@@ -1,1 +1,1 @@
-export * from '../../../packages/crypto/src/attestation.js';
+export * from '@security-lab/crypto';

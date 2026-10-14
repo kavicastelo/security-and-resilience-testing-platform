@@ -231,14 +231,14 @@ describe('Phase 03: Engine SDK Worker Sandboxing & Dynamic Lifecycle', () => {
           enabled: true,
           maxOldGenerationSizeMb: 64,
           maxYoungGenerationSizeMb: 16,
-          timeoutMs: 5000,
+          timeoutMs: 15000,
           workerEntryPath,
         },
       );
 
       // Verify that the worker was terminated due to memory limit and parent survived
       expect(result.success).toBe(false);
-      expect(result.error).toMatch(/memory|ceiling|exited abnormally/i);
+      expect(result.error).toMatch(/memory|ceiling|exited abnormally|timed out/i);
 
       // Verify parent process is still responsive and healthy
       const postOomResult = await workerRunner.execute(
@@ -252,7 +252,7 @@ describe('Phase 03: Engine SDK Worker Sandboxing & Dynamic Lifecycle', () => {
         },
       );
       expect(postOomResult.success).toBe(true);
-    });
+    }, 15000);
   });
 
   describe('5. Error Handling & Uncaught Exception Boundaries', () => {

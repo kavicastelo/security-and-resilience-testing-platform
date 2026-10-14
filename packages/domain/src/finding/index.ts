@@ -20,6 +20,7 @@ export type FindingConfidence = z.infer<typeof FindingConfidenceSchema>;
 
 export const FindingStatusSchema = z.enum([
   'open',
+  'confirmed',
   'acknowledged',
   'in_progress',
   'resolved',
@@ -54,6 +55,9 @@ export const FindingSchema = z.object({
   lastDetectedAt: z.date(),
   fixedAt: z.date().optional(),
   metadata: z.record(z.string(), z.any()).default({}),
+  flappingScore: z.number().default(0.0),
+  isFlapping: z.boolean().default(false),
+  triageHistory: z.array(z.record(z.string(), z.any())).default([]),
 });
 
 export type Finding = z.infer<typeof FindingSchema>;

@@ -16,6 +16,7 @@ import {
   ExecutionProgressEvent,
 } from '../services/execution-events.js';
 import { requireEngineer, requireAuditor } from '../plugins/rbac.js';
+import { billingService } from '../services/billing/billing.service.js';
 
 export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   const defaultScanMax = process.env.NODE_ENV === 'production' ? 10 : 500;
@@ -64,6 +65,21 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     try {
       const tenantId = extractTenantScope(request);
       const workspaceId = request.user?.role === 'ADMIN' && !request.headers['x-workspace-id'] ? undefined : request.workspaceId;
+
+      if (workspaceId) {
+        const quotaCheck = await billingService.checkRunQuota(workspaceId);
+        if (!quotaCheck.allowed) {
+          return reply.status(402).send({
+            success: false,
+            error: {
+              code: quotaCheck.code || 'QUOTA_EXCEEDED',
+              message: quotaCheck.message || 'Execution quota exceeded',
+              details: quotaCheck.details,
+            },
+          });
+        }
+      }
+
       const testRun = await testRunsService.createTestRun(parseResult.data, tenantId, workspaceId);
       return reply.status(201).send({
         success: true,
@@ -153,6 +169,7 @@ export const testRunsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // 3c. Real-Time Execution SSE Stream
   fastify.get<{ Params: { id: string } }>('/api/v1/test-runs/:id/stream', {
+    preHandler: [requireAuditor],
     config: {
       rateLimit: false,
     },

@@ -108,9 +108,10 @@ export function validateUrlAgainstScope(
             ? 6379
             : 80;
 
-  if (!scope.allowedPorts.includes(effectivePort)) {
+  const allowedPorts = Array.isArray(scope.allowedPorts) ? scope.allowedPorts : [80, 443, 8080, 3000];
+  if (!allowedPorts.includes(effectivePort)) {
     violations.push(
-      `Port "${effectivePort}" is not within authorized scope allowedPorts: [${scope.allowedPorts.join(', ')}]`,
+      `Port "${effectivePort}" is not within authorized scope allowedPorts: [${allowedPorts.join(', ')}]`,
     );
   }
 

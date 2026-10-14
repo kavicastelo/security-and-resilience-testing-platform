@@ -8,6 +8,7 @@ import { findingsService } from './findings.service.js';
 import { metricsService } from './metrics.service.js';
 import { policiesService } from './policies.service.js';
 import { reportsService } from './reports.service.js';
+import { webhookQueueService } from './webhook-queue.js';
 
 import { evaluatePolicy, PolicyEvaluationResult } from '@security-lab/policy-engine';
 import { calculatePostureScore, PostureScoreResult } from '@security-lab/scoring';
@@ -293,6 +294,31 @@ export class ReleasesService {
           await reportsService.persistTestRunReports(testRun.id, effectivePolicy.id);
         } catch (reportErr: unknown) {
           logger.warn({ reportErr, testRunId: testRun.id }, 'Failed to persist reports on release evaluation');
+        }
+
+        // Dispatch release.evaluated webhook
+        try {
+          const project = await db
+            .select({ workspaceId: projects.workspaceId })
+            .from(projects)
+            .where(eq(projects.id, testRun.projectId))
+            .limit(1);
+
+          const workspaceId = project[0]?.workspaceId || '00000000-0000-0000-0000-000000000000';
+          await webhookQueueService.dispatchEvent(workspaceId, 'release.evaluated', {
+            releaseId: createdRelease.id,
+            projectId: createdRelease.projectId,
+            name: createdRelease.name,
+            version: createdRelease.version,
+            decision: createdRelease.decision,
+            passed: gateResult.passed,
+            score: score.score,
+            grade: score.grade,
+            violationsCount: gateResult.violations.length,
+            evaluatorHash,
+          });
+        } catch (webhookErr: unknown) {
+          logger.warn({ webhookErr }, 'Failed to dispatch release.evaluated webhook event');
         }
       }
     }

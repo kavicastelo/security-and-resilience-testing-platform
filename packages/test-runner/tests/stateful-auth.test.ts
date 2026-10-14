@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { StatefulAuthenticator } from '../src/stateful-auth.js';
 import { executeHttpRequest } from '../src/executor.js';
 import { AuthFlow } from '@security-lab/contracts';
@@ -7,7 +7,6 @@ import {
   decrypt,
   encryptObject,
   decryptObject,
-  generateTotp,
   verifyTotp,
   redactHeaders,
   REDACTED_VALUE,

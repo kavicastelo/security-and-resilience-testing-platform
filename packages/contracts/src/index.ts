@@ -19,3 +19,5 @@ export * from './target.js';
 export * from './database.js';
 export * from './k8s-audit.js';
 export * from './sbom.js';
+export * from './remediation.js';
+export * from './saas.js';

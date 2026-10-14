@@ -118,12 +118,49 @@ class TelemetryRegistry {
     this.jobsFailedTotal += count;
   }
 
+  private webhookDeliveriesSuccessTotal = 0;
+  private webhookDeliveriesFailureTotal = 0;
+  private aiRemediationsGeneratedTotal = 0;
+  private aiRemediationsVerifiedSuccessTotal = 0;
+  private aiRemediationsVerifiedFailureTotal = 0;
+
+  recordWebhookDelivery(status: 'success' | 'failure', count = 1): void {
+    if (status === 'success') {
+      this.webhookDeliveriesSuccessTotal += count;
+    } else {
+      this.webhookDeliveriesFailureTotal += count;
+    }
+  }
+
+  recordAiRemediation(type: 'generated' | 'passed' | 'failed', count = 1): void {
+    if (type === 'generated') {
+      this.aiRemediationsGeneratedTotal += count;
+    } else if (type === 'passed') {
+      this.aiRemediationsVerifiedSuccessTotal += count;
+    } else if (type === 'failed') {
+      this.aiRemediationsVerifiedFailureTotal += count;
+    }
+  }
+
   clear(): void {
     this.agentHeartbeats.clear();
     this.activeLeases.clear();
     this.jobsLeasedTotal = 0;
     this.jobsCompletedTotal = 0;
     this.jobsFailedTotal = 0;
+    this.webhookDeliveriesSuccessTotal = 0;
+    this.webhookDeliveriesFailureTotal = 0;
+    this.aiRemediationsGeneratedTotal = 0;
+    this.aiRemediationsVerifiedSuccessTotal = 0;
+    this.aiRemediationsVerifiedFailureTotal = 0;
+    this.tenantUsageSeconds = new Map();
+  }
+
+  private tenantUsageSeconds: Map<string, number> = new Map();
+
+  recordTenantUsage(workspaceId: string, seconds: number): void {
+    const current = this.tenantUsageSeconds.get(workspaceId) || 0;
+    this.tenantUsageSeconds.set(workspaceId, current + Math.max(0, Math.round(seconds)));
   }
 
   exportPrometheus(): string {
@@ -170,6 +207,34 @@ class TelemetryRegistry {
     lines.push('# HELP security_lab_jobs_failed_total Total number of jobs failed during agent execution');
     lines.push('# TYPE security_lab_jobs_failed_total counter');
     lines.push(`security_lab_jobs_failed_total ${this.jobsFailedTotal}`);
+
+    // 6. Webhook Deliveries Total Counter
+    lines.push('# HELP security_lab_webhook_deliveries_total Total number of webhook event deliveries');
+    lines.push('# TYPE security_lab_webhook_deliveries_total counter');
+    lines.push(`security_lab_webhook_deliveries_total{status="success"} ${this.webhookDeliveriesSuccessTotal}`);
+    lines.push(`security_lab_webhook_deliveries_total{status="failure"} ${this.webhookDeliveriesFailureTotal}`);
+
+    // 7. AI Remediations Total Counter
+    lines.push('# HELP security_lab_ai_remediations_total Total number of AI code remediations synthesized');
+    lines.push('# TYPE security_lab_ai_remediations_total counter');
+    lines.push(`security_lab_ai_remediations_total ${this.aiRemediationsGeneratedTotal}`);
+
+    // 8. AI Remediations Verified Counter
+    lines.push('# HELP security_lab_ai_remediations_verified_total Total number of AI code remediations verified through automated retesting');
+    lines.push('# TYPE security_lab_ai_remediations_verified_total counter');
+    lines.push(`security_lab_ai_remediations_verified_total{status="passed"} ${this.aiRemediationsVerifiedSuccessTotal}`);
+    lines.push(`security_lab_ai_remediations_verified_total{status="failed"} ${this.aiRemediationsVerifiedFailureTotal}`);
+
+    // 9. Tenant Usage Seconds Counter
+    lines.push('# HELP security_lab_tenant_usage_seconds_total Total execution runtime consumed by workspace in seconds');
+    lines.push('# TYPE security_lab_tenant_usage_seconds_total counter');
+    if (this.tenantUsageSeconds.size === 0) {
+      lines.push('# (no usage recorded)');
+    } else {
+      for (const [workspaceId, seconds] of this.tenantUsageSeconds.entries()) {
+        lines.push(`security_lab_tenant_usage_seconds_total{workspace_id="${workspaceId}"} ${seconds}`);
+      }
+    }
 
     return lines.join('\n') + '\n';
   }

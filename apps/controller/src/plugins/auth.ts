@@ -149,6 +149,28 @@ function isAgentDaemonRoute(url: string): boolean {
 }
 
 /**
+ * Determines whether a route is an inbound third-party integration webhook endpoint.
+ * These endpoints (GitHub / Jira webhooks) verify their own third-party signatures.
+ */
+function isIntegrationWebhookRoute(url: string): boolean {
+  const cleanUrl = (url || '').split('?')[0]!.replace(/\/$/, '');
+  return cleanUrl.startsWith('/api/v1/integrations/');
+}
+
+/**
+ * Determines whether a route is an inbound SSO, Billing webhook, or SCIM endpoint.
+ * These endpoints verify their own signatures or payloads.
+ */
+function isSsoOrBillingRoute(url: string): boolean {
+  const cleanUrl = (url || '').split('?')[0]!.replace(/\/$/, '');
+  if (cleanUrl.startsWith('/api/v1/auth/sso/saml/') && (cleanUrl.endsWith('/metadata') || cleanUrl.endsWith('/acs'))) return true;
+  if (cleanUrl.startsWith('/api/v1/auth/sso/oidc/') && (cleanUrl.endsWith('/login') || cleanUrl.endsWith('/callback'))) return true;
+  if (cleanUrl === '/api/v1/billing/webhook') return true;
+  if (cleanUrl.startsWith('/scim/v2')) return true;
+  return false;
+}
+
+/**
  * Registers centralized authentication hooks directly on the Fastify instance.
  */
 export function registerAuthHooks(fastify: FastifyInstance, options: AuthPluginOptions = {}): void {
@@ -194,6 +216,20 @@ export function registerAuthHooks(fastify: FastifyInstance, options: AuthPluginO
     // 3. Agent daemon-facing worker endpoints (handled by agentsRoutes with TEK or Agent tokens)
     if (isAgentDaemonRoute(request.url)) {
       request.auth = { role: 'agent', tenantId: defaultTenantId, workspaceId: DEFAULT_WORKSPACE_ID };
+      request.workspaceId = DEFAULT_WORKSPACE_ID;
+      return;
+    }
+
+    // 4. Inbound third-party integration webhook endpoints (verify own signatures)
+    if (isIntegrationWebhookRoute(request.url)) {
+      request.auth = { role: 'public', tenantId: defaultTenantId, workspaceId: DEFAULT_WORKSPACE_ID };
+      request.workspaceId = DEFAULT_WORKSPACE_ID;
+      return;
+    }
+
+    // 5. Inbound SSO, Billing Webhook, and SCIM routes (verify own credentials/signatures)
+    if (isSsoOrBillingRoute(request.url)) {
+      request.auth = { role: 'public', tenantId: defaultTenantId, workspaceId: DEFAULT_WORKSPACE_ID };
       request.workspaceId = DEFAULT_WORKSPACE_ID;
       return;
     }
@@ -276,7 +312,7 @@ export function registerAuthHooks(fastify: FastifyInstance, options: AuthPluginO
             workspaceId,
           };
         }
-      } catch (err) {
+      } catch (_err) {
         // Fall through to static keys if DB query error occurs
       }
     }

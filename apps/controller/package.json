@@ -24,6 +24,7 @@
     "@security-lab/evidence": "workspace:*",
     "@security-lab/logger": "workspace:*",
     "@security-lab/policy-engine": "workspace:*",
+    "@security-lab/reporter": "workspace:*",
     "@security-lab/scoring": "workspace:*",
     "@security-lab/test-sdk": "workspace:*",
     "drizzle-orm": "^0.39.3",

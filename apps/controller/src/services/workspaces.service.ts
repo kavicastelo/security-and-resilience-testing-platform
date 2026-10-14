@@ -407,7 +407,7 @@ export class WorkspacesService {
         details: input.details || {},
         ipAddress: input.ipAddress,
       });
-    } catch (err) {
+    } catch (_err) {
       // Non-blocking for primary flows
     }
   }

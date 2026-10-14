@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
 import { eq, and, or, inArray } from 'drizzle-orm';
 import { getDatabase } from './db.js';
-import { findings } from './db/schema.js';
+import { findings, targets, projects } from './db/schema.js';
 import { Finding, FindingSeverity, FindingConfidence, FindingStatus } from '@security-lab/domain';
 import { logger } from '@security-lab/logger';
 import { DEFAULT_TENANT_ID } from './tenants.service.js';
+import { webhookQueueService } from './webhook-queue.js';
 
 export interface CreateFindingInput {
   id?: string;
@@ -290,6 +291,38 @@ export class FindingsService {
       'Finding lifecycle transition: new finding detected',
     );
 
+    // Asynchronously dispatch finding.created webhook
+    try {
+      const targetRow = await db
+        .select({ projectId: targets.projectId })
+        .from(targets)
+        .where(eq(targets.id, input.targetId))
+        .limit(1);
+
+      if (targetRow[0]?.projectId) {
+        const projectRow = await db
+          .select({ workspaceId: projects.workspaceId })
+          .from(projects)
+          .where(eq(projects.id, targetRow[0].projectId))
+          .limit(1);
+
+        const workspaceId = projectRow[0]?.workspaceId || '00000000-0000-0000-0000-000000000000';
+        await webhookQueueService.dispatchEvent(workspaceId, 'finding.created', {
+          findingId: inserted.id,
+          targetId: inserted.targetId,
+          fingerprint: inserted.fingerprint,
+          title: inserted.title,
+          category: inserted.category,
+          severity: inserted.severity,
+          testDefinitionId: inserted.testDefinitionId,
+          testRunId: inserted.testRunId,
+          description: inserted.description,
+        });
+      }
+    } catch (whErr) {
+      logger.warn({ whErr }, 'Failed to dispatch finding.created webhook');
+    }
+
     return this.mapToDomainFinding(inserted);
   }
 
@@ -389,6 +422,7 @@ export class FindingsService {
     severity?: FindingSeverity;
     status?: FindingStatus;
     tenantId?: string;
+    isFlapping?: boolean;
   }): Promise<Finding[]> {
     const { db } = getDatabase();
     const conditions = [];
@@ -408,6 +442,9 @@ export class FindingsService {
     if (filters?.status) {
       conditions.push(eq(findings.status, filters.status));
     }
+    if (filters?.isFlapping !== undefined) {
+      conditions.push(eq(findings.isFlapping, filters.isFlapping));
+    }
 
     const query = db.select().from(findings);
     const rows = conditions.length > 0
@@ -417,28 +454,105 @@ export class FindingsService {
     return rows.map((row) => this.mapToDomainFinding(row));
   }
 
-  async updateFindingStatus(
+  /**
+   * Enhanced Triage State Machine enforcing transition integrity and audit history.
+   * Enforces valid transitions:
+   * OPEN -> CONFIRMED -> RESOLVED / FALSE_POSITIVE / ACCEPTED_RISK.
+   */
+  async triageFinding(
     id: string,
-    status: FindingStatus,
-    notes?: string,
+    request: {
+      status: FindingStatus | string;
+      comment?: string;
+      notes?: string;
+      expiresAt?: string;
+      actorId?: string;
+    },
+    actorId?: string,
     tenantId?: string,
   ): Promise<Finding | null> {
     const { db } = getDatabase();
     const existing = await this.getFindingById(id, tenantId);
     if (!existing) return null;
 
+    const normalizedStatus = (request.status.toLowerCase() === 'risk_accepted'
+      ? 'accepted_risk'
+      : request.status.toLowerCase()) as FindingStatus;
+
+    const currentStatus = existing.status.toLowerCase();
+    const comment = request.comment || request.notes || '';
+    const effectiveActor = request.actorId || actorId || 'system';
+
+    // 1. Validate status transitions
+    const validTransitions: Record<string, string[]> = {
+      open: ['confirmed', 'resolved', 'false_positive', 'accepted_risk', 'ignored'],
+      confirmed: ['open', 'resolved', 'false_positive', 'accepted_risk', 'ignored'],
+      regressed: ['open', 'confirmed', 'resolved', 'false_positive', 'accepted_risk', 'ignored'],
+      false_positive: ['open', 'confirmed', 'resolved'],
+      accepted_risk: ['open', 'confirmed', 'resolved'],
+      resolved: ['open', 'confirmed', 'regressed'],
+      ignored: ['open', 'confirmed', 'resolved'],
+      acknowledged: ['open', 'confirmed', 'in_progress', 'resolved', 'false_positive', 'accepted_risk', 'ignored'],
+      in_progress: ['open', 'confirmed', 'resolved', 'false_positive', 'accepted_risk', 'ignored'],
+    };
+
+    if (currentStatus !== normalizedStatus) {
+      const allowed = validTransitions[currentStatus] || ['open', 'confirmed', 'resolved'];
+      if (!allowed.includes(normalizedStatus)) {
+        throw new Error(
+          `Invalid state transition: Cannot transition finding from "${currentStatus}" to "${normalizedStatus}". Allowed transitions: ${allowed.join(', ')}`,
+        );
+      }
+    }
+
+    // 2. Validate rationale constraints
+    if (normalizedStatus === 'false_positive' && (!comment || comment.trim().length === 0)) {
+      throw new Error('Rationale comment is required when marking a finding as false_positive');
+    }
+
+    if (normalizedStatus === 'accepted_risk') {
+      if (!comment || comment.trim().length === 0) {
+        throw new Error('Rationale comment is required when accepting risk for a finding');
+      }
+      if (!request.expiresAt) {
+        throw new Error('Expiration date (expiresAt) is strictly required for accepted_risk status');
+      }
+      const expDate = new Date(request.expiresAt);
+      if (Number.isNaN(expDate.getTime()) || expDate.getTime() <= Date.now()) {
+        throw new Error('Expiration date (expiresAt) must be a valid future ISO timestamp');
+      }
+    }
+
+    // 3. Build triage history entry
+    const historyEntry = {
+      id: crypto.randomUUID(),
+      fromStatus: currentStatus,
+      toStatus: normalizedStatus,
+      timestamp: new Date().toISOString(),
+      actorId: effectiveActor,
+      comment,
+      expiresAt: request.expiresAt || null,
+    };
+
+    const existingHistory = Array.isArray(existing.triageHistory) ? [...existing.triageHistory] : [];
+    existingHistory.push(historyEntry);
+
     const metadata = {
       ...existing.metadata,
-      statusUpdatedNotes: notes,
+      statusUpdatedNotes: comment,
       statusUpdatedAt: new Date().toISOString(),
+      lastTriagedBy: effectiveActor,
+      lastTriageComment: comment,
+      ...(request.expiresAt ? { riskAcceptedExpiresAt: request.expiresAt } : {}),
     };
 
     const updateValues: Record<string, unknown> = {
-      status,
+      status: normalizedStatus,
       metadata,
+      triageHistory: existingHistory,
     };
 
-    if (status === 'resolved') {
+    if (normalizedStatus === 'resolved') {
       updateValues.fixedAt = new Date();
     }
 
@@ -455,12 +569,89 @@ export class FindingsService {
 
     if (!updated) return null;
 
+    // 4. Record audit event in auditEvents table
+    try {
+      const { auditEvents } = await import('./db/schema.js');
+      await db.insert(auditEvents).values({
+        actorId: effectiveActor,
+        eventType: 'finding.triaged',
+        details: {
+          findingId: id,
+          targetId: existing.targetId,
+          fromStatus: currentStatus,
+          toStatus: normalizedStatus,
+          comment,
+          expiresAt: request.expiresAt || null,
+        },
+      });
+    } catch (auditErr) {
+      logger.warn({ err: auditErr, findingId: id }, 'Failed to record triage audit event');
+    }
+
     logger.info(
-      { findingId: id, previousStatus: existing.status, newStatus: status, notes },
-      'Finding lifecycle transition: manual triage status update',
+      {
+        findingId: id,
+        previousStatus: currentStatus,
+        newStatus: normalizedStatus,
+        actorId: effectiveActor,
+        comment,
+      },
+      'Finding lifecycle transition: triage state updated with audit log',
     );
 
+    // Asynchronously dispatch finding.triaged webhook
+    try {
+      const targetRow = await db
+        .select({ projectId: targets.projectId })
+        .from(targets)
+        .where(eq(targets.id, existing.targetId))
+        .limit(1);
+
+      if (targetRow[0]?.projectId) {
+        const projectRow = await db
+          .select({ workspaceId: projects.workspaceId })
+          .from(projects)
+          .where(eq(projects.id, targetRow[0].projectId))
+          .limit(1);
+
+        const workspaceId = projectRow[0]?.workspaceId || '00000000-0000-0000-0000-000000000000';
+        await webhookQueueService.dispatchEvent(workspaceId, 'finding.triaged', {
+          findingId: id,
+          targetId: existing.targetId,
+          fromStatus: currentStatus,
+          toStatus: normalizedStatus,
+          actorId: effectiveActor,
+          comment,
+          expiresAt: request.expiresAt || null,
+        });
+      }
+    } catch (whErr) {
+      logger.warn({ whErr }, 'Failed to dispatch finding.triaged webhook');
+    }
+
     return this.mapToDomainFinding(updated);
+  }
+
+  async updateFindingStatus(
+    id: string,
+    status: FindingStatus | string,
+    notes?: string,
+    tenantId?: string,
+    actorId?: string,
+    expiresAt?: string,
+  ): Promise<Finding | null> {
+    return this.triageFinding(
+      id,
+      {
+        status,
+        comment: notes,
+        notes,
+        expiresAt,
+        actorId,
+      },
+      actorId,
+      tenantId,
+    );
   }
 
   async deleteFinding(id: string, tenantId?: string): Promise<boolean> {
@@ -500,6 +691,9 @@ export class FindingsService {
       lastDetectedAt: row.lastDetectedAt,
       fixedAt: row.fixedAt ?? undefined,
       metadata: (row.metadata as Record<string, unknown>) || {},
+      flappingScore: row.flappingScore ?? 0.0,
+      isFlapping: row.isFlapping ?? false,
+      triageHistory: (row.triageHistory as Record<string, unknown>[]) || [],
     };
   }
 }

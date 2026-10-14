@@ -7,6 +7,7 @@ import {
   jsonb,
   integer,
   doublePrecision,
+  real,
   boolean,
   index,
 } from 'drizzle-orm/pg-core';
@@ -33,9 +34,21 @@ export const workspaces = pgTable('workspaces', {
   name: varchar('name', { length: 100 }).notNull(),
   slug: varchar('slug', { length: 100 }).notNull().unique(),
   description: text('description'),
+  ssoConfig: jsonb('sso_config'),
+  stripeCustomerId: varchar('stripe_customer_id', { length: 128 }),
+  subscriptionTier: varchar('subscription_tier', { length: 64 }).notNull().default('free'),
+  quotaLimits: jsonb('quota_limits').notNull().default({
+    maxExecutionMinutesPerMonth: 100,
+    maxActiveTargets: 2,
+    maxConcurrentRuns: 1,
+  }),
+  usageMinutes: integer('usage_minutes').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  index('idx_workspaces_stripe_customer').on(table.stripeCustomerId),
+  index('idx_workspaces_subscription_tier').on(table.subscriptionTier),
+]);
 
 export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -219,6 +232,9 @@ export const findings = pgTable(
     lastDetectedAt: timestamp('last_detected_at', { withTimezone: true }).notNull().defaultNow(),
     fixedAt: timestamp('fixed_at', { withTimezone: true }),
     metadata: jsonb('metadata').notNull().default({}),
+    flappingScore: real('flapping_score').default(0.0),
+    isFlapping: boolean('is_flapping').notNull().default(false),
+    triageHistory: jsonb('triage_history').notNull().default([]),
   },
   (table) => [
     index('idx_findings_tenant_id').on(table.tenantId),
@@ -230,6 +246,7 @@ export const findings = pgTable(
     index('idx_findings_fingerprint').on(table.fingerprint),
     index('idx_findings_fixed_in_run_id').on(table.fixedInRunId),
     index('idx_findings_target_fingerprint').on(table.targetId, table.fingerprint),
+    index('idx_findings_is_flapping').on(table.isFlapping),
   ],
 );
 
@@ -604,4 +621,89 @@ export const auditEvents = pgTable(
     index('idx_audit_events_event_type').on(table.eventType),
   ],
 );
+
+export const webhooks = pgTable(
+  'webhooks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    description: text('description'),
+    secret: text('secret').notNull(),
+    events: jsonb('events').$type<string[]>().notNull().default(['*']),
+    isActive: boolean('is_active').notNull().default(true),
+    headers: jsonb('headers').$type<Record<string, string>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_webhooks_workspace_id').on(table.workspaceId),
+    index('idx_webhooks_is_active').on(table.isActive),
+  ],
+);
+
+export const webhookDeliveries = pgTable(
+  'webhook_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    webhookId: uuid('webhook_id')
+      .notNull()
+      .references(() => webhooks.id, { onDelete: 'cascade' }),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    eventType: varchar('event_type', { length: 100 }).notNull(),
+    payload: jsonb('payload').notNull(),
+    status: varchar('status', { length: 30 })
+      .$type<'pending' | 'delivering' | 'succeeded' | 'failed' | 'dead_letter'>()
+      .notNull()
+      .default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(5),
+    nextRetryAt: timestamp('next_retry_at', { withTimezone: true }).notNull().defaultNow(),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    responseStatusCode: integer('response_status_code'),
+    responseBody: text('response_body'),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_webhook_deliveries_webhook_id').on(table.webhookId),
+    index('idx_webhook_deliveries_status_retry').on(table.status, table.nextRetryAt),
+    index('idx_webhook_deliveries_workspace_id').on(table.workspaceId),
+  ],
+);
+
+export const aiRemediations = pgTable(
+  'ai_remediations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    findingId: uuid('finding_id')
+      .notNull()
+      .references(() => findings.id, { onDelete: 'cascade' }),
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+    explanation: text('explanation').notNull(),
+    gitDiff: text('git_diff').notNull(),
+    confidenceScore: real('confidence_score').notNull().default(0.85),
+    verifiedStatus: varchar('verified_status', { length: 32 })
+      .$type<'UNVERIFIED' | 'PASSED' | 'FAILED'>()
+      .notNull()
+      .default('UNVERIFIED'),
+    model: varchar('model', { length: 128 }),
+    promptTokens: integer('prompt_tokens').default(0),
+    completionTokens: integer('completion_tokens').default(0),
+    verificationOutput: text('verification_output'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_ai_remediations_finding_id').on(table.findingId),
+    index('idx_ai_remediations_workspace_id').on(table.workspaceId),
+    index('idx_ai_remediations_verified_status').on(table.verifiedStatus),
+  ],
+);
+
 

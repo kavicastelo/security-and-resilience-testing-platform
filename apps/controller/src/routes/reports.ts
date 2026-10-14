@@ -51,6 +51,12 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
 
       reply.header('Content-Type', report.contentType);
       reply.header('Content-Disposition', `inline; filename="${report.filename}"`);
+      if (report.format === 'pdf') {
+        const buffer = report.content.startsWith('%PDF')
+          ? Buffer.from(report.content)
+          : Buffer.from(report.content, 'base64');
+        return reply.send(buffer);
+      }
       return reply.send(report.content);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to generate report';
@@ -140,6 +146,12 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
 
       reply.header('Content-Type', report.contentType);
       reply.header('Content-Disposition', `attachment; filename="${report.filename}"`);
+      if (report.format === 'pdf') {
+        const buffer = report.content.startsWith('%PDF')
+          ? Buffer.from(report.content)
+          : Buffer.from(report.content, 'base64');
+        return reply.send(buffer);
+      }
       return reply.send(report.content);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to download report';

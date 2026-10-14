@@ -619,7 +619,7 @@ export class WebCrawlerEngine implements TestEngine {
     // Search for fetch('/api/...') or axios.get('/api/...') or REST path strings
     const patterns = [
       /(?:fetch|axios\.(?:get|post|put|delete|patch))\s*\(\s*['"]([/a-zA-Z0-9_\-?&=.]+)['"]/gi,
-      /['"](\/api\/v\d+\/[a-zA-Z0-9_\-\/]+)['"]/gi,
+      /['"](\/api\/v\d+\/[a-zA-Z0-9_\-/]+)['"]/gi,
       /path:\s*['"]([/a-zA-Z0-9_\-:]+)['"]/gi,
     ];
 

@@ -10,6 +10,7 @@ import {
   TestRunStatus,
   TestRunSummary,
 } from '@security-lab/domain';
+import { billingService } from './billing/billing.service.js';
 
 export class TestRunsService {
   async createTestRun(input: CreateTestRunInput, tenantId?: string, workspaceId?: string): Promise<TestRun> {
@@ -178,6 +179,21 @@ export class TestRunsService {
 
     if (!updated) {
       throw new Error(`TestRun "${id}" not found`);
+    }
+
+    if (['completed', 'failed', 'cancelled'].includes(status) && updated.startedAt && updated.completedAt) {
+      try {
+        const durationSec = Math.max(1, (updated.completedAt.getTime() - updated.startedAt.getTime()) / 1000);
+        const [proj] = await db
+          .select({ workspaceId: projects.workspaceId })
+          .from(projects)
+          .where(eq(projects.id, updated.projectId));
+        if (proj?.workspaceId) {
+          await billingService.recordRunUsage(proj.workspaceId, durationSec);
+        }
+      } catch {
+        // Safe fallback if billing tracking encounters non-fatal DB issue
+      }
     }
 
     return this.mapToDomainTestRun(updated);
