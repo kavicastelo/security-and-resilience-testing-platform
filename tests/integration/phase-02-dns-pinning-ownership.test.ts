@@ -4,14 +4,12 @@ import { FastifyInstance } from 'fastify';
 import { buildApp } from '../../apps/controller/src/app/index.js';
 import {
   createDnsPinningLookup,
-  DnsPinningError,
   DnsPinningCache,
 } from '@security-lab/scope-engine';
 import {
   TargetCircuitBreaker,
   TargetCircuitBreakerOpenError,
 } from '@security-lab/test-runner';
-import { targetVerificationService } from '../../apps/controller/src/services/target-verification.js';
 
 describe('Phase 02: Advanced Target Scope, DNS Pinning & Ownership Verification', () => {
   let app: FastifyInstance;

@@ -1,0 +1,81 @@
+name: 'Security & Resilience Testing Scan'
+description: 'Automated application security scanning, policy release gate verification, and SARIF upload.'
+author: 'Security Lab Team'
+
+inputs:
+  target-url:
+    description: 'Target base URL to audit'
+    required: true
+  config-path:
+    description: 'Path to platform configuration file'
+    required: false
+    default: '.securitylab.yaml'
+  fail-on:
+    description: 'Failure decision threshold: failed, warning, or never'
+    required: false
+    default: 'failed'
+  sarif-file:
+    description: 'Path where SARIF report will be exported'
+    required: false
+    default: 'results.sarif'
+  github-token:
+    description: 'GitHub Token for posting Pull Request comments and uploading SARIF'
+    required: false
+    default: ${{ github.token }}
+  engines:
+    description: 'Engines to execute (space-separated: headers cors tls injection auth)'
+    required: false
+    default: 'headers cors tls injection'
+
+outputs:
+  exit-code:
+    description: 'Execution exit code (0 for pass, 1 for gate failure)'
+    value: ${{ steps.scan.outputs.exit_code }}
+  sarif-path:
+    description: 'Path to generated SARIF output'
+    value: ${{ steps.scan.outputs.sarif_path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Install Security Lab CLI
+      shell: bash
+      run: |
+        echo "Installing Security Lab Testing Platform CLI..."
+        npm install -g @security-lab/cli || echo "Using locally linked CLI"
+
+    - name: Execute Security & Resilience Scan
+      id: scan
+      shell: bash
+      run: |
+        set +e
+        echo "Starting security scan against ${{ inputs.target-url }}..."
+        
+        security-lab run --local \
+          --target "${{ inputs.target-url }}" \
+          --config "${{ inputs.config-path }}" \
+          --format sarif \
+          --output "${{ inputs.sarif-file }}" \
+          --fail-on "${{ inputs.fail-on }}"
+        
+        SCAN_EXIT_CODE=$?
+        echo "exit_code=${SCAN_EXIT_CODE}" >> $GITHUB_OUTPUT
+        echo "sarif_path=${{ inputs.sarif-file }}" >> $GITHUB_OUTPUT
+        
+        if [ $SCAN_EXIT_CODE -ne 0 ] && [ "${{ inputs.fail-on }}" = "failed" ]; then
+          echo "::error::Security & Resilience release gate failed. Critical policy violations detected."
+          exit $SCAN_EXIT_CODE
+        fi
+
+    - name: Upload SARIF to GitHub Security Tab
+      if: always() && hashFiles(inputs.sarif-file) != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        token: ${{ inputs.github-token }}
+        category: 'security-lab-dast'

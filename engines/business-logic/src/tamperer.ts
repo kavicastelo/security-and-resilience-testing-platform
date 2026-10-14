@@ -15,7 +15,7 @@ export const NUMERIC_TAMPER_PAYLOADS = [
   { value: -999999, label: 'Extreme Negative Value (-999999)' },
   { value: 0, label: 'Zero Quantity/Price (0)' },
   { value: 2147483648, label: '32-Bit Integer Overflow (2147483648)' },
-  { value: 9223372036854775807, label: '64-Bit Integer Max (9223372036854775807)' },
+  { value: Number.MAX_SAFE_INTEGER, label: 'Max Safe Integer (9007199254740991)' },
   { value: 0.000001, label: 'Sub-Cent Fractional Rounding (0.000001)' },
 ];
 
@@ -141,7 +141,7 @@ export async function evaluateParameterTampering(
           // Break to next parameter to avoid overwhelming with redundant findings for the same param
           if (isNegative) break;
         }
-      } catch (err: any) {
+      } catch (_err: any) {
         clearTimeout(timer);
         // Connection error or fetch rejected
       }

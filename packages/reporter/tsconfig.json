@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "references": [
+    { "path": "../contracts" },
+    { "path": "../domain" },
+    { "path": "../logger" },
+    { "path": "../scoring" }
+  ],
+  "include": ["src/**/*"]
+}

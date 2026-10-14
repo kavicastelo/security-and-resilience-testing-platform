@@ -1,0 +1,32 @@
+{
+  "name": "@security-lab/reporter",
+  "version": "0.1.0",
+  "description": "Enterprise Compliance Reporting (OWASP/ASVS/PCI-DSS), HTML Bundles & Executive PDF Generator",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@security-lab/contracts": "workspace:*",
+    "@security-lab/domain": "workspace:*",
+    "@security-lab/scoring": "workspace:*",
+    "@security-lab/logger": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.7"
+  }
+}

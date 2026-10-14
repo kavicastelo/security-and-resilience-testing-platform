@@ -4,7 +4,6 @@ import { buildApp } from '../src/app/index.js';
 import { closeDatabase, getDatabase } from '../src/services/db.js';
 import {
   signJwt,
-  DEFAULT_WORKSPACE_ID,
 } from '../src/services/auth-token.service.js';
 import { workspacesService } from '../src/services/workspaces.service.js';
 

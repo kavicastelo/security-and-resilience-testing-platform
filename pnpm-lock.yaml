@@ -236,6 +236,9 @@ importers:
       '@security-lab/policy-engine':
         specifier: workspace:*
         version: link:../../packages/policy-engine
+      '@security-lab/reporter':
+        specifier: workspace:*
+        version: link:../../packages/reporter
       '@security-lab/scoring':
         specifier: workspace:*
         version: link:../../packages/scoring
@@ -273,6 +276,9 @@ importers:
       '@security-lab/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@security-lab/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -285,6 +291,9 @@ importers:
       '@security-lab/policy-engine':
         specifier: workspace:*
         version: link:../../packages/policy-engine
+      '@security-lab/reporter':
+        specifier: workspace:*
+        version: link:../../packages/reporter
       '@security-lab/scoring':
         specifier: workspace:*
         version: link:../../packages/scoring
@@ -484,6 +493,34 @@ importers:
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
+
+  packages/reporter:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../logger
+      '@security-lab/scoring':
+        specifier: workspace:*
+        version: link:../scoring
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.5
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/node@22.20.5)(jiti@1.21.7)(supports-color@7.2.0)(tsx@4.23.15)(yaml@2.9.1)
 
   packages/scope-engine:
     dependencies:

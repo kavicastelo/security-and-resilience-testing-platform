@@ -11,7 +11,6 @@ import { artifactStorageService } from './artifact-storage.service.js';
 import {
   generateJUnitXml,
   generateSarifReport,
-  generateHtmlExecutiveReport,
   ReportInput,
   TestExecutionRecord,
   FindingDiffSummary,
@@ -19,8 +18,12 @@ import {
 } from '@security-lab/contracts';
 import { Finding, TestRun } from '@security-lab/domain';
 import { logger } from '@security-lab/logger';
+import {
+  generateExecutivePdfReport,
+  generateStandaloneComplianceHtmlReport,
+} from '@security-lab/reporter';
 
-export type ReportFormat = 'junit' | 'sarif' | 'html' | 'json';
+export type ReportFormat = 'junit' | 'sarif' | 'html' | 'json' | 'pdf';
 
 export interface GeneratedReport {
   id?: string;
@@ -295,13 +298,37 @@ export class ReportsService {
         break;
       }
       case 'html': {
-        const html = generateHtmlExecutiveReport(reportInput);
+        const html = generateStandaloneComplianceHtmlReport(reportInput);
         generated = {
           format: 'html',
           content: html,
           contentType: 'text/html; charset=utf-8',
           filename: `security-report-${testRunId}.html`,
         };
+        break;
+      }
+      case 'pdf': {
+        try {
+          const pdfBuffer = generateExecutivePdfReport(reportInput);
+          generated = {
+            format: 'pdf',
+            content: pdfBuffer.toString('base64'),
+            contentType: 'application/pdf',
+            filename: `security-report-${testRunId}.pdf`,
+          };
+        } catch (err: unknown) {
+          logger.warn(
+            { err, testRunId },
+            'Failed to generate PDF executive report, falling back to HTML report',
+          );
+          const html = generateStandaloneComplianceHtmlReport(reportInput);
+          generated = {
+            format: 'html',
+            content: html,
+            contentType: 'text/html; charset=utf-8',
+            filename: `security-report-${testRunId}.html`,
+          };
+        }
         break;
       }
       case 'json':
@@ -373,25 +400,26 @@ export class ReportsService {
   }
 
   /**
-   * Persists all standard enterprise reports (JUnit XML, SARIF v2.1.0, HTML)
+   * Persists all standard enterprise reports (JUnit XML, SARIF v2.1.0, HTML, Executive PDF)
    * for a test run automatically upon completion.
    */
   async persistTestRunReports(
     testRunId: string,
     policyId?: string,
-  ): Promise<{ junit: GeneratedReport; sarif: GeneratedReport; html: GeneratedReport }> {
-    const [junit, sarif, html] = await Promise.all([
+  ): Promise<{ junit: GeneratedReport; sarif: GeneratedReport; html: GeneratedReport; pdf: GeneratedReport }> {
+    const [junit, sarif, html, pdf] = await Promise.all([
       this.generateReport(testRunId, 'junit', policyId, true),
       this.generateReport(testRunId, 'sarif', policyId, true),
       this.generateReport(testRunId, 'html', policyId, true),
+      this.generateReport(testRunId, 'pdf', policyId, true),
     ]);
 
     logger.info(
-      { testRunId, junitId: junit.id, sarifId: sarif.id, htmlId: html.id },
-      'Persisted standard test run reports (JUnit, SARIF, HTML) in database and artifact storage',
+      { testRunId, junitId: junit.id, sarifId: sarif.id, htmlId: html.id, pdfId: pdf.id },
+      'Persisted standard test run reports (JUnit, SARIF, HTML, PDF) in database and artifact storage',
     );
 
-    return { junit, sarif, html };
+    return { junit, sarif, html, pdf };
   }
 
   /**

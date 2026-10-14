@@ -19,8 +19,14 @@ import { tenantsRoutes } from '../routes/tenants.js';
 import { agentsRoutes } from '../routes/agents.js';
 import { managementRoutes } from '../routes/management.js';
 import { workspacesRoutes } from '../routes/workspaces.js';
+import { webhooksRoutes } from '../routes/webhooks.js';
+import { remediationsRoutes } from '../routes/remediations.js';
+import { ssoRoutes } from '../routes/sso.js';
+import { scimRoutes } from '../routes/scim.js';
+import { billingRoutes } from '../routes/billing.js';
 import { metricsRoutes } from '../routes/metrics.js';
 import { agentJobReaper } from '../services/agent-dispatcher.service.js';
+import { webhookQueueService } from '../services/webhook-queue.js';
 import { registerAuthHooks, AuthPluginOptions } from '../plugins/auth.js';
 import { SharedRateLimitStore } from '../services/rate-limit-store.js';
 import { logger } from '@security-lab/logger';
@@ -173,18 +179,25 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(contractsRoutes);
   app.register(tenantsRoutes, { prefix: '/api/v1/tenants' });
   app.register(workspacesRoutes);
+  app.register(webhooksRoutes);
+  app.register(remediationsRoutes);
+  app.register(ssoRoutes);
+  app.register(scimRoutes);
+  app.register(billingRoutes);
   app.register(agentsRoutes, { prefix: '/api/v1/agents' });
   app.register(managementRoutes, { prefix: '/api/v1/management' });
 
-  // Background Reaper Lifecycle
+  // Background Reaper & Webhook Queue Lifecycle
   app.addHook('onReady', async () => {
     if (options.enableReaper !== false) {
       agentJobReaper.start();
+      webhookQueueService.startWorker();
     }
   });
 
   app.addHook('onClose', async () => {
     agentJobReaper.stop();
+    webhookQueueService.stopWorker();
   });
 
   return app;

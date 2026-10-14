@@ -20,6 +20,7 @@
     "@security-lab/domain": "workspace:*",
     "@security-lab/evidence": "workspace:*",
     "@security-lab/policy-engine": "workspace:*",
+    "@security-lab/reporter": "workspace:*",
     "@security-lab/scoring": "workspace:*",
     "@security-lab/test-sdk": "workspace:*",
     "commander": "^13.1.0",

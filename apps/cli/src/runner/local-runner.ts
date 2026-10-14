@@ -36,6 +36,7 @@ import {
   ReportInput,
   TestExecutionRecord,
 } from '@security-lab/contracts';
+import { generateExecutivePdfReport } from '@security-lab/reporter';
 import { formatSuccess, formatError, formatWarning, formatInfo } from '../output/formatters.js';
 
 export interface LocalRunnerOptions {
@@ -364,6 +365,9 @@ export class LocalRunner {
               ...(rf.metadata || {}),
               reproductionCurl,
             },
+            flappingScore: 0.0,
+            isFlapping: false,
+            triageHistory: [],
           };
         });
 
@@ -616,6 +620,32 @@ export class LocalRunner {
         if (!silent) {
           // eslint-disable-next-line no-console
           console.log(formatSuccess(`Exported JSON summary to: ${pc.bold(jsonPath)}`));
+        }
+      }
+    }
+
+    if (requestedFormats.has('pdf')) {
+      try {
+        const pdfBuffer = generateExecutivePdfReport(reportInput);
+        const explicitOutput = options.outputPath || options.outputFile;
+        const pdfPath = explicitOutput && ((options.format as string) === 'pdf' || explicitOutput.endsWith('.pdf'))
+          ? path.resolve(process.cwd(), explicitOutput)
+          : path.join(outputDir, 'executive-report.pdf');
+
+        fs.mkdirSync(path.dirname(pdfPath), { recursive: true });
+        fs.writeFileSync(pdfPath, pdfBuffer);
+        if (!silent) {
+          // eslint-disable-next-line no-console
+          console.log(formatSuccess(`Exported Executive PDF report to: ${pc.bold(pdfPath)}`));
+        }
+      } catch (err: unknown) {
+        if (!silent) {
+          // eslint-disable-next-line no-console
+          console.log(
+            formatWarning(
+              `Failed to generate executive PDF report: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
         }
       }
     }

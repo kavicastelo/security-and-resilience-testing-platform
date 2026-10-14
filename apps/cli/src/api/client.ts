@@ -148,6 +148,27 @@ export class ApiClient {
     }
     return res.text();
   }
+
+  async getBuffer(path: string, headers?: Record<string, string>): Promise<Buffer> {
+    const reqHeaders = this.getHeaders({
+      Accept: '*/*',
+      ...headers,
+    });
+
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: reqHeaders,
+    });
+
+    if (res.status === 401) {
+      throw new AuthenticationError();
+    }
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
 }
 
 export const apiClient = new ApiClient();

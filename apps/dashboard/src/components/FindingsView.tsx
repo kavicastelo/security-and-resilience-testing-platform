@@ -22,8 +22,10 @@ import {
   UserCheck,
   Send,
   Loader2,
+  FileCode2,
 } from 'lucide-react';
 import { Pagination } from './Pagination.js';
+import { EvidenceModal } from './EvidenceModal.js';
 import { useAppStore } from '../store/useAppStore.js';
 import { generateCurlSnippet } from '../lib/curl.js';
 
@@ -82,10 +84,12 @@ export const FindingsView: React.FC = () => {
 
   // Triage Dialog States
   const [activeTriageFinding, setActiveTriageFinding] = useState<Finding | null>(null);
+  const [evidenceModalFinding, setEvidenceModalFinding] = useState<Finding | null>(null);
   const [triageType, setTriageType] = useState<'false_positive' | 'waiver' | null>(null);
   const [justificationNotes, setJustificationNotes] = useState<string>('');
   const [waiverApprover, setWaiverApprover] = useState<string>('Lead Security Architect');
   const [waiverDays, setWaiverDays] = useState<number>(30);
+  const [retestingFindingId, setRetestingFindingId] = useState<string | null>(null);
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -213,6 +217,33 @@ export const FindingsView: React.FC = () => {
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(msg, 'error');
+    },
+  });
+
+  // Targeted Retest Mutation (POST /api/v1/findings/:id/retest)
+  const targetedRetestMutation = useMutation({
+    mutationFn: async (findingId: string) => {
+      setRetestingFindingId(findingId);
+      const res = await fetch(`${apiUrl}/api/v1/findings/${findingId}/retest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 10000 }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Retest execution failed');
+      return json;
+    },
+    onSuccess: (resData) => {
+      queryClient.invalidateQueries({ queryKey: ['findings'] });
+      queryClient.invalidateQueries({ queryKey: ['test-runs'] });
+      const verdict = resData.data?.retestResult?.status || 'completed';
+      showToast(`Targeted retest finished: ${verdict}`, 'info');
+      setRetestingFindingId(null);
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(msg, 'error');
+      setRetestingFindingId(null);
     },
   });
 
@@ -642,6 +673,39 @@ export const FindingsView: React.FC = () => {
                           <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
                           <span>Assign Waiver</span>
                         </button>
+
+                        {/* Button: Targeted Retest */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            targetedRetestMutation.mutate(finding.id);
+                          }}
+                          disabled={retestingFindingId === finding.id}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border border-blue-500/30 transition-all font-medium text-xs shadow-sm disabled:opacity-50 cursor-pointer"
+                          title="Trigger isolated single-finding retest engine"
+                        >
+                          <RotateCw
+                            className={`w-3.5 h-3.5 text-blue-400 ${
+                              retestingFindingId === finding.id ? 'animate-spin' : ''
+                            }`}
+                          />
+                          <span>Retest Now</span>
+                        </button>
+
+                        {/* Button: Full Forensic Evidence Modal */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEvidenceModalFinding(finding);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition-all font-medium text-xs shadow-sm cursor-pointer"
+                          title="Inspect full forensic HTTP diff & cURL"
+                        >
+                          <FileCode2 className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Inspect Evidence</span>
+                        </button>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -983,6 +1047,20 @@ export const FindingsView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Forensic Evidence Full Modal */}
+      {evidenceModalFinding && (
+        <EvidenceModal
+          isOpen={!!evidenceModalFinding}
+          onClose={() => setEvidenceModalFinding(null)}
+          findingId={evidenceModalFinding.id}
+          findingTitle={evidenceModalFinding.title}
+          findingSeverity={evidenceModalFinding.severity}
+          category={evidenceModalFinding.category}
+          evidence={evidence}
+          isLoading={isLoadingEvidence}
+        />
       )}
     </div>
   );

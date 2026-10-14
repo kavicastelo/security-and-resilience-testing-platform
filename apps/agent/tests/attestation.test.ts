@@ -6,8 +6,6 @@ import { FastifyInstance } from 'fastify';
 import { buildApp } from '../../controller/src/app/index.js';
 import { closeDatabase, checkDatabaseHealth, getDatabase } from '../../controller/src/services/db.js';
 import {
-  generateAgentKeypair,
-  computeKeyFingerprint,
   signAgentRequest,
   verifyAgentRequest,
   loadOrCreateAgentKeypair,

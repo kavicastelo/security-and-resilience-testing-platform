@@ -5,7 +5,6 @@ import { agents } from '../services/db/schema.js';
 import { agentDispatcherService } from '../services/agent-dispatcher.service.js';
 import {
   verifyAgentRequest,
-  computeKeyFingerprint,
 } from '@security-lab/crypto';
 import { logger } from '@security-lab/logger';
 
