@@ -1,14 +1,50 @@
 import React from 'react';
-import { Shield, Terminal, Menu, X, Key } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import {
+  Shield,
+  Terminal,
+  Menu,
+  X,
+  Key,
+  Search,
+  Zap,
+} from 'lucide-react';
 import { HealthBadge } from './HealthBadge.js';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
 import { useAppStore } from '../store/useAppStore.js';
+import { authFetch } from '../api/client.js';
 
 export const Header: React.FC = () => {
-  const { isMobileMenuOpen, setIsMobileMenuOpen, setIsAuthModalOpen, apiKey } = useAppStore();
+  const {
+    isMobileMenuOpen,
+    setIsMobileMenuOpen,
+    setIsAuthModalOpen,
+    setIsCommandPaletteOpen,
+    apiKey,
+    setActiveTab,
+  } = useAppStore();
+
+  // Query active running tests for the persistent telemetry strip
+  const { data: activeRunsCount = 0 } = useQuery<number>({
+    queryKey: ['active-runs-count'],
+    queryFn: async () => {
+      try {
+        const res = await authFetch('/api/v1/test-runs?limit=50');
+        if (!res.ok) return 0;
+        const json = await res.json();
+        const runs = Array.isArray(json.data) ? json.data : [];
+        return runs.filter((r: { status: string }) => r.status === 'running').length;
+      } catch {
+        return 0;
+      }
+    },
+    refetchInterval: 5000,
+  });
 
   return (
-    <header className="h-16 border-b border-border bg-card/60 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between sticky top-0 z-50">
-      <div className="flex items-center space-x-3">
+    <header className="h-16 border-b border-border bg-card/75 backdrop-blur-md px-3 sm:px-6 flex items-center justify-between sticky top-0 z-40 glass-panel">
+      {/* Left: Mobile Toggle & Brand & Workspace */}
+      <div className="flex items-center space-x-3 sm:space-x-4">
         <button
           type="button"
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -18,40 +54,98 @@ export const Header: React.FC = () => {
           {isMobileMenuOpen ? <X className="w-5 h-5 text-blue-400" /> : <Menu className="w-5 h-5" />}
         </button>
 
-        <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
-          <Shield className="w-5 h-5 text-blue-500" />
-        </div>
-        <div>
-          <div className="flex items-center space-x-2">
-            <h1 className="font-semibold text-sm tracking-tight text-foreground">
-              Security Lab
-            </h1>
-            <span className="text-[10px] font-mono uppercase bg-primary/20 text-blue-400 px-1.5 py-0.5 rounded border border-primary/30">
-              Lab Edition
-            </span>
+        <div
+          onClick={() => setActiveTab('overview')}
+          className="flex items-center space-x-3 cursor-pointer group"
+        >
+          <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500/20 to-cyan-500/10 border border-blue-500/30 group-hover:border-blue-400/50 transition-colors shadow-sm">
+            <Shield className="w-5 h-5 text-blue-400 group-hover:text-cyan-400 transition-colors" />
           </div>
-          <p className="text-xs text-muted-foreground hidden sm:block">Security QA for Enterprise Applications</p>
+          <div>
+            <div className="flex items-center space-x-2">
+              <span className="font-bold text-sm tracking-tight text-foreground group-hover:text-blue-300 transition-colors">
+                Security Lab
+              </span>
+              <span className="text-[10px] font-mono uppercase bg-primary/20 text-blue-400 px-1.5 py-0.2 rounded border border-primary/30">
+                SOC
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground hidden lg:block leading-tight">
+              Continuous QA & Resilience
+            </p>
+          </div>
         </div>
+
+        <div className="h-6 w-px bg-border/60 hidden sm:block" />
+
+        {/* Multi-Tenant Workspace Selector */}
+        <WorkspaceSwitcher />
       </div>
 
-      <div className="flex items-center space-x-3 sm:space-x-4">
-        <div className="hidden lg:flex items-center space-x-2 text-xs text-muted-foreground bg-accent/60 px-3 py-1.5 rounded-md border border-border">
+      {/* Center: Command Palette Trigger Button */}
+      <div className="hidden md:flex flex-1 max-w-xs mx-4">
+        <button
+          type="button"
+          onClick={() => setIsCommandPaletteOpen(true)}
+          className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl bg-accent/30 border border-border/80 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground hover:border-border transition-all duration-150 shadow-inner group"
+        >
+          <div className="flex items-center space-x-2 truncate">
+            <Search className="w-3.5 h-3.5 text-blue-400 group-hover:text-cyan-400 transition-colors" />
+            <span className="truncate">Search commands, targets, runs...</span>
+          </div>
+          <div className="flex items-center space-x-1 shrink-0 ml-2">
+            <kbd>⌘K</kbd>
+          </div>
+        </button>
+      </div>
+
+      {/* Right: Telemetry & Actions */}
+      <div className="flex items-center space-x-2 sm:space-x-3">
+        {/* Active Runs Live Indicator */}
+        {activeRunsCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('runs')}
+            className="flex items-center space-x-1.5 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-mono animate-pulse-glow"
+            title={`${activeRunsCount} active test executions`}
+          >
+            <Zap className="w-3 h-3 text-emerald-400 animate-spin" />
+            <span className="hidden sm:inline">{activeRunsCount} Running</span>
+          </button>
+        )}
+
+        {/* Quick CLI info */}
+        <div className="hidden xl:flex items-center space-x-1.5 text-xs text-muted-foreground bg-accent/40 px-2.5 py-1.5 rounded-lg border border-border/80">
           <Terminal className="w-3.5 h-3.5 text-blue-400" />
-          <span className="font-mono">security-lab --help</span>
+          <span className="font-mono text-[11px]">security-lab</span>
         </div>
+
+        {/* Mobile Search Button */}
+        <button
+          type="button"
+          onClick={() => setIsCommandPaletteOpen(true)}
+          className="md:hidden p-2 rounded-lg bg-accent/50 text-muted-foreground hover:text-foreground hover:bg-accent border border-border/70"
+          aria-label="Open Command Palette"
+        >
+          <Search className="w-4 h-4 text-blue-400" />
+        </button>
+
+        {/* Auth / API Key Button */}
         <button
           type="button"
           onClick={() => setIsAuthModalOpen(true)}
-          className={`flex items-center space-x-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
+          className={`flex items-center space-x-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all duration-150 ${
             apiKey
               ? 'bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20'
-              : 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20'
+              : 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20 animate-pulse'
           }`}
           title={apiKey ? 'API Key Configured' : 'API Key Missing - Click to configure'}
         >
           <Key className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">{apiKey ? 'Auth: Active' : 'Set API Key'}</span>
+          <span className="hidden sm:inline">{apiKey ? 'Auth: Active' : 'Set Key'}</span>
         </button>
+
+        {/* Controller Health Indicator */}
         <HealthBadge />
       </div>
     </header>

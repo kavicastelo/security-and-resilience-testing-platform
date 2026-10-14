@@ -8,6 +8,18 @@ import { RunsView } from './components/RunsView.js';
 import { FindingsView } from './components/FindingsView.js';
 import { PoliciesView } from './components/PoliciesView.js';
 import { ManagementView } from './components/ManagementView.js';
+import { GovernanceView } from './components/GovernanceView.js';
+import { ApiSecurityView } from './components/api-explorer/ApiSecurityView.js';
+import { AuthVaultView } from './components/auth-vault/AuthVaultView.js';
+import { AccessMatrixView } from './components/authz-matrix/AccessMatrixView.js';
+import { ResilienceView } from './components/resilience-lab/ResilienceView.js';
+import { PerformanceStudioView } from './components/performance/PerformanceStudioView.js';
+import { InfraSupplyChainView } from './components/infra-lab/InfraSupplyChainView.js';
+import { AgentFleetView } from './components/agent-fleet/AgentFleetView.js';
+import { ComplianceCenterView } from './components/compliance/ComplianceCenterView.js';
+import { IntegrationsHubView } from './components/integrations/IntegrationsHubView.js';
+import { CommandPalette } from './components/CommandPalette.js';
+import { DomainWorkbenchPlaceholder } from './components/DomainWorkbenchPlaceholder.js';
 import { ToastNotification } from './components/ToastNotification.js';
 import { ApiKeyModal } from './components/ApiKeyModal.js';
 import { useAppStore } from './store/useAppStore.js';
@@ -26,7 +38,13 @@ const queryClient = new QueryClient({
 });
 
 export const AppContent: React.FC = () => {
-  const { activeTab, setActiveTab, setIsAuthModalOpen } = useAppStore();
+  const {
+    activeTab,
+    setActiveTab,
+    setIsAuthModalOpen,
+    isCommandPaletteOpen,
+    setIsCommandPaletteOpen,
+  } = useAppStore();
 
   useEffect(() => {
     const handleNavigate = (e: Event) => {
@@ -44,20 +62,48 @@ export const AppContent: React.FC = () => {
       queryClient.invalidateQueries();
     };
 
+    // Global keyboard shortcuts: Cmd+K / Ctrl+K for command palette
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen(!isCommandPaletteOpen);
+      }
+    };
+
     window.addEventListener('navigate-tab', handleNavigate);
     window.addEventListener('security-lab:auth-required', handleAuthRequired);
     window.addEventListener('security-lab:auth-changed', handleAuthChanged);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
       window.removeEventListener('navigate-tab', handleNavigate);
       window.removeEventListener('security-lab:auth-required', handleAuthRequired);
       window.removeEventListener('security-lab:auth-changed', handleAuthChanged);
+      window.removeEventListener('keydown', handleKeyDown);
     };
+  }, [setActiveTab, setIsAuthModalOpen, isCommandPaletteOpen, setIsCommandPaletteOpen]);
 
-  }, [setActiveTab, setIsAuthModalOpen]);
+  const isStandardTab = [
+    'overview',
+    'targets',
+    'runs',
+    'findings',
+    'policies',
+    'management',
+    'governance',
+    'api-security',
+    'auth-vault',
+    'authz-matrix',
+    'resilience',
+    'performance',
+    'infra-supply-chain',
+    'agent-fleet',
+    'compliance',
+    'integrations',
+  ].includes(activeTab);
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground antialiased selection:bg-blue-600/30 selection:text-blue-200">
+    <div className="min-h-screen flex flex-col bg-background text-foreground antialiased selection:bg-blue-600/30 selection:text-blue-200 bg-cyber-grid">
       <Header />
       <div className="flex flex-1 relative">
         <Sidebar />
@@ -68,8 +114,20 @@ export const AppContent: React.FC = () => {
           {activeTab === 'findings' && <FindingsView />}
           {activeTab === 'policies' && <PoliciesView />}
           {activeTab === 'management' && <ManagementView />}
+          {activeTab === 'governance' && <GovernanceView />}
+          {activeTab === 'api-security' && <ApiSecurityView />}
+          {activeTab === 'auth-vault' && <AuthVaultView />}
+          {activeTab === 'authz-matrix' && <AccessMatrixView />}
+          {activeTab === 'resilience' && <ResilienceView />}
+          {activeTab === 'performance' && <PerformanceStudioView />}
+          {activeTab === 'infra-supply-chain' && <InfraSupplyChainView />}
+          {activeTab === 'agent-fleet' && <AgentFleetView />}
+          {activeTab === 'compliance' && <ComplianceCenterView />}
+          {activeTab === 'integrations' && <IntegrationsHubView />}
+          {!isStandardTab && <DomainWorkbenchPlaceholder tab={activeTab} />}
         </main>
       </div>
+      <CommandPalette />
       <ApiKeyModal />
       <ToastNotification />
     </div>

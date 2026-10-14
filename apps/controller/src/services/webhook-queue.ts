@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { eq, and, lte, inArray } from 'drizzle-orm';
+import { eq, and, lte, inArray, desc } from 'drizzle-orm';
 import { getDatabase } from './db.js';
 import { webhooks, webhookDeliveries } from './db/schema.js';
 import { encryptObject, decryptObject, EncryptedPayload } from '@security-lab/crypto';
@@ -149,6 +149,34 @@ export class WebhookQueueService {
     }
     const deleted = await db.delete(webhooks).where(and(...conditions)).returning();
     return deleted.length > 0;
+  }
+
+  async listDeliveries(webhookId: string, limit = 50): Promise<WebhookDeliveryRecord[]> {
+    const { db } = getDatabase();
+    const rows = await db
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.webhookId, webhookId))
+      .orderBy(desc(webhookDeliveries.createdAt))
+      .limit(limit);
+
+    return rows.map((delivery) => ({
+      id: delivery.id,
+      webhookId: delivery.webhookId,
+      workspaceId: delivery.workspaceId,
+      eventType: delivery.eventType,
+      payload: delivery.payload as Record<string, unknown>,
+      status: delivery.status as WebhookDeliveryRecord['status'],
+      attempts: delivery.attempts,
+      maxAttempts: delivery.maxAttempts,
+      nextRetryAt: delivery.nextRetryAt,
+      lastAttemptAt: delivery.lastAttemptAt,
+      responseStatusCode: delivery.responseStatusCode,
+      responseBody: delivery.responseBody,
+      lastError: delivery.lastError,
+      createdAt: delivery.createdAt,
+      updatedAt: delivery.updatedAt,
+    }));
   }
 
   /**

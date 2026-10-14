@@ -13,6 +13,11 @@ import { findingsCommand } from './commands/findings.js';
 import { contractCommand } from './commands/contract.js';
 import { runCommand } from './commands/run.js';
 import { loginCommand, logoutCommand } from './commands/login.js';
+import { initCommand } from './commands/init.js';
+import { planCommand } from './commands/plan.js';
+import { composeCommand } from './commands/compose.js';
+import { verifyCommand } from './commands/verify.js';
+import { installHooksCommand } from './commands/hooks.js';
 import { setCliConfig } from './config/index.js';
 
 const program = new Command();
@@ -39,6 +44,11 @@ program.hook('preAction', (thisCommand) => {
 
 // Registered commands
 program.addCommand(versionCommand);
+program.addCommand(initCommand);
+program.addCommand(planCommand);
+program.addCommand(composeCommand);
+program.addCommand(verifyCommand);
+program.addCommand(installHooksCommand);
 program.addCommand(loginCommand);
 program.addCommand(logoutCommand);
 program.addCommand(projectCommand);

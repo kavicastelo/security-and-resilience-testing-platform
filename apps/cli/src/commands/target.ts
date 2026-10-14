@@ -3,9 +3,12 @@ import pc from 'picocolors';
 import { apiClient } from '../api/client.js';
 import { formatCliError } from '../output/formatters.js';
 import { Target } from '@security-lab/domain';
+import { verifyCommand } from './verify.js';
 
 export const targetCommand = new Command('target')
   .description('Register, inspect, update, and validate authorized target scopes');
+
+targetCommand.addCommand(verifyCommand);
 
 // Subcommand: list
 targetCommand
