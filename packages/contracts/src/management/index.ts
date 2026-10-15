@@ -6,6 +6,7 @@ export const PurgeModeSchema = z.enum([
   'findings',   // Clears findings, evidence records, metrics
   'artifacts',  // Clears disk artifacts, generated reports and metadata
   'jobs',       // Clears agent jobs queue and audit logs
+  'demo',       // Safely purges only synthetic records tagged with (Demo) without affecting real projects
 ]);
 
 export type PurgeMode = z.infer<typeof PurgeModeSchema>;
@@ -104,6 +105,9 @@ export interface SeedDataResult {
   evidenceCreated: number;
   policyId: string;
   releaseId?: string;
+  agentsCreated?: number;
+  webhooksCreated?: number;
+  metricsCreated?: number;
   message: string;
   timestamp: string;
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   parseOpenApiDocument,
   generateMockFromSchema,
@@ -6,6 +6,9 @@ import {
   parseGraphQLSchema,
   constructDepthAttackQuery,
   extractFieldSuggestions,
+  fetchTargetSpecs,
+  saveTargetSpec,
+  executeGraphQLIntrospection,
 } from '../src/api/contracts.js';
 
 describe('Phase UI-06: API Security, OpenAPI Catalog & GraphQL Introspection Explorer', () => {
@@ -193,4 +196,149 @@ describe('Phase UI-06: API Security, OpenAPI Catalog & GraphQL Introspection Exp
       expect(suggestions).toContain('email');
     });
   });
+
+  describe('Prompt PR-09: Contract Specifications Persistence & Server-Side Introspection Client API', () => {
+    let originalFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      vi.restoreAllMocks();
+    });
+
+    it('fetches saved contract specs for target and returns clean empty array when none exist', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] }),
+      });
+
+      const specs = await fetchTargetSpecs('target-target-001');
+      expect(Array.isArray(specs)).toBe(true);
+      expect(specs).toHaveLength(0);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/contracts/specs?targetId=target-target-001'),
+        expect.any(Object),
+      );
+    });
+
+    it('returns empty array when targetId is empty without calling network', async () => {
+      globalThis.fetch = vi.fn();
+      const specs = await fetchTargetSpecs('');
+      expect(specs).toEqual([]);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('persists uploaded OpenAPI specification to controller backend', async () => {
+      const mockRecord = {
+        id: 'spec-spec-123',
+        tenantId: 'default-tenant-001',
+        targetId: 'target-001',
+        name: 'Production Payments API',
+        type: 'openapi',
+        content: '{"openapi":"3.0.0","info":{"title":"Test","version":"1.0"}}',
+        createdAt: '2026-10-16T00:00:00.000Z',
+        updatedAt: '2026-10-16T00:00:00.000Z',
+      };
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({ success: true, data: mockRecord }),
+      });
+
+      const saved = await saveTargetSpec({
+        targetId: 'target-001',
+        name: 'Production Payments API',
+        type: 'openapi',
+        content: '{"openapi":"3.0.0","info":{"title":"Test","version":"1.0"}}',
+      });
+
+      expect(saved.id).toBe('spec-spec-123');
+      expect(saved.type).toBe('openapi');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/contracts/specs'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"Production Payments API"'),
+        }),
+      );
+    });
+
+    it('executes server-side GraphQL introspection with SSRF boundary check and returns persisted schema', async () => {
+      const mockResponse = {
+        schema: {
+          data: {
+            __schema: {
+              queryType: { name: 'Query' },
+              mutationType: null,
+              types: [
+                {
+                  kind: 'OBJECT',
+                  name: 'Query',
+                  fields: [{ name: 'health', type: { kind: 'SCALAR', name: 'String' } }],
+                },
+              ],
+            },
+          },
+        },
+        specRecord: {
+          id: 'spec-gql-456',
+          tenantId: 'default-tenant-001',
+          targetId: 'target-001',
+          name: 'GraphQL Introspection: https://api.corp.local/graphql',
+          type: 'graphql',
+          content: '{"data":{"__schema":{}}}',
+          createdAt: '2026-10-16T00:00:00.000Z',
+          updatedAt: '2026-10-16T00:00:00.000Z',
+        },
+      };
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: mockResponse }),
+      });
+
+      const result = await executeGraphQLIntrospection({
+        targetId: 'target-001',
+        endpointUrl: 'https://api.corp.local/graphql',
+      });
+
+      expect(result.schema).toBeDefined();
+      expect(result.specRecord.id).toBe('spec-gql-456');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/contracts/graphql/introspect'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            targetId: 'target-001',
+            endpointUrl: 'https://api.corp.local/graphql',
+          }),
+        }),
+      );
+    });
+
+    it('propagates SSRF and network errors from introspection endpoint', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          success: false,
+          error: { message: 'Requested URL is outside authorized target scope' },
+        }),
+      });
+
+      await expect(
+        executeGraphQLIntrospection({
+          targetId: 'target-001',
+          endpointUrl: 'http://169.254.169.254/graphql',
+        }),
+      ).rejects.toThrow('Requested URL is outside authorized target scope');
+    });
+  });
 });
+

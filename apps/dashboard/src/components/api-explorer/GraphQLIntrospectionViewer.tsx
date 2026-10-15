@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Search,
   Zap,
@@ -17,7 +18,10 @@ import {
   parseGraphQLSchema,
   formatGraphQLType,
   GraphQLField,
-  INTROSPECTION_QUERY,
+  fetchTargetSpecs,
+  saveTargetSpec,
+  executeGraphQLIntrospection,
+  ContractSpecRecord,
 } from '../../api/contracts.js';
 import { useAppStore } from '../../store/useAppStore.js';
 
@@ -165,31 +169,66 @@ const SAMPLE_GRAPHQL_SCHEMA: object = {
 };
 
 interface GraphQLIntrospectionViewerProps {
+  targetId?: string;
   targetUrl?: string;
   targetName?: string;
   onSelectQueryForDepth?: (rootField: string, nestedField: string) => void;
 }
 
 export const GraphQLIntrospectionViewer: React.FC<GraphQLIntrospectionViewerProps> = ({
+  targetId,
   targetUrl = '',
   onSelectQueryForDepth,
 }) => {
   const { showToast } = useAppStore();
+  const queryClient = useQueryClient();
+
+  const { data: targetSpecs = [], isLoading: isLoadingSpecs } = useQuery<ContractSpecRecord[]>({
+    queryKey: ['target-specs', targetId],
+    queryFn: () => (targetId ? fetchTargetSpecs(targetId) : Promise.resolve([])),
+    enabled: Boolean(targetId),
+  });
+
+  const graphQLSpecs = useMemo(() => targetSpecs.filter((s) => s.type === 'graphql'), [targetSpecs]);
 
   const [endpointInput, setEndpointInput] = useState<string>(
     targetUrl ? `${targetUrl.replace(/\/$/, '')}/graphql` : 'http://localhost:4000/graphql',
   );
-  const [schemaData, setSchemaData] = useState<GraphQLParsedSchema>(() =>
-    parseGraphQLSchema(SAMPLE_GRAPHQL_SCHEMA),
-  );
+
+  const [selectedSpecId, setSelectedSpecId] = useState<string | null>(null);
+  const [ephemeralSchema, setEphemeralSchema] = useState<GraphQLParsedSchema | null>(null);
   const [activeTab, setActiveTab] = useState<'queries' | 'mutations' | 'types' | 'raw'>('queries');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isIntrospecting, setIsIntrospecting] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const [introspectionExposed, setIntrospectionExposed] = useState<boolean>(true);
   const [generatedQuery, setGeneratedQuery] = useState<string | null>(null);
   const [copiedQuery, setCopiedQuery] = useState<boolean>(false);
 
-  // Trigger introspection against endpoint
+  const schemaData = useMemo<GraphQLParsedSchema | null>(() => {
+    if (selectedSpecId) {
+      const found = graphQLSpecs.find((s) => s.id === selectedSpecId);
+      if (found) {
+        try {
+          const parsedJson = JSON.parse(found.content);
+          return parseGraphQLSchema(parsedJson);
+        } catch {
+          // ignore error and fallback
+        }
+      }
+    }
+    if (graphQLSpecs.length > 0) {
+      try {
+        const parsedJson = JSON.parse(graphQLSpecs[0].content);
+        return parseGraphQLSchema(parsedJson);
+      } catch {
+        // ignore error and fallback
+      }
+    }
+    return ephemeralSchema;
+  }, [selectedSpecId, graphQLSpecs, ephemeralSchema]);
+
+  // Trigger server-side introspection against endpoint with SSRF checks
   const handleIntrospect = async () => {
     if (!endpointInput.trim()) {
       showToast('Please specify a GraphQL endpoint URL', 'error');
@@ -198,36 +237,62 @@ export const GraphQLIntrospectionViewer: React.FC<GraphQLIntrospectionViewerProp
 
     setIsIntrospecting(true);
     try {
-      const res = await fetch(endpointInput.trim(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ query: INTROSPECTION_QUERY }),
+      const result = await executeGraphQLIntrospection({
+        targetId: targetId || '',
+        endpointUrl: endpointInput.trim(),
       });
 
-      const json = await res.json();
-      if (json.data?.__schema) {
-        const parsed = parseGraphQLSchema(json);
-        setSchemaData(parsed);
-        setIntrospectionExposed(true);
-        showToast(
-          `Introspection successful! Mapped ${parsed.typesCount} types and ${parsed.queries.length} queries.`,
-          'success',
-        );
-      } else {
-        setIntrospectionExposed(false);
-        showToast('Introspection query returned no schema data. Introspection may be disabled.', 'info');
+      const parsed = parseGraphQLSchema(result.schema);
+      setEphemeralSchema(parsed);
+      setIntrospectionExposed(true);
+      if (result.specRecord?.id) {
+        setSelectedSpecId(result.specRecord.id);
       }
-    } catch (err: any) {
-      // In development or demo mode, provide informative feedback
+      if (targetId) {
+        await queryClient.invalidateQueries({ queryKey: ['target-specs', targetId] });
+      }
       showToast(
-        `Unable to reach ${endpointInput}. Introspection might be disabled or blocked by CORS. Loaded offline sample schema.`,
-        'info',
+        `Introspection successful! Mapped ${parsed.typesCount} types and ${parsed.queries.length} queries. Persisted to database.`,
+        'success',
+      );
+    } catch (err: any) {
+      setIntrospectionExposed(false);
+      showToast(
+        err.message || `Unable to reach ${endpointInput}. Introspection might be disabled or blocked by SSRF checks.`,
+        'error',
       );
     } finally {
       setIsIntrospecting(false);
+    }
+  };
+
+  // Load and persist sample GraphQL schema template
+  const handleLoadSample = async () => {
+    try {
+      const parsed = parseGraphQLSchema(SAMPLE_GRAPHQL_SCHEMA);
+      setEphemeralSchema(parsed);
+      setIntrospectionExposed(true);
+
+      if (targetId) {
+        setIsSaving(true);
+        try {
+          const saved = await saveTargetSpec({
+            targetId,
+            name: 'Sample GraphQL Schema',
+            type: 'graphql',
+            content: JSON.stringify(SAMPLE_GRAPHQL_SCHEMA, null, 2),
+          });
+          setSelectedSpecId(saved.id);
+          await queryClient.invalidateQueries({ queryKey: ['target-specs', targetId] });
+          showToast('Imported and persisted sample GraphQL schema', 'success');
+        } finally {
+          setIsSaving(false);
+        }
+      } else {
+        showToast('Loaded sample GraphQL schema', 'info');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Failed to load sample schema', 'error');
     }
   };
 
@@ -253,23 +318,32 @@ export const GraphQLIntrospectionViewer: React.FC<GraphQLIntrospectionViewerProp
   };
 
   // Filter queries / mutations / types
-  const filteredQueries = schemaData.queries.filter(
-    (q) =>
-      q.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (q.description && q.description.toLowerCase().includes(searchTerm.toLowerCase())),
-  );
+  const filteredQueries = useMemo(() => {
+    if (!schemaData) return [];
+    return schemaData.queries.filter(
+      (q) =>
+        q.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (q.description && q.description.toLowerCase().includes(searchTerm.toLowerCase())),
+    );
+  }, [schemaData, searchTerm]);
 
-  const filteredMutations = schemaData.mutations.filter(
-    (m) =>
-      m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (m.description && m.description.toLowerCase().includes(searchTerm.toLowerCase())),
-  );
+  const filteredMutations = useMemo(() => {
+    if (!schemaData) return [];
+    return schemaData.mutations.filter(
+      (m) =>
+        m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (m.description && m.description.toLowerCase().includes(searchTerm.toLowerCase())),
+    );
+  }, [schemaData, searchTerm]);
 
-  const filteredTypes = schemaData.types.filter(
-    (t) =>
-      t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (t.description && t.description.toLowerCase().includes(searchTerm.toLowerCase())),
-  );
+  const filteredTypes = useMemo(() => {
+    if (!schemaData) return [];
+    return schemaData.types.filter(
+      (t) =>
+        t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (t.description && t.description.toLowerCase().includes(searchTerm.toLowerCase())),
+    );
+  }, [schemaData, searchTerm]);
 
   return (
     <div className="space-y-6">
@@ -308,6 +382,35 @@ export const GraphQLIntrospectionViewer: React.FC<GraphQLIntrospectionViewerProp
           </div>
         </div>
 
+        {/* Spec Switcher & Import Template */}
+        <div className="flex flex-wrap items-center gap-2">
+          {graphQLSpecs.length > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span>Spec:</span>
+              <select
+                value={selectedSpecId || (graphQLSpecs[0]?.id ?? '')}
+                onChange={(e) => setSelectedSpecId(e.target.value)}
+                className="px-2.5 py-1 rounded bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              >
+                {graphQLSpecs.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({new Date(s.createdAt).toLocaleDateString()})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleLoadSample}
+            disabled={isSaving}
+            className="px-2.5 py-1.5 rounded-lg bg-accent/60 hover:bg-accent text-foreground hover:text-cyan-400 border border-border text-xs transition-colors disabled:opacity-50"
+          >
+            Import Template
+          </button>
+        </div>
+
         {/* Introspection Security Exposure Status Badge */}
         <div className="flex flex-col items-end">
           <span className="text-[11px] text-muted-foreground mb-1">Introspection Status</span>
@@ -323,48 +426,82 @@ export const GraphQLIntrospectionViewer: React.FC<GraphQLIntrospectionViewerProp
         </div>
       </div>
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-3 rounded-xl bg-card border border-border flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-cyan-500/15 text-cyan-400">
-            <Code2 className="w-4 h-4" />
+      {!schemaData && !isLoadingSpecs && (
+        <div className="p-12 rounded-xl bg-card border border-border text-center space-y-4 shadow-sm">
+          <div className="w-14 h-14 rounded-full bg-cyan-500/10 text-cyan-400 mx-auto flex items-center justify-center border border-cyan-500/20">
+            <Database className="w-7 h-7" />
           </div>
           <div>
-            <span className="text-[11px] text-muted-foreground block">Queries</span>
-            <span className="text-lg font-bold font-mono text-foreground">{schemaData.queries.length}</span>
+            <h3 className="text-base font-semibold text-foreground">No GraphQL schema introspected for this target</h3>
+            <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+              Execute server-side introspection against your target GraphQL endpoint above to map queries, mutations, and types, or import a pre-packaged sample schema template.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={handleLoadSample}
+              disabled={isSaving}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium transition-colors shadow-sm disabled:opacity-50"
+            >
+              <Code2 className="w-4 h-4" />
+              <span>Import Sample Schema Template</span>
+            </button>
           </div>
         </div>
+      )}
 
-        <div className="p-3 rounded-xl bg-card border border-border flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400">
-            <Zap className="w-4 h-4" />
-          </div>
-          <div>
-            <span className="text-[11px] text-muted-foreground block">Mutations</span>
-            <span className="text-lg font-bold font-mono text-foreground">{schemaData.mutations.length}</span>
-          </div>
+      {!schemaData && isLoadingSpecs && (
+        <div className="p-12 rounded-xl bg-card border border-border text-center space-y-3">
+          <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mx-auto" />
+          <p className="text-xs text-muted-foreground">Loading GraphQL schema records for target...</p>
         </div>
+      )}
 
-        <div className="p-3 rounded-xl bg-card border border-border flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-purple-500/15 text-purple-400">
-            <Database className="w-4 h-4" />
-          </div>
-          <div>
-            <span className="text-[11px] text-muted-foreground block">Object Types</span>
-            <span className="text-lg font-bold font-mono text-foreground">{schemaData.typesCount}</span>
-          </div>
-        </div>
+      {schemaData && (
+        <>
+          {/* Metrics Row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-3 rounded-xl bg-card border border-border flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-cyan-500/15 text-cyan-400">
+                <Code2 className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[11px] text-muted-foreground block">Queries</span>
+                <span className="text-lg font-bold font-mono text-foreground">{schemaData.queries.length}</span>
+              </div>
+            </div>
 
-        <div className="p-3 rounded-xl bg-card border border-border flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-emerald-500/15 text-emerald-400">
-            <Layers className="w-4 h-4" />
+            <div className="p-3 rounded-xl bg-card border border-border flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400">
+                <Zap className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[11px] text-muted-foreground block">Mutations</span>
+                <span className="text-lg font-bold font-mono text-foreground">{schemaData.mutations.length}</span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-card border border-border flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-purple-500/15 text-purple-400">
+                <Database className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[11px] text-muted-foreground block">Object Types</span>
+                <span className="text-lg font-bold font-mono text-foreground">{schemaData.typesCount}</span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-card border border-border flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-emerald-500/15 text-emerald-400">
+                <Layers className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[11px] text-muted-foreground block">Total Fields</span>
+                <span className="text-lg font-bold font-mono text-foreground">{schemaData.totalFieldsCount}</span>
+              </div>
+            </div>
           </div>
-          <div>
-            <span className="text-[11px] text-muted-foreground block">Total Fields</span>
-            <span className="text-lg font-bold font-mono text-foreground">{schemaData.totalFieldsCount}</span>
-          </div>
-        </div>
-      </div>
 
       {/* Filter and Tab Navigation */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-border/70 pb-3">
@@ -621,6 +758,8 @@ export const GraphQLIntrospectionViewer: React.FC<GraphQLIntrospectionViewerProp
           )}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

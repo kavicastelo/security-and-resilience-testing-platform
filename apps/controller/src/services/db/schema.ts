@@ -706,4 +706,27 @@ export const aiRemediations = pgTable(
   ],
 );
 
+export const contractSpecs = pgTable(
+  'contract_specs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: varchar('tenant_id', { length: 255 }),
+    targetId: varchar('target_id', { length: 255 }).notNull(),
+    name: varchar('name', { length: 255 }).notNull(),
+    type: varchar('type', { length: 32 }).$type<'openapi' | 'graphql'>().notNull(),
+    content: text('content').notNull(),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_contract_specs_target_id').on(table.targetId),
+    index('idx_contract_specs_tenant_id').on(table.tenantId),
+    index('idx_contract_specs_type').on(table.type),
+  ],
+);
+
+export type ContractSpecRecord = typeof contractSpecs.$inferSelect;
+export type NewContractSpecRecord = typeof contractSpecs.$inferInsert;
+
 

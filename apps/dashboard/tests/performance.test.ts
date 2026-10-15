@@ -1,10 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   calculateSaturationKnee,
   computeHistogramBins,
   compareWithBaseline,
   fetchPerformanceSnapshot,
+  fetchMetricsStudioData,
   fetchHistoricalBaselines,
+  promoteGoldenBaseline,
+  executeLoadTest,
   PRESET_BENCHMARKS,
   PerformanceMetricPoint,
   LatencyPercentileSummary,
@@ -331,6 +334,16 @@ describe('Phase UI-10: Native Performance Engineering, Latency Histograms & Capa
   });
 
   describe('Preset Benchmark Profiles & Historical Baselines', () => {
+    const originalFetch = globalThis.fetch;
+
+    beforeEach(() => {
+      globalThis.fetch = vi.fn();
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
     it('provides core presets matching platform service profiles', () => {
       const presets = Object.keys(PRESET_BENCHMARKS);
       expect(presets).toContain('api-gateway-standard');
@@ -348,22 +361,128 @@ describe('Phase UI-10: Native Performance Engineering, Latency Histograms & Capa
       expect(pay.saturation.status).toBe('severe_overload');
     });
 
-    it('fetches historical baselines including the golden baseline release', () => {
-      const baselines = fetchHistoricalBaselines();
-      expect(baselines.length).toBeGreaterThanOrEqual(3);
+    it('fetches historical baselines including the golden baseline release via API', async () => {
+      const mockBaselines = [
+        {
+          id: 'base-golden-v2.4',
+          name: 'v2.4.0 Production Release Golden Baseline',
+          runDate: '2026-09-28',
+          p95: 98.0,
+          peakRps: 2920,
+          errorRate: 0.001,
+          isGolden: true,
+        },
+        {
+          id: 'base-nightly-latest',
+          name: 'Nightly CI Performance Sweep #412',
+          runDate: '2026-10-13',
+          p95: 104.5,
+          peakRps: 2880,
+          errorRate: 0.0015,
+          isGolden: false,
+        },
+        {
+          id: 'base-canary-rollout',
+          name: 'Canary Gateway Envoy Proxy Mesh',
+          runDate: '2026-10-14',
+          p95: 118.0,
+          peakRps: 2750,
+          errorRate: 0.0022,
+          isGolden: false,
+        },
+      ];
+
+      (globalThis.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: mockBaselines }),
+      });
+
+      const baselines = await fetchHistoricalBaselines('target-123');
+      expect(baselines.length).toBe(3);
 
       const golden = baselines.find((b) => b.isGolden);
       expect(golden).toBeDefined();
       expect(golden!.id).toBe('base-golden-v2.4');
       expect(golden!.p95).toBe(98.0);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/performance/baselines?targetId=target-123'),
+        expect.anything()
+      );
+    });
+
+    it('returns null for fetchMetricsStudioData when no runId is provided', async () => {
+      const result = await fetchMetricsStudioData(undefined);
+      expect(result).toBeNull();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('fetches metrics studio timeseries snapshot for valid runId', async () => {
+      const mockSnapshot = {
+        ...PRESET_BENCHMARKS['api-gateway-standard'].snapshot,
+        runId: 'real-run-456',
+      };
+
+      (globalThis.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: mockSnapshot }),
+      });
+
+      const snapshot = await fetchMetricsStudioData('real-run-456');
+      expect(snapshot).not.toBeNull();
+      expect(snapshot!.runId).toBe('real-run-456');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/performance/runs/real-run-456/timeseries'),
+        expect.anything()
+      );
+    });
+
+    it('promotes golden baseline to controller endpoint', async () => {
+      const mockResult = {
+        id: 'golden-new-1',
+        name: 'Production Golden Release v3.0',
+        p95: 85.0,
+        peakRps: 3100,
+        errorRate: 0.0008,
+        isGolden: true,
+        runDate: '2026-10-15',
+      };
+
+      (globalThis.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: mockResult }),
+      });
+
+      const res = await promoteGoldenBaseline({
+        targetId: 'target-99',
+        testRunId: 'run-99',
+        name: 'Production Golden Release v3.0',
+        isGolden: true,
+      });
+
+      expect(res).not.toBeNull();
+      expect(res!.isGolden).toBe(true);
+      expect(res!.name).toBe('Production Golden Release v3.0');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/performance/baselines'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            targetId: 'target-99',
+            testRunId: 'run-99',
+            name: 'Production Golden Release v3.0',
+            isGolden: true,
+          }),
+        })
+      );
     });
 
     it('retrieves performance snapshot asynchronously for preset', async () => {
       const snapshot = await fetchPerformanceSnapshot(undefined, 'api-gateway-standard');
-      expect(snapshot.runId).toBe('run-perf-gw-01');
-      expect(snapshot.percentiles.p95).toBe(112.4);
-      expect(snapshot.histogramBins.length).toBe(8);
-      expect(snapshot.statusDistribution.status2xx).toBeGreaterThan(100000);
+      expect(snapshot).not.toBeNull();
+      expect(snapshot!.runId).toBe('run-perf-gw-01');
+      expect(snapshot!.percentiles.p95).toBe(112.4);
+      expect(snapshot!.histogramBins.length).toBe(8);
+      expect(snapshot!.statusDistribution.status2xx).toBeGreaterThan(100000);
     });
   });
 });

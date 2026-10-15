@@ -1,4 +1,4 @@
-import { apiClient } from './client.js';
+import { authFetch } from './client.js';
 
 export interface ChaosInjectionConfig {
   latencyMs: number;
@@ -312,7 +312,41 @@ export const SAMPLE_RACE_CONDITION_MODEL: RaceConditionBurstModel = {
 };
 
 // ============================================================================
-// API Client Methods
+// ============================================================================
+// Example Templates & Clean Baseline Empty States
+// ============================================================================
+
+export const EXAMPLE_STATE_MACHINE_MODEL = SAMPLE_STATE_MACHINE_MODEL;
+export const EXAMPLE_RACE_CONDITION_MODEL = SAMPLE_RACE_CONDITION_MODEL;
+
+export const EMPTY_STATE_MACHINE_MODEL: StateMachineModel = {
+  workflowId: '',
+  name: 'No Workflow Analyzed',
+  targetUrl: '',
+  initialStepId: '',
+  terminalStepIds: [],
+  states: [],
+  transitions: [],
+  bypassExploits: [],
+};
+
+export const EMPTY_RACE_CONDITION_MODEL: RaceConditionBurstModel = {
+  testId: '',
+  name: 'No Concurrency Test Run',
+  endpoint: '',
+  method: 'POST',
+  concurrency: 0,
+  barrierReleaseJitterMs: 0,
+  maxAllowedSuccess: 1,
+  actualSuccessCount: 0,
+  isVulnerable: false,
+  summary: 'No synchronized socket burst tests have been dispatched.',
+  remediation: '',
+  requests: [],
+};
+
+// ============================================================================
+// API Client Methods & Live Engine Invocations
 // ============================================================================
 
 /**
@@ -323,59 +357,134 @@ export function getChaosPresetConfig(presetKey: string = 'db_brownout'): ChaosIn
 }
 
 /**
- * Fetches state machine verification model (or defaults)
+ * Fetches state machine verification model from live controller or returns empty baseline
  */
-export async function getStateMachineModel(): Promise<StateMachineModel> {
-  return SAMPLE_STATE_MACHINE_MODEL;
+export async function getStateMachineModel(workflowId?: string): Promise<StateMachineModel> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  try {
+    const query = workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : '';
+    const res = await authFetch(`${apiUrl}/api/v1/resilience/business-logic/state-machine${query}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.data) return json.data;
+    }
+  } catch {
+    // Return empty state if unreachable
+  }
+  return EMPTY_STATE_MACHINE_MODEL;
 }
 
 /**
- * Fetches race condition burst test model (or defaults)
+ * Fetches race condition burst test model from live controller or returns empty baseline
  */
-export async function getRaceConditionBurstModel(): Promise<RaceConditionBurstModel> {
-  return SAMPLE_RACE_CONDITION_MODEL;
+export async function getRaceConditionBurstModel(
+  targetId?: string,
+  endpoint?: string,
+): Promise<RaceConditionBurstModel> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  try {
+    const params = new URLSearchParams();
+    if (targetId) params.set('targetId', targetId);
+    if (endpoint) params.set('endpoint', endpoint);
+    const query = params.toString() ? `?${params.toString()}` : '';
+
+    const res = await authFetch(`${apiUrl}/api/v1/resilience/business-logic/race-condition${query}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.data) return json.data;
+    }
+  } catch {
+    // Return empty state if unreachable
+  }
+  return EMPTY_RACE_CONDITION_MODEL;
 }
 
 /**
- * Simulates triggering a live chaos experiment against the target
+ * Executes live fault injection simulation through controller with safety circuit breaker
  */
 export async function executeChaosSimulation(
   config: ChaosInjectionConfig,
-): Promise<{ success: boolean; stats: ChaosExecutionStats; message: string }> {
-  // If backend endpoints exist, call them; otherwise provide high-fidelity simulation
-  try {
-    const res = await apiClient.post<any>('/api/v1/test-runs', {
-      plan: {
-        name: `Chaos Experiment: ${config.activePreset}`,
-        engineId: 'engine-chaos-mitm',
-      },
-    });
-    return {
-      success: true,
-      stats: {
-        status: config.circuitBreakerEnabled && config.errorInjectionRate > 50 ? 'tripped' : 'completed',
-        totalRequests: 240,
-        faultsInjected: Math.round(240 * (config.errorInjectionRate / 100)),
-        unrecoveredErrors: Math.round(240 * (config.packetDropRate / 100)),
-        rtoSeconds: config.latencyMs > 1000 ? 5.2 : 2.8,
-        circuitBreakerState: config.circuitBreakerEnabled && config.errorInjectionRate > 50 ? 'HALF_OPEN' : 'CLOSED',
-        resilienceScore: Math.max(20, 100 - config.errorInjectionRate - config.packetDropRate),
-      },
-      message: res?.message || 'Chaos injection experiment completed successfully.',
-    };
-  } catch {
-    return {
-      success: true,
-      stats: {
-        status: config.circuitBreakerEnabled && config.errorInjectionRate > 50 ? 'tripped' : 'completed',
-        totalRequests: 180,
-        faultsInjected: Math.round(180 * (config.errorInjectionRate / 100)),
-        unrecoveredErrors: Math.round(180 * (config.packetDropRate / 100)),
-        rtoSeconds: config.latencyMs > 1000 ? 4.8 : 2.4,
-        circuitBreakerState: config.circuitBreakerEnabled && config.errorInjectionRate > 50 ? 'HALF_OPEN' : 'CLOSED',
-        resilienceScore: Math.max(25, 100 - config.errorInjectionRate - config.packetDropRate),
-      },
-      message: 'Simulated fault injection executed across proxy pipeline.',
-    };
+  targetId?: string,
+): Promise<{ success: boolean; stats: ChaosExecutionStats; timeline?: RecoveryTimelinePoint[]; message: string }> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/resilience/chaos/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      targetId,
+      latencyMs: config.latencyMs,
+      jitterMs: config.jitterMs,
+      packetDropRate: config.packetDropRate,
+      errorInjectionRate: config.errorInjectionRate,
+      errorStatusCode: config.errorStatusCode,
+      circuitBreakerEnabled: config.circuitBreakerEnabled,
+      circuitBreakerThreshold: config.circuitBreakerThreshold,
+      activePreset: config.activePreset,
+    }),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to execute chaos simulation (HTTP ${res.status})`);
   }
+
+  const json = await res.json();
+  return {
+    success: true,
+    stats: json.stats,
+    timeline: json.timeline,
+    message: json.message || 'Chaos resilience experiment completed successfully.',
+  };
+}
+
+/**
+ * Executes live business logic state machine audit via controller
+ */
+export async function auditStateMachine(options: {
+  targetId?: string;
+  workflowId?: string;
+  workflowName?: string;
+  states?: WorkflowStateNode[];
+  transitions?: WorkflowTransitionEdge[];
+}): Promise<StateMachineModel> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/resilience/business-logic/state-machine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to audit state machine (HTTP ${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data as StateMachineModel;
+}
+
+/**
+ * Dispatches synchronized socket burst race condition probe via controller
+ */
+export async function executeRaceConditionBurst(options: {
+  targetId?: string;
+  endpoint: string;
+  method?: string;
+  concurrency?: number;
+  payload?: any;
+}): Promise<RaceConditionBurstModel> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/resilience/business-logic/race-condition`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to execute race condition burst (HTTP ${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data as RaceConditionBurstModel;
 }

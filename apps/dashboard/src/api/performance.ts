@@ -612,147 +612,108 @@ function generateAuthTokenPreset(): PerformanceStudioSnapshot {
 // API Client Invocation Functions
 // ============================================================================
 
+export type MetricsStudioSnapshot = PerformanceStudioSnapshot;
+
+export async function fetchMetricsStudioData(
+  runId?: string
+): Promise<MetricsStudioSnapshot | null> {
+  if (!runId || runId === 'preset') {
+    return null;
+  }
+  const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
+  try {
+    const res = await authFetch(`${apiUrl}/api/v1/performance/runs/${encodeURIComponent(runId)}/timeseries`);
+    if (res.ok) {
+      const json = await res.json();
+      return json.data ?? null;
+    }
+  } catch {
+    // API unavailable or network failure
+  }
+  return null;
+}
+
 export async function fetchPerformanceSnapshot(
   runId?: string,
-  presetId = 'api-gateway-standard'
-): Promise<PerformanceStudioSnapshot> {
-  const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
-
+  presetId?: string
+): Promise<PerformanceStudioSnapshot | null> {
   if (runId && runId !== 'preset') {
-    try {
-      const res = await authFetch(`${apiUrl}/api/v1/test-runs/${runId}/metrics`);
-      if (res.ok) {
-        const json = await res.json();
-        const metrics: Array<{ name: string; value: number }> = json.data || [];
-        if (metrics.length > 0) {
-          const map: Record<string, number> = {};
-          metrics.forEach((m) => {
-            map[m.name] = m.value;
-          });
-
-          const p50 = map['http_req_duration_med'] ?? 45;
-          const p90 = Math.round(p50 + ((map['http_req_duration_p95'] ?? 120) - p50) * 0.7);
-          const p95 = map['http_req_duration_p95'] ?? 120;
-          const p99 = map['http_req_duration_p99'] ?? 210;
-          const avg = map['http_req_duration_avg'] ?? 52;
-          const max = map['http_req_duration_max'] ?? p99 * 1.5;
-          const rps = map['http_rps'] ?? 1500;
-          const totalRequests = map['http_reqs_total'] ?? 50000;
-          const errorRate = map['http_req_failed_ratio'] ?? 0.005;
-
-          const percentiles: LatencyPercentileSummary = {
-            p50,
-            p90,
-            p95,
-            p99,
-            p999: p99 * 1.4,
-            min: Math.max(1, p50 * 0.3),
-            max,
-            avg,
-            stdDev: (p95 - p50) / 2,
-          };
-
-          // Synthesize time-series points from run summary
-          const timeSeries: PerformanceMetricPoint[] = [];
-          for (let sec = 0; sec <= 30; sec += 5) {
-            const ratio = sec / 30;
-            const ptRps = Math.round(rps * (0.3 + 0.7 * ratio));
-            const vus = Math.round(10 + ratio * 50);
-            timeSeries.push({
-              timestamp: Date.now() - (30 - sec) * 1000,
-              timeSec: sec,
-              rps: ptRps,
-              concurrencyVUs: vus,
-              p50: Math.round((p50 * (0.8 + 0.3 * ratio)) * 100) / 100,
-              p90: Math.round((p90 * (0.8 + 0.3 * ratio)) * 100) / 100,
-              p95: Math.round((p95 * (0.8 + 0.4 * ratio)) * 100) / 100,
-              p99: Math.round((p99 * (0.8 + 0.5 * ratio)) * 100) / 100,
-              errorRate,
-              status2xx: Math.round(ptRps * 5 * (1 - errorRate)),
-              status4xx: Math.round(ptRps * 5 * errorRate * 0.5),
-              status5xx: Math.round(ptRps * 5 * errorRate * 0.5),
-              bytesPerSec: ptRps * 1200,
-            });
-          }
-
-          const saturation = calculateSaturationKnee(timeSeries);
-          const goldenBaseline = PRESET_BENCHMARKS['api-gateway-standard'].snapshot.percentiles;
-          const baselineComparison = compareWithBaseline(
-            percentiles,
-            rps,
-            errorRate,
-            goldenBaseline,
-            2920,
-            0.001
-          );
-
-          return {
-            runId,
-            targetId: 'custom-run-target',
-            targetUrl: 'https://target.internal.security-lab.local/api',
-            profileName: `Execution Metrics for Run #${runId.slice(0, 8)}`,
-            durationSec: 30,
-            totalRequests,
-            peakRps: rps,
-            avgRps: Math.round(rps * 0.85),
-            errorRate,
-            percentiles,
-            timeSeries,
-            histogramBins: computeHistogramBins(percentiles, totalRequests),
-            saturation,
-            baselineComparison,
-            statusDistribution: {
-              status2xx: Math.round(totalRequests * (1 - errorRate)),
-              status4xx: Math.round(totalRequests * errorRate * 0.5),
-              status5xx: Math.round(totalRequests * errorRate * 0.5),
-              codeCounts: {
-                '200': Math.round(totalRequests * (1 - errorRate)),
-                '400': Math.round(totalRequests * errorRate * 0.5),
-                '500': Math.round(totalRequests * errorRate * 0.5),
-              },
-            },
-            sloPassed: p95 <= 500 && errorRate <= 0.01,
-            sloViolations: p95 > 500 ? ['p95 Latency exceeded 500ms SLA'] : [],
-          };
-        }
-      }
-    } catch {
-      // Fallback to presets if backend endpoint unavailable
-    }
+    return fetchMetricsStudioData(runId);
   }
-
-  const preset = PRESET_BENCHMARKS[presetId] ?? PRESET_BENCHMARKS['api-gateway-standard'];
-  return preset.snapshot;
+  if (presetId && PRESET_BENCHMARKS[presetId]) {
+    return PRESET_BENCHMARKS[presetId].snapshot;
+  }
+  return null;
 }
 
-export function fetchHistoricalBaselines(): HistoricalBaseline[] {
-  return [
-    {
-      id: 'base-golden-v2.4',
-      name: 'v2.4.0 Production Release Golden Baseline',
-      runDate: '2026-09-28',
-      p95: 98.0,
-      peakRps: 2920,
-      errorRate: 0.001,
-      isGolden: true,
-    },
-    {
-      id: 'base-nightly-latest',
-      name: 'Nightly CI Performance Sweep #412',
-      runDate: '2026-10-13',
-      p95: 104.5,
-      peakRps: 2880,
-      errorRate: 0.0015,
-      isGolden: false,
-    },
-    {
-      id: 'base-canary-rollout',
-      name: 'Canary Gateway Envoy Proxy Mesh',
-      runDate: '2026-10-14',
-      p95: 118.0,
-      peakRps: 2750,
-      errorRate: 0.0022,
-      isGolden: false,
-    },
-  ];
+export async function fetchHistoricalBaselines(targetId?: string): Promise<HistoricalBaseline[]> {
+  const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
+  try {
+    const query = targetId ? `?targetId=${encodeURIComponent(targetId)}` : '';
+    const res = await authFetch(`${apiUrl}/api/v1/performance/baselines${query}`);
+    if (res.ok) {
+      const json = await res.json();
+      return json.data || [];
+    }
+  } catch {
+    // API unavailable or network failure
+  }
+  return [];
 }
+
+export async function promoteGoldenBaseline(payload: {
+  targetId: string;
+  testRunId: string;
+  name: string;
+  isGolden?: boolean;
+}): Promise<HistoricalBaseline | null> {
+  const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
+  try {
+    const res = await authFetch(`${apiUrl}/api/v1/performance/baselines`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return json.data ?? null;
+    }
+  } catch {
+    // API unavailable
+  }
+  return null;
+}
+
+export async function executeLoadTest(payload: {
+  targetId: string;
+  scenario?: {
+    vus?: number;
+    duration?: string;
+    rpsTarget?: number;
+    endpoints?: Array<{ path: string; method?: string; weight?: number }>;
+  };
+  concurrency?: number;
+  duration?: string;
+  rpsTarget?: number;
+}): Promise<{ testRunId: string; status: string; totalRequests: number; errorRate: number } | null> {
+  const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
+  try {
+    const res = await authFetch(`${apiUrl}/api/v1/performance/load/execute`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return json.data ?? null;
+    }
+  } catch {
+    // API unavailable
+  }
+  return null;
+}
+

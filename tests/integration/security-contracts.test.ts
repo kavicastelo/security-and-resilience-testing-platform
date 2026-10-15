@@ -1,5 +1,31 @@
 import http from 'node:http';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+
+vi.mock('../../apps/controller/src/services/db.js', () => {
+  const db = {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          orderBy: vi.fn().mockResolvedValue([]),
+          limit: vi.fn().mockResolvedValue([{ id: '00000000-0000-0000-0000-000000000000', name: 'Default Tenant', plan: 'enterprise' }]),
+          then: (r: any) => Promise.resolve([{ id: '00000000-0000-0000-0000-000000000000', name: 'Default Tenant', plan: 'enterprise' }]).then(r),
+        })),
+        limit: vi.fn().mockResolvedValue([{ id: '00000000-0000-0000-0000-000000000000', name: 'Default Tenant', plan: 'enterprise' }]),
+        then: (r: any) => Promise.resolve([{ id: '00000000-0000-0000-0000-000000000000', name: 'Default Tenant', plan: 'enterprise' }]).then(r),
+      })),
+    })),
+    insert: vi.fn(() => ({
+      values: vi.fn(() => ({
+        returning: vi.fn().mockResolvedValue([{ id: 'spec-test-123' }]),
+      })),
+    })),
+  };
+  return {
+    getDatabase: () => ({ db, sql: vi.fn() }),
+    closeDatabase: vi.fn(),
+  };
+});
+
 import {
   parseOpenApiSpec,
   evaluateOpenApiContractRules,
@@ -407,7 +433,7 @@ paths: {}
   // 5. Controller Route POST /api/v1/contracts/verify
   // ---------------------------------------------------------------------------
   describe('Controller Route /api/v1/contracts/verify', () => {
-    const app = buildApp({ disableLogging: true });
+    const app = buildApp({ disableLogging: true, bypassAuth: true, enableReaper: false });
 
     afterAll(async () => {
       await app.close();
@@ -448,5 +474,55 @@ paths: {}
       expect(json.success).toBe(false);
       expect(json.error.code).toBe('CONTRACT_VALIDATION_ERROR');
     });
+
+    it('POST /api/v1/contracts/specs persists an OpenAPI specification in the database', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/contracts/specs',
+        payload: {
+          targetId: '00000000-0000-0000-0000-000000000001',
+          name: 'CyberOps Core API',
+          type: 'openapi',
+          content: validOpenApiYaml,
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      const json = JSON.parse(response.payload);
+      expect(json.success).toBe(true);
+      expect(json.data.name).toBe('CyberOps Core API');
+      expect(json.data.type).toBe('openapi');
+    });
+
+    it('GET /api/v1/contracts/specs retrieves saved specifications for a target', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/contracts/specs?targetId=00000000-0000-0000-0000-000000000001',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const json = JSON.parse(response.payload);
+      expect(json.success).toBe(true);
+      expect(Array.isArray(json.data)).toBe(true);
+      expect(json.data.length).toBeGreaterThan(0);
+      expect(json.data[0].name).toBe('CyberOps Core API');
+    });
+
+    it('POST /api/v1/contracts/graphql/introspect blocks SSRF targeting cloud metadata', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/contracts/graphql/introspect',
+        payload: {
+          targetId: 'https://staging.securitylab.internal',
+          endpointUrl: 'http://169.254.169.254/latest/meta-data/graphql',
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const json = JSON.parse(response.payload);
+      expect(json.success).toBe(false);
+      expect(json.error.code).toBe('SSRF_SCOPE_VIOLATION');
+    });
   });
 });
+

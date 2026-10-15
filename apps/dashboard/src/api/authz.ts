@@ -1,4 +1,4 @@
-import { apiClient } from './client.js';
+import { authFetch } from './client.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 
@@ -549,51 +549,77 @@ export const PRESET_MATRICES: Record<string, AuthzMatrixDataset> = {
 // ============================================================================
 
 /**
- * Fetches available matrix datasets (or fallback preset datasets)
+ * Fetches available authorization matrix dataset for a specific target,
+ * or returns an explicit demo template when datasetKey is provided without a targetId.
+ * If targetId has no BOLA test runs or findings, returns null (clean empty state).
  */
-export async function getAuthzMatrixDataset(datasetKey: string = 'financialSaaS'): Promise<AuthzMatrixDataset> {
-  // If backend findings or test runs exist, we can hydrate them; otherwise return rich preset
-  try {
-    const findings = await apiClient.get<any[]>('/api/v1/findings');
-    const authzFindings = (findings || []).filter(
-      (f: any) =>
-        f.category === 'authorization' ||
-        f.title?.toLowerCase().includes('bola') ||
-        f.title?.toLowerCase().includes('bfla') ||
-        f.title?.toLowerCase().includes('idor'),
-    );
+export async function getAuthzMatrixDataset(
+  datasetKey?: string,
+  targetId?: string,
+): Promise<AuthzMatrixDataset | null> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
 
-    const base = PRESET_MATRICES[datasetKey] || PRESET_MATRICES.financialSaaS;
-    if (authzFindings.length === 0) {
-      return base;
+  // If a targetId is provided, fetch the dynamically assembled authorization matrix from controller
+  if (targetId) {
+    try {
+      const res = await authFetch(`${apiUrl}/api/v1/authz/matrix?targetId=${encodeURIComponent(targetId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data) {
+          return json.data as AuthzMatrixDataset;
+        }
+      }
+      return null;
+    } catch {
+      return null;
     }
-
-    // Hydrate existing preset with any real backend findings
-    return base;
-  } catch {
-    return PRESET_MATRICES[datasetKey] || PRESET_MATRICES.financialSaaS;
   }
+
+  // If datasetKey is one of the built-in presets without a targetId, return as an explicit demo template
+  if (datasetKey && PRESET_MATRICES[datasetKey]) {
+    return PRESET_MATRICES[datasetKey];
+  }
+
+  if (datasetKey === 'demo' || !datasetKey) {
+    return PRESET_MATRICES.financialSaaS;
+  }
+
+  return null;
 }
 
 /**
- * Executes a targeted single-finding retest via controller API
+ * Executes a targeted single-finding retest via controller API.
+ * Accurately reports actual HTTP response without simulated 403 fallbacks.
  */
-export async function retestAuthzFinding(findingId: string): Promise<{ success: boolean; message: string; retestedAt: string }> {
-  try {
-    const res = await apiClient.post<any>(`/api/v1/findings/${findingId}/retest`, {});
-    return {
-      success: res?.success ?? true,
-      message: res?.message ?? 'Retest executed successfully. Vulnerability status verified.',
-      retestedAt: new Date().toISOString(),
-    };
-  } catch (err: any) {
-    // Graceful simulation fallback for local / disconnected states
-    return {
-      success: true,
-      message: 'Simulated retest completed: Server returned HTTP 403 Forbidden with verified tenant ownership check.',
-      retestedAt: new Date().toISOString(),
-    };
+export async function retestAuthzFinding(
+  findingId: string,
+): Promise<{ success: boolean; message: string; retestedAt: string; stillDetected?: boolean }> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/findings/${encodeURIComponent(findingId)}/retest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Retest execution failed (HTTP ${res.status})`);
   }
+
+  const json = await res.json();
+  const data = json.data;
+
+  const isResolved = data?.stillDetected === false || data?.status === 'resolved';
+  const defaultMsg = isResolved
+    ? 'Retest verified: Vulnerability resolved. Target endpoint enforced proper authorization checks.'
+    : 'Retest verified: Vulnerability still detected on target endpoint.';
+
+  return {
+    success: json.success ?? true,
+    message: data?.message || defaultMsg,
+    retestedAt: data?.retestedAt || new Date().toISOString(),
+    stillDetected: data?.stillDetected,
+  };
 }
 
 /**

@@ -270,6 +270,15 @@ importers:
       '@fastify/sensible':
         specifier: ^6.0.3
         version: 6.0.6
+      '@security-lab/authz-matrix':
+        specifier: workspace:*
+        version: link:../../engines/authz-matrix
+      '@security-lab/business-logic':
+        specifier: workspace:*
+        version: link:../../engines/business-logic
+      '@security-lab/chaos-mitm':
+        specifier: workspace:*
+        version: link:../../engines/chaos-mitm
       '@security-lab/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -279,24 +288,45 @@ importers:
       '@security-lab/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
+      '@security-lab/db-security':
+        specifier: workspace:*
+        version: link:../../engines/db-security
       '@security-lab/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
       '@security-lab/evidence':
         specifier: workspace:*
         version: link:../../packages/evidence
+      '@security-lab/http-smuggling':
+        specifier: workspace:*
+        version: link:../../engines/http-smuggling
+      '@security-lab/k8s-infra-audit':
+        specifier: workspace:*
+        version: link:../../engines/k8s-infra-audit
       '@security-lab/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@security-lab/native-load':
+        specifier: workspace:*
+        version: link:../../engines/native-load
       '@security-lab/policy-engine':
         specifier: workspace:*
         version: link:../../packages/policy-engine
       '@security-lab/reporter':
         specifier: workspace:*
         version: link:../../packages/reporter
+      '@security-lab/sbom-supply-chain':
+        specifier: workspace:*
+        version: link:../../engines/sbom-supply-chain
       '@security-lab/scoring':
         specifier: workspace:*
         version: link:../../packages/scoring
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
       '@security-lab/test-sdk':
         specifier: workspace:*
         version: link:../../packages/test-sdk
@@ -371,6 +401,347 @@ importers:
       vite:
         specifier: ^6.1.1
         version: 6.4.3(@types/node@22.20.5)(jiti@1.21.7)(tsx@4.23.15)(yaml@2.9.1)
+
+  engines/authz-matrix:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/business-logic:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/chaos-mitm:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/scope-engine':
+        specifier: workspace:*
+        version: link:../../packages/scope-engine
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/db-security:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/scope-engine':
+        specifier: workspace:*
+        version: link:../../packages/scope-engine
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/graphql-security:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/test-sdk':
+        specifier: workspace:*
+        version: link:../../packages/test-sdk
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/http-smuggling:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/scope-engine':
+        specifier: workspace:*
+        version: link:../../packages/scope-engine
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/injection-fuzzer:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      '@security-lab/test-sdk':
+        specifier: workspace:*
+        version: link:../../packages/test-sdk
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/k8s-infra-audit:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/scope-engine':
+        specifier: workspace:*
+        version: link:../../packages/scope-engine
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/native-load:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/policy-engine':
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/sbom-supply-chain:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/scope-engine':
+        specifier: workspace:*
+        version: link:../../packages/scope-engine
+      '@security-lab/test-runner':
+        specifier: workspace:*
+        version: link:../../packages/test-runner
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  engines/web-crawler:
+    dependencies:
+      '@security-lab/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@security-lab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@security-lab/engine-sdk':
+        specifier: workspace:*
+        version: link:../../packages/engine-sdk
+      '@security-lab/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@security-lab/test-sdk':
+        specifier: workspace:*
+        version: link:../../packages/test-sdk
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
 
   packages/config:
     dependencies:

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FileCode2,
   Upload,
@@ -20,10 +21,13 @@ import {
   parseOpenApiDocument,
   verifyContractViaApi,
   ContractVerificationResult,
+  fetchTargetSpecs,
+  saveTargetSpec,
+  ContractSpecRecord,
 } from '../../api/contracts.js';
 import { useAppStore } from '../../store/useAppStore.js';
 
-// Pre-packaged realistic sample specs for instant testing
+// Pre-packaged realistic sample specs for instant testing & importing
 const SAMPLE_SPECS: Record<string, { label: string; desc: string; data: object }> = {
   ecommerce: {
     label: 'E-Commerce & Orders API',
@@ -285,25 +289,129 @@ const SAMPLE_SPECS: Record<string, { label: string; desc: string; data: object }
       },
     },
   },
+  petstore: {
+    label: 'Swagger Petstore API',
+    desc: 'Classic Petstore sample spec with pet and store inventory endpoints (OpenAPI 3.0)',
+    data: {
+      openapi: '3.0.0',
+      info: {
+        title: 'Swagger Petstore',
+        version: '1.0.0',
+        description: 'A sample API that uses a petstore as an example to demonstrate features in OpenAPI 3.0.',
+      },
+      servers: [{ url: 'https://petstore3.swagger.io/api/v3' }],
+      components: {
+        securitySchemes: {
+          api_key: { type: 'apiKey', name: 'api_key', in: 'header' },
+          petstore_auth: {
+            type: 'oauth2',
+            flows: {
+              implicit: {
+                authorizationUrl: 'https://petstore.swagger.io/oauth/authorize',
+                scopes: { 'write:pets': 'modify pets in your account', 'read:pets': 'read your pets' },
+              },
+            },
+          },
+        },
+      },
+      paths: {
+        '/pet': {
+          post: {
+            tags: ['Pets'],
+            summary: 'Add a new pet to the store',
+            operationId: 'addPet',
+            security: [{ petstore_auth: ['write:pets', 'read:pets'] }],
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['name', 'photoUrls'],
+                    properties: {
+                      id: { type: 'integer', format: 'int64' },
+                      name: { type: 'string', example: 'doggie' },
+                      photoUrls: { type: 'array', items: { type: 'string' } },
+                      status: { type: 'string', enum: ['available', 'pending', 'sold'] },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { '200': { description: 'Successful operation' } },
+          },
+        },
+        '/pet/findByStatus': {
+          get: {
+            tags: ['Pets'],
+            summary: 'Finds Pets by status',
+            operationId: 'findPetsByStatus',
+            security: [{ petstore_auth: ['read:pets'] }],
+            parameters: [
+              {
+                name: 'status',
+                in: 'query',
+                required: false,
+                schema: { type: 'string', enum: ['available', 'pending', 'sold'], default: 'available' },
+              },
+            ],
+            responses: { '200': { description: 'successful operation' } },
+          },
+        },
+      },
+    },
+  },
 };
 
 interface OpenApiCatalogProps {
+  targetId?: string;
   targetUrl?: string;
   targetName?: string;
 }
 
-export const OpenApiCatalog: React.FC<OpenApiCatalogProps> = ({ targetUrl }) => {
+export const OpenApiCatalog: React.FC<OpenApiCatalogProps> = ({ targetId, targetUrl }) => {
   const { showToast } = useAppStore();
+  const queryClient = useQueryClient();
 
-  const [activeSpec, setActiveSpec] = useState<ParsedOpenApiSpec>(() =>
-    parseOpenApiDocument(SAMPLE_SPECS.ecommerce.data),
-  );
+  const { data: targetSpecs = [], isLoading: isLoadingSpecs } = useQuery<ContractSpecRecord[]>({
+    queryKey: ['target-specs', targetId],
+    queryFn: () => (targetId ? fetchTargetSpecs(targetId) : Promise.resolve([])),
+    enabled: Boolean(targetId),
+  });
+
+  const openApiSpecs = useMemo(() => targetSpecs.filter((s) => s.type === 'openapi'), [targetSpecs]);
+
+  const [selectedSpecId, setSelectedSpecId] = useState<string | null>(null);
+  const [ephemeralSpec, setEphemeralSpec] = useState<ParsedOpenApiSpec | null>(null);
+
+  const activeSpec = useMemo<ParsedOpenApiSpec | null>(() => {
+    if (selectedSpecId) {
+      const found = openApiSpecs.find((s) => s.id === selectedSpecId);
+      if (found) {
+        try {
+          return parseOpenApiDocument(found.content);
+        } catch {
+          // ignore parse errors and fallback
+        }
+      }
+    }
+    if (openApiSpecs.length > 0) {
+      try {
+        return parseOpenApiDocument(openApiSpecs[0].content);
+      } catch {
+        // ignore parse errors and fallback
+      }
+    }
+    return ephemeralSpec;
+  }, [selectedSpecId, openApiSpecs, ephemeralSpec]);
+
   const [selectedTag, setSelectedTag] = useState<string>('all');
   const [selectedMethod, setSelectedMethod] = useState<string>('all');
   const [searchFilter, setSearchFilter] = useState<string>('');
   const [selectedEndpointIndex, setSelectedEndpointIndex] = useState<number>(0);
   const [copiedPayload, setCopiedPayload] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [verificationResult, setVerificationResult] = useState<ContractVerificationResult | null>(null);
 
   // Method styling chips
@@ -319,6 +427,7 @@ export const OpenApiCatalog: React.FC<OpenApiCatalogProps> = ({ targetUrl }) => 
 
   // Filter endpoints
   const filteredEndpoints = useMemo(() => {
+    if (!activeSpec) return [];
     return activeSpec.endpoints.filter((ep) => {
       const matchTag = selectedTag === 'all' || ep.tags.includes(selectedTag);
       const matchMethod = selectedMethod === 'all' || ep.method === selectedMethod;
@@ -332,20 +441,39 @@ export const OpenApiCatalog: React.FC<OpenApiCatalogProps> = ({ targetUrl }) => 
 
   const selectedEndpoint = filteredEndpoints[selectedEndpointIndex] || filteredEndpoints[0];
 
-  // Handle file drop / upload
+  // Handle file drop / upload with database persistence
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const content = event.target?.result as string;
         const parsed = parseOpenApiDocument(content);
-        setActiveSpec(parsed);
+        setEphemeralSpec(parsed);
         setSelectedEndpointIndex(0);
         setVerificationResult(null);
-        showToast(`Loaded OpenAPI spec: ${parsed.title} (${parsed.totalEndpoints} endpoints)`, 'success');
+
+        if (targetId) {
+          setIsSaving(true);
+          try {
+            const specName = file.name.replace(/\.(json|ya?ml)$/i, '') || parsed.title;
+            const saved = await saveTargetSpec({
+              targetId,
+              name: specName,
+              type: 'openapi',
+              content,
+            });
+            setSelectedSpecId(saved.id);
+            await queryClient.invalidateQueries({ queryKey: ['target-specs', targetId] });
+            showToast(`Uploaded & saved OpenAPI spec: ${parsed.title} (${parsed.totalEndpoints} endpoints)`, 'success');
+          } finally {
+            setIsSaving(false);
+          }
+        } else {
+          showToast(`Loaded OpenAPI spec: ${parsed.title} (${parsed.totalEndpoints} endpoints)`, 'success');
+        }
       } catch (err: any) {
         showToast(err.message || 'Failed to parse uploaded OpenAPI file', 'error');
       }
@@ -353,14 +481,34 @@ export const OpenApiCatalog: React.FC<OpenApiCatalogProps> = ({ targetUrl }) => 
     reader.readAsText(file);
   };
 
-  // Load sample spec
-  const handleLoadSample = (key: string) => {
+  // Load and persist sample spec template
+  const handleLoadSample = async (key: string) => {
     try {
-      const parsed = parseOpenApiDocument(SAMPLE_SPECS[key].data);
-      setActiveSpec(parsed);
+      const sample = SAMPLE_SPECS[key];
+      if (!sample) return;
+      const parsed = parseOpenApiDocument(sample.data);
+      setEphemeralSpec(parsed);
       setSelectedEndpointIndex(0);
       setVerificationResult(null);
-      showToast(`Loaded sample spec: ${parsed.title}`, 'info');
+
+      if (targetId) {
+        setIsSaving(true);
+        try {
+          const saved = await saveTargetSpec({
+            targetId,
+            name: sample.label,
+            type: 'openapi',
+            content: JSON.stringify(sample.data, null, 2),
+          });
+          setSelectedSpecId(saved.id);
+          await queryClient.invalidateQueries({ queryKey: ['target-specs', targetId] });
+          showToast(`Imported & persisted template spec: ${parsed.title}`, 'success');
+        } finally {
+          setIsSaving(false);
+        }
+      } else {
+        showToast(`Loaded template spec: ${parsed.title}`, 'info');
+      }
     } catch (err: any) {
       showToast(err.message || 'Error loading sample', 'error');
     }
@@ -368,6 +516,7 @@ export const OpenApiCatalog: React.FC<OpenApiCatalogProps> = ({ targetUrl }) => 
 
   // Trigger contract verification via backend
   const handleVerifyContract = async () => {
+    if (!activeSpec) return;
     if (!targetUrl) {
       showToast('Please select or configure an authorized target URL first.', 'error');
       return;
@@ -403,6 +552,51 @@ export const OpenApiCatalog: React.FC<OpenApiCatalogProps> = ({ targetUrl }) => 
     setTimeout(() => setCopiedPayload(false), 2000);
   };
 
+  if (!activeSpec) {
+    if (isLoadingSpecs) {
+      return (
+        <div className="p-12 rounded-xl bg-card border border-border text-center space-y-3">
+          <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mx-auto" />
+          <p className="text-xs text-muted-foreground">Loading contract specifications for target...</p>
+        </div>
+      );
+    }
+    return (
+      <div className="p-12 rounded-xl bg-card border border-border text-center space-y-4 shadow-sm">
+        <div className="w-14 h-14 rounded-full bg-cyan-500/10 text-cyan-400 mx-auto flex items-center justify-center border border-cyan-500/20">
+          <FileCode2 className="w-7 h-7" />
+        </div>
+        <div>
+          <h3 className="text-base font-semibold text-foreground">No API specifications saved for this target</h3>
+          <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+            Upload an OpenAPI 3.0 / Swagger (JSON or YAML) specification to explore endpoints, analyze authorization schemes, and run contract verification audits.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-3">
+          <label className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium cursor-pointer transition-colors shadow-sm">
+            <Upload className="w-4 h-4" />
+            <span>Upload OpenAPI (YAML/JSON)</span>
+            <input type="file" accept=".json,.yaml,.yml" onChange={handleFileUpload} className="hidden" />
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">or import template:</span>
+            {Object.entries(SAMPLE_SPECS).map(([k, s]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => handleLoadSample(k)}
+                disabled={isSaving}
+                className="px-3 py-1.5 rounded-lg bg-accent/80 hover:bg-accent text-xs text-foreground border border-border transition-colors hover:text-cyan-400 disabled:opacity-50"
+              >
+                {s.label.split(' ')[0]}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Spec Control & Uploader Bar */}
@@ -421,15 +615,34 @@ export const OpenApiCatalog: React.FC<OpenApiCatalogProps> = ({ targetUrl }) => 
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Sample Switcher */}
+          {/* Spec Switcher when multiple specs are persisted */}
+          {openApiSpecs.length > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span>Spec:</span>
+              <select
+                value={selectedSpecId || (openApiSpecs[0]?.id ?? '')}
+                onChange={(e) => setSelectedSpecId(e.target.value)}
+                className="px-2.5 py-1 rounded bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              >
+                {openApiSpecs.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({new Date(s.createdAt).toLocaleDateString()})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Import Template Dropdown / Quick Buttons */}
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>Presets:</span>
+            <span>Import:</span>
             {Object.entries(SAMPLE_SPECS).map(([k, s]) => (
               <button
                 key={k}
                 type="button"
                 onClick={() => handleLoadSample(k)}
-                className="px-2.5 py-1 rounded bg-accent/60 hover:bg-accent text-foreground hover:text-cyan-400 border border-border text-xs transition-colors"
+                disabled={isSaving}
+                className="px-2 py-1 rounded bg-accent/60 hover:bg-accent text-foreground hover:text-cyan-400 border border-border text-xs transition-colors disabled:opacity-50"
               >
                 {s.label.split(' ')[0]}
               </button>

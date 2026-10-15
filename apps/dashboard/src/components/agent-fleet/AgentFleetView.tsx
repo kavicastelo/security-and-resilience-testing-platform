@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Radio,
+  RadioTower,
   Server,
   Plus,
   RefreshCw,
@@ -9,11 +10,17 @@ import {
   Cpu,
   ShieldCheck,
   Zap,
+  Terminal,
+  Copy,
+  Check,
+  Key,
 } from 'lucide-react';
 import {
   AgentFleetNode,
   AgentFleetSummary,
+  AgentEnrollmentCommand,
   fetchAgentFleet,
+  generateEnrollmentToken,
   drainAgent,
   revokeAgent,
 } from '../../api/agents.js';
@@ -31,6 +38,9 @@ export const AgentFleetView: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
   const [drawerNode, setDrawerNode] = useState<AgentFleetNode | null>(null);
+  const [enrollmentCommand, setEnrollmentCommand] = useState<AgentEnrollmentCommand | null>(null);
+  const [isGeneratingQuickToken, setIsGeneratingQuickToken] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState(false);
 
   const loadFleet = async (silent = false) => {
     if (!silent) setIsLoading(true);
@@ -104,6 +114,31 @@ export const AgentFleetView: React.FC = () => {
     }
   };
 
+  const handleQuickGenerateToken = async () => {
+    setIsGeneratingQuickToken(true);
+    try {
+      const res = await generateEnrollmentToken({
+        name: 'quickstart-worker',
+        expiresInDays: 30,
+        tags: ['vpc-production', 'default'],
+      });
+      setEnrollmentCommand(res);
+    } catch {
+      //
+    } finally {
+      setIsGeneratingQuickToken(false);
+    }
+  };
+
+  const activeToken = enrollmentCommand?.token || '<enrollment-token>';
+  const shellCommand = `npx @security-lab/agent start --controller http://localhost:4000 --token ${activeToken}`;
+
+  const handleCopyCommand = () => {
+    navigator.clipboard.writeText(shellCommand);
+    setCopiedCommand(true);
+    setTimeout(() => setCopiedCommand(false), 2500);
+  };
+
   if (isLoading || !summary) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] space-y-3">
@@ -163,8 +198,77 @@ export const AgentFleetView: React.FC = () => {
         </div>
       </div>
 
-      {/* Top Executive Summary Scorecards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {agents.length === 0 ? (
+        <div className="flex flex-col items-center justify-center p-8 sm:p-12 rounded-2xl bg-card/40 border border-dashed border-border/80 text-center space-y-6">
+          <div className="p-4 rounded-3xl bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-lg shadow-amber-500/10 animate-pulse">
+            <RadioTower className="w-12 h-12" />
+          </div>
+
+          <div className="max-w-md space-y-1.5">
+            <h3 className="text-lg font-bold text-foreground tracking-tight">
+              No Distributed Execution Agents Connected
+            </h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Deploy local or cloud worker agents to execute distributed security scans behind private VPCs and firewalls.
+            </p>
+          </div>
+
+          {/* Interactive Quick-Start Wizard */}
+          <div className="w-full max-w-xl p-5 rounded-2xl bg-background/80 border border-border/60 shadow-xl text-left space-y-3 font-mono">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-semibold text-foreground font-sans">
+                <Terminal className="w-4 h-4 text-amber-400" />
+                <span>Interactive Quick-Start Wizard</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleQuickGenerateToken}
+                disabled={isGeneratingQuickToken}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-sans font-medium bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-colors"
+              >
+                <Key className="w-3 h-3" />
+                <span>
+                  {isGeneratingQuickToken
+                    ? 'Generating...'
+                    : enrollmentCommand
+                    ? 'Regenerate Token'
+                    : 'Generate Enrollment Token'}
+                </span>
+              </button>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground font-sans">
+              Run this single command on your worker machine or container host to automatically register and stream telemetry:
+            </p>
+
+            <div className="relative group">
+              <pre className="p-3.5 rounded-xl bg-muted/40 border border-border/60 text-xs text-emerald-400 overflow-x-auto whitespace-pre-wrap break-all select-all font-mono">
+                {shellCommand}
+              </pre>
+              <button
+                type="button"
+                onClick={handleCopyCommand}
+                className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-sans font-medium bg-card/90 hover:bg-card text-foreground border border-border/60 shadow-sm transition-all"
+              >
+                {copiedCommand ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-400 font-bold">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span>Copy</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Top Executive Summary Scorecards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Total & Online Nodes */}
         <div className="p-4 rounded-2xl bg-card/60 border border-border/60 shadow-lg space-y-1">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -323,6 +427,8 @@ export const AgentFleetView: React.FC = () => {
           ))
         )}
       </div>
+      </>
+      )}
 
       {/* Modals and Drawers */}
       <AgentEnrollmentModal

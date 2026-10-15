@@ -35,7 +35,7 @@ import {
 import { useAppStore } from '../store/useAppStore.js';
 import { authFetch } from '../api/client.js';
 
-export type PurgeMode = 'all' | 'executions' | 'findings' | 'artifacts' | 'jobs';
+export type PurgeMode = 'all' | 'executions' | 'findings' | 'artifacts' | 'jobs' | 'demo';
 
 export interface SystemOverviewStats {
   counts: {
@@ -167,6 +167,15 @@ const PURGE_OPTIONS: PurgeTargetConfig[] = [
     warning: 'Any in-flight background worker tasks will lose their assigned job lease.',
     badge: 'Queue Maintenance',
     buttonLabel: 'Clear Worker Queues',
+  },
+  {
+    mode: 'demo',
+    title: 'Purge Demo Records Only',
+    description: 'Safely eliminates all demonstration projects, mock targets, synthetic findings, test runs, agent nodes, and webhooks tagged with (Demo). Real user configurations remain 100% untouched.',
+    warning: 'All synthetic records tagged with (Demo) will be purged. Real user projects, target configurations, and policies will not be affected.',
+    badge: 'Demo Cleanup',
+    buttonLabel: 'Purge Demo Records',
+    requiresStrictConfirmation: false,
   },
   {
     mode: 'all',
@@ -578,6 +587,19 @@ export const ManagementView: React.FC = () => {
                   ? 'Generating Lab...'
                   : 'Seed Demo Data'}
             </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveModalPurge(PURGE_OPTIONS.find((o) => o.mode === 'demo') || null);
+              setConfirmationInput('');
+            }}
+            className="flex items-center space-x-2 px-3.5 py-2 text-xs font-semibold rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 transition-all hover:scale-[1.02]"
+            title="Safely remove all synthetic (Demo) projects, targets, and findings"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-amber-400" />
+            <span>Purge Demo Records</span>
           </button>
 
           <button
@@ -1235,13 +1257,17 @@ export const ManagementView: React.FC = () => {
             {/* Safety Phrase Verification */}
             <div className="space-y-2">
               <label className="block text-xs font-medium text-foreground">
-                To confirm, type <span className="font-mono font-bold text-rose-400">CLEAR ALL DATA</span> below:
+                To confirm, type{' '}
+                <span className="font-mono font-bold text-rose-400">
+                  {activeModalPurge.mode === 'demo' ? 'PURGE DEMO' : 'CLEAR ALL DATA'}
+                </span>{' '}
+                below:
               </label>
               <input
                 type="text"
                 value={confirmationInput}
                 onChange={(e) => setConfirmationInput(e.target.value)}
-                placeholder="CLEAR ALL DATA"
+                placeholder={activeModalPurge.mode === 'demo' ? 'PURGE DEMO' : 'CLEAR ALL DATA'}
                 className="w-full px-3.5 py-2.5 rounded-lg bg-background border border-border focus:border-rose-500 focus:ring-1 focus:ring-rose-500 text-sm font-mono text-foreground placeholder:text-muted-foreground/40 outline-none"
                 autoFocus
               />
@@ -1266,8 +1292,13 @@ export const ManagementView: React.FC = () => {
                 }
                 disabled={
                   purgeMutation.isPending ||
-                  (confirmationInput.trim().toUpperCase() !== 'CLEAR ALL DATA' &&
-                    confirmationInput.trim().toUpperCase() !== 'CONFIRM_PURGE')
+                  (activeModalPurge.mode === 'demo'
+                    ? !['PURGE DEMO', 'PURGE-DEMO', 'CLEAR ALL DATA', 'CONFIRM', 'CONFIRM_PURGE'].includes(
+                        confirmationInput.trim().toUpperCase()
+                      )
+                    : !['CLEAR ALL DATA', 'CONFIRM_PURGE', 'CONFIRM'].includes(
+                        confirmationInput.trim().toUpperCase()
+                      ))
                 }
                 className="px-4 py-2 text-xs font-semibold rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:pointer-events-none text-white shadow-lg shadow-rose-950/50 flex items-center space-x-2 transition-all"
               >

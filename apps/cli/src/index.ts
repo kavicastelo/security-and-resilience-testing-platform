@@ -18,6 +18,7 @@ import { planCommand } from './commands/plan.js';
 import { composeCommand } from './commands/compose.js';
 import { verifyCommand } from './commands/verify.js';
 import { installHooksCommand } from './commands/hooks.js';
+import { seedCommand } from './commands/seed.js';
 import { setCliConfig } from './config/index.js';
 
 const program = new Command();
@@ -68,5 +69,6 @@ program.addCommand(policyCommand);
 program.addCommand(findingsCommand);
 program.addCommand(contractCommand);
 program.addCommand(runCommand);
+program.addCommand(seedCommand);
 
 program.parse(process.argv);

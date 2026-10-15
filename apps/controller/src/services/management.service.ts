@@ -12,6 +12,12 @@ import {
   evidenceRecords,
   metrics,
   releases,
+  agents,
+  agentJobs,
+  webhooks,
+  webhookDeliveries,
+  workspaces,
+  contractSpecs,
 } from './db/schema.js';
 import { getDatabase } from './db.js';
 import { config } from '../config/index.js';
@@ -32,7 +38,8 @@ import { TargetScope } from '@security-lab/domain';
 import { tenantsService, DEFAULT_TENANT_ID } from './tenants.service.js';
 import { policiesService, ENTERPRISE_DEFAULT_POLICY } from './policies.service.js';
 import { agentDispatcherService } from './agent-dispatcher.service.js';
-import { eq } from 'drizzle-orm';
+import { DEFAULT_WORKSPACE_ID } from './auth-token.service.js';
+import { eq, like, or, inArray, sql } from 'drizzle-orm';
 
 function sanitizeRecordForInsert(record: Record<string, any>): Record<string, any> {
   const result: Record<string, any> = {};
@@ -286,7 +293,16 @@ export class ManagementService {
   }
 
   async purgeData(mode: PurgeMode, confirmation: string, tenantId?: string): Promise<PurgeDataResult> {
-    const validPhrases = ['CLEAR ALL DATA', 'CONFIRM_PURGE', 'CONFIRM-DELETE', 'DELETE ALL', mode.toUpperCase()];
+    const validPhrases = [
+      'CLEAR ALL DATA',
+      'CONFIRM_PURGE',
+      'CONFIRM-DELETE',
+      'DELETE ALL',
+      'PURGE-DEMO',
+      'PURGE DEMO',
+      'CONFIRM',
+      mode.toUpperCase(),
+    ];
     const normalized = (confirmation || '').trim().toUpperCase();
 
     if (!validPhrases.includes(normalized)) {
@@ -486,6 +502,102 @@ export class ManagementService {
       };
     }
 
+    if (mode === 'demo') {
+      const { db } = getDatabase();
+
+      // Find demo projects
+      const demoProjects = await db.select().from(projects).where(like(projects.name, '%(Demo%'));
+      const demoProjectIds = demoProjects.map((p) => p.id);
+
+      // Find demo targets
+      const demoTargets = await db
+        .select()
+        .from(targets)
+        .where(
+          or(
+            like(targets.name, '%(Demo%'),
+            demoProjectIds.length > 0 ? inArray(targets.projectId, demoProjectIds) : sql`false`,
+          ),
+        );
+      const demoTargetIds = demoTargets.map((t) => t.id);
+
+      // Find demo test runs
+      const demoRuns = await db
+        .select()
+        .from(testRuns)
+        .where(
+          or(
+            demoProjectIds.length > 0 ? inArray(testRuns.projectId, demoProjectIds) : sql`false`,
+            demoTargetIds.length > 0 ? inArray(testRuns.targetId, demoTargetIds) : sql`false`,
+          ),
+        );
+      const demoRunIds = demoRuns.map((r) => r.id);
+
+      // Find demo agents
+      const demoAgents = await db
+        .select()
+        .from(agents)
+        .where(or(like(agents.name, '%(Demo%'), sql`tags::text ILIKE '%demo%'`));
+      const demoAgentIds = demoAgents.map((a) => a.id);
+
+      // Find demo webhooks
+      const demoWebhooks = await db
+        .select()
+        .from(webhooks)
+        .where(or(like(webhooks.description, '%(Demo%'), like(webhooks.url, '%demo%')));
+      const demoWebhookIds = demoWebhooks.map((w) => w.id);
+
+      // Execute cascade cleanup safely
+      if (demoWebhookIds.length > 0) {
+        await db.delete(webhookDeliveries).where(inArray(webhookDeliveries.webhookId, demoWebhookIds));
+        await db.delete(webhooks).where(inArray(webhooks.id, demoWebhookIds));
+      }
+
+      if (demoAgentIds.length > 0) {
+        await db.delete(agentJobs).where(inArray(agentJobs.agentId, demoAgentIds));
+        await db.delete(agents).where(inArray(agents.id, demoAgentIds));
+      }
+
+      if (demoRunIds.length > 0) {
+        await db.delete(agentJobs).where(inArray(agentJobs.testRunId, demoRunIds));
+        await db.delete(findings).where(inArray(findings.testRunId, demoRunIds));
+        await db.delete(metrics).where(inArray(metrics.testRunId, demoRunIds));
+        await db.delete(evidenceRecords).where(inArray(evidenceRecords.testRunId, demoRunIds));
+        await db.delete(testExecutions).where(inArray(testExecutions.testRunId, demoRunIds));
+        await db.delete(releases).where(inArray(releases.testRunId, demoRunIds));
+        await db.delete(testRuns).where(inArray(testRuns.id, demoRunIds));
+      }
+
+      if (demoTargetIds.length > 0) {
+        await db.delete(contractSpecs).where(inArray(contractSpecs.targetId, demoTargetIds));
+        await db.delete(findings).where(inArray(findings.targetId, demoTargetIds));
+        await db.delete(targets).where(inArray(targets.id, demoTargetIds));
+      }
+
+      if (demoProjectIds.length > 0) {
+        await db.delete(environments).where(inArray(environments.projectId, demoProjectIds));
+        await db.delete(releases).where(inArray(releases.projectId, demoProjectIds));
+        await db.delete(projects).where(inArray(projects.id, demoProjectIds));
+      }
+
+      cleared['projects'] = demoProjects.length;
+      cleared['targets'] = demoTargets.length;
+      cleared['testRuns'] = demoRuns.length;
+      cleared['agents'] = demoAgents.length;
+      cleared['webhooks'] = demoWebhooks.length;
+
+      retained.push('Non-demo Projects, Targets, Test Runs, Policies & Configurations');
+
+      return {
+        success: true,
+        mode,
+        cleared,
+        retained,
+        message: `Successfully purged ${demoProjects.length} demo project(s), ${demoTargets.length} demo target(s), and related synthetic records. Real projects remain untouched.`,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
     throw new Error(`Unsupported purge mode: ${mode}`);
   }
 
@@ -508,8 +620,20 @@ export class ManagementService {
       );
     }
 
-    // 2. Ensure default tenant exists
+    // 2. Ensure default tenant & default workspace exist
     await tenantsService.ensureDefaultTenant();
+    const existingWs = await db.select().from(workspaces).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    if (existingWs.length === 0) {
+      await db
+        .insert(workspaces)
+        .values({
+          id: DEFAULT_WORKSPACE_ID,
+          name: 'Default Workspace',
+          slug: 'default',
+          description: 'Default primary workspace',
+        })
+        .onConflictDoNothing();
+    }
 
     // 3. Create Demo Project
     const demoProjectName = `Nova Banking Core API (Demo ${new Date().toISOString().slice(11, 19)}-${crypto.randomBytes(3).toString('hex')})`;
@@ -517,6 +641,7 @@ export class ManagementService {
       .insert(projects)
       .values({
         tenantId,
+        workspaceId: DEFAULT_WORKSPACE_ID,
         name: demoProjectName,
         description: '[DEMO / SYNTHETIC] Production internet banking API gateway and identity authentication service',
       })
@@ -545,9 +670,9 @@ export class ManagementService {
     };
 
     const scope2: TargetScope = {
-      allowedHosts: ['mock-bank.internal'],
-      allowedPorts: [443],
-      excludedPaths: ['/internal'],
+      allowedHosts: ['idp.demo.local', 'demo.local'],
+      allowedPorts: [8443, 443],
+      excludedPaths: ['/admin'],
       testing: {
         activeScanning: true,
         loadTesting: false,
@@ -577,8 +702,8 @@ export class ManagementService {
       .values({
         tenantId,
         projectId: project.id,
-        name: 'Customer Identity & OAuth2 Provider (Demo)',
-        baseUrl: 'https://mock-bank.internal:443',
+        name: 'Customer Identity Provider (Demo)',
+        baseUrl: 'https://idp.demo.local:8443',
         scope: scope2,
       })
       .returning();
@@ -587,7 +712,7 @@ export class ManagementService {
       throw new Error('Failed to create demo targets');
     }
 
-    // 4. Ensure Policy exists
+    // 5. Ensure Policy exists
     let policy = await policiesService.getDefaultPolicy();
     if (!policy) {
       policy = await policiesService.createPolicy(
@@ -604,7 +729,7 @@ export class ManagementService {
       );
     }
 
-    // 5. Create Sample Test Run
+    // 6. Create Sample Test Run
     const now = new Date();
     const startedAt = new Date(now.getTime() - 45000);
     const completedAt = now;
@@ -626,8 +751,8 @@ export class ManagementService {
           errorTests: 0,
           findingsCount: {
             critical: 1,
-            high: 1,
-            medium: 2,
+            high: 2,
+            medium: 1,
             low: 1,
             info: 0,
           },
@@ -646,7 +771,7 @@ export class ManagementService {
       throw new Error('Failed to create demo test run');
     }
 
-    // 6. Create Execution record
+    // 7. Create Execution record
     const [execution] = await db
       .insert(testExecutions)
       .values({
@@ -659,7 +784,7 @@ export class ManagementService {
         durationMs: 4250,
         exitCode: 0,
         rawResult: {
-          inspectedEndpoints: ['/api/v1/accounts/10293', '/health', '/api/v1/transfer'],
+          inspectedEndpoints: ['/api/v1/accounts/10293', '/api/v1/transactions', '/oauth/token/introspect', '/health', '/api/v1/transfer'],
           testedHeaders: ['Strict-Transport-Security', 'Content-Security-Policy', 'Access-Control-Allow-Origin'],
         },
       })
@@ -669,19 +794,52 @@ export class ManagementService {
       throw new Error('Failed to create demo test execution');
     }
 
-    // 7. Create Evidence Records with cryptographic hashes
+    // 8. Create Evidence Records with cryptographic hashes
     const evidenceSeedData = [
       {
         endpoint: '/api/v1/accounts/10293',
-        description: 'BOLA vulnerability: Unauthorized access to arbitrary bank account without role check',
-        req: { method: 'GET', url: 'https://demo.local:8443/api/v1/accounts/10293', headers: { 'authorization': 'Bearer demo-user-token' }, body: '' },
-        res: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accountId: '10293', balance: 945000.5, owner: 'Target Victim Corp' }) },
+        description: 'BOLA vulnerability: User Bob unauthorized access to customer Alice Walker account record',
+        req: {
+          method: 'GET',
+          url: 'https://demo.local:8443/api/v1/accounts/10293',
+          headers: { 'authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.bob-user', 'accept': 'application/json' },
+          body: '',
+        },
+        res: {
+          statusCode: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ accountId: '10293', owner: 'Alice Walker', balance: 945000.5, medicalRecordId: 'MRN-84921-A', ssnMasked: '***-**-8492' }),
+        },
       },
       {
-        endpoint: 'https://demo.local:8443',
-        description: 'Missing HSTS header on HTTPS endpoint',
-        req: { method: 'HEAD', url: 'https://demo.local:8443/health', headers: {}, body: '' },
-        res: { statusCode: 200, headers: { 'server': 'nginx/1.22.1', 'content-type': 'application/json' }, body: '' },
+        endpoint: '/api/v1/transactions',
+        description: 'SQL Injection in transaction search parameter. Reproduction curl provided.',
+        req: {
+          method: 'GET',
+          url: 'https://demo.local:8443/api/v1/transactions?search=ref_102%27+OR+1%3D1--',
+          headers: { 'authorization': 'Bearer demo-user-token' },
+          body: '',
+        },
+        res: {
+          statusCode: 500,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ error: "syntax error at or near 'OR': SELECT * FROM transactions WHERE tenant_id = 'demo' AND search = 'ref_102' OR 1=1--" }),
+        },
+      },
+      {
+        endpoint: 'https://idp.demo.local:8443/oauth/token/introspect',
+        description: 'Broken Authentication: JWT signature bypass via algorithm "none"',
+        req: {
+          method: 'POST',
+          url: 'https://idp.demo.local:8443/oauth/token/introspect',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token: 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiJ9.' }),
+        },
+        res: {
+          statusCode: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ active: true, scope: 'admin:write system:root', username: 'admin' }),
+        },
       },
       {
         endpoint: 'https://demo.local:8443/api/v1/transfer',
@@ -690,16 +848,10 @@ export class ManagementService {
         res: { statusCode: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-credentials': 'true' }, body: '' },
       },
       {
-        endpoint: 'https://demo.local:8443',
-        description: 'Content-Security-Policy (CSP) header is completely absent',
-        req: { method: 'GET', url: 'https://demo.local:8443/', headers: {}, body: '' },
-        res: { statusCode: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: '<html><body>Welcome</body></html>' },
-      },
-      {
         endpoint: 'https://demo.local:8443/health',
-        description: 'Server banner leakage disclosing exact software version',
-        req: { method: 'GET', url: 'https://demo.local:8443/health', headers: {}, body: '' },
-        res: { statusCode: 200, headers: { 'server': 'nginx/1.22.1 (Ubuntu 22.04 LTS)', 'x-powered-by': 'Express/4.18.2' }, body: '{"status":"ok"}' },
+        description: 'Missing HSTS header on HTTPS endpoint',
+        req: { method: 'HEAD', url: 'https://demo.local:8443/health', headers: {}, body: '' },
+        res: { statusCode: 200, headers: { 'server': 'nginx/1.22.1', 'content-type': 'application/json' }, body: '' },
       },
     ];
 
@@ -734,7 +886,7 @@ export class ManagementService {
       }
     }
 
-    // 8. Create Findings
+    // 9. Create Findings
     const sampleFindings = [
       {
         fingerprint: `demo-bola-${testRun.id}`,
@@ -743,24 +895,37 @@ export class ManagementService {
         severity: 'critical' as const,
         confidence: 'certain' as const,
         status: 'open' as const,
-        description: 'API endpoint allows authenticated users to access other accounts by mutating the account ID parameter.',
-        risk: 'Direct exposure of sensitive customer financial records and balance details.',
+        description: 'API endpoint allows authenticated user Bob to access customer Alice Walker balance and patient records by mutating the account ID parameter.',
+        risk: 'Direct exposure of sensitive customer financial and medical records without authorization checks.',
         recommendation: 'Enforce strict ownership and session authorization middleware on all /api/v1/accounts/:id routes.',
         testDefinitionId: 'test-def-auth-bola',
         evidenceId: insertedEvidenceIds[0],
       },
       {
-        fingerprint: `demo-hsts-${testRun.id}`,
-        title: 'Missing HTTP Strict Transport Security (HSTS) Header',
-        category: 'http_headers',
+        fingerprint: `demo-sqli-${testRun.id}`,
+        title: 'SQL Injection in Transaction Search Parameter',
+        category: 'injection',
         severity: 'high' as const,
-        confidence: 'firm' as const,
+        confidence: 'certain' as const,
         status: 'open' as const,
-        description: 'The HTTP Strict-Transport-Security (HSTS) header is missing from HTTPS responses, allowing protocol downgrade attacks.',
-        risk: 'Attacker in network path can intercept or downgrade traffic to unencrypted HTTP.',
-        recommendation: 'Configure Strict-Transport-Security: max-age=31536000; includeSubDomains; preload.',
-        testDefinitionId: 'test-def-hsts',
+        description: 'Unsanitized input in search query parameter is directly concatenated into database query. Reproduction curl: curl -X GET "https://demo.local:8443/api/v1/transactions?search=ref_102%27+OR+1%3D1--" -H "Authorization: Bearer <TOKEN>"',
+        risk: 'Arbitrary database query execution, data exfiltration, and privilege escalation.',
+        recommendation: 'Use parameterized SQL queries or ORM query builders for all transaction search filters.',
+        testDefinitionId: 'test-def-injection-sqli',
         evidenceId: insertedEvidenceIds[1],
+      },
+      {
+        fingerprint: `demo-jwt-none-${testRun.id}`,
+        title: 'Broken Authentication: JWT Signature Verification Bypass via None Algorithm',
+        category: 'authentication',
+        severity: 'high' as const,
+        confidence: 'certain' as const,
+        status: 'open' as const,
+        description: 'OAuth2 token introspection accepts unsigned JSON Web Tokens specifying algorithm "none", granting root administrative scopes.',
+        risk: 'Complete authentication bypass and administrative takeover across the banking gateway.',
+        recommendation: 'Explicitly reject algorithm "none" and require RS256/ES256 asymmetric cryptographic verification.',
+        testDefinitionId: 'test-def-auth-jwt-none',
+        evidenceId: insertedEvidenceIds[2],
       },
       {
         fingerprint: `demo-cors-${testRun.id}`,
@@ -769,36 +934,23 @@ export class ManagementService {
         severity: 'medium' as const,
         confidence: 'firm' as const,
         status: 'open' as const,
-        description: 'Access-Control-Allow-Origin header is set to wildcard (*) or reflects arbitrary origins with credentials enabled.',
+        description: 'Access-Control-Allow-Origin header is set to wildcard (*) with credentials enabled, allowing untrusted sites to read API responses.',
         risk: 'Malicious third-party websites can issue authenticated cross-origin requests on behalf of victims.',
         recommendation: 'Whitelist explicit trusted origins and avoid echoing Origin blindly.',
         testDefinitionId: 'test-def-cors',
-        evidenceId: insertedEvidenceIds[2],
-      },
-      {
-        fingerprint: `demo-csp-${testRun.id}`,
-        title: 'Missing Content-Security-Policy (CSP) Header',
-        category: 'http_headers',
-        severity: 'medium' as const,
-        confidence: 'firm' as const,
-        status: 'open' as const,
-        description: 'No Content-Security-Policy header defined on web responses.',
-        risk: 'Significantly elevated susceptibility to cross-site scripting (XSS) and code injection.',
-        recommendation: 'Deploy robust Content-Security-Policy with default-src "self" directives.',
-        testDefinitionId: 'test-def-csp',
         evidenceId: insertedEvidenceIds[3],
       },
       {
-        fingerprint: `demo-banner-${testRun.id}`,
-        title: 'Detailed Server Banner & Technology Leakage',
-        category: 'information_disclosure',
+        fingerprint: `demo-hsts-${testRun.id}`,
+        title: 'Missing HTTP Strict Transport Security (HSTS) Header',
+        category: 'http_headers',
         severity: 'low' as const,
-        confidence: 'certain' as const,
+        confidence: 'firm' as const,
         status: 'open' as const,
-        description: 'Server response headers reveal exact versions of Nginx and Express framework.',
-        risk: 'Aids attackers in reconnaissance for version-specific CVE vulnerabilities.',
-        recommendation: 'Disable Server tokens and remove X-Powered-By header via server configuration.',
-        testDefinitionId: 'test-def-headers',
+        description: 'The HTTP Strict-Transport-Security (HSTS) header is missing from HTTPS responses, allowing protocol downgrade attacks.',
+        risk: 'Attacker in network path can intercept or downgrade traffic to unencrypted HTTP.',
+        recommendation: 'Configure Strict-Transport-Security: max-age=31536000; includeSubDomains; preload.',
+        testDefinitionId: 'test-def-hsts',
         evidenceId: insertedEvidenceIds[4],
       },
     ];
@@ -827,35 +979,134 @@ export class ManagementService {
       });
     }
 
-    // 9. Create Metrics
-    await db.insert(metrics).values([
-      {
-        testRunId: testRun.id,
-        executionId: execution.id,
-        name: 'http.response.p95_latency',
-        value: 165.4,
-        unit: 'ms',
-        tags: { endpoint: '/api/v1/accounts' },
-      },
-      {
-        testRunId: testRun.id,
-        executionId: execution.id,
-        name: 'http.request.throughput',
-        value: 124.0,
-        unit: 'rps',
-        tags: { profile: 'api-security' },
-      },
-      {
-        testRunId: testRun.id,
-        executionId: execution.id,
-        name: 'http.error_rate',
-        value: 0.0,
-        unit: 'percent',
-        tags: { target: target1.name },
-      },
-    ]);
+    // 10. Create 50 Time-Series Performance Metrics
+    const metricRows: any[] = [];
+    for (let i = 0; i < 10; i++) {
+      const offsetMs = (10 - i) * 5000;
+      const pointTime = new Date(completedAt.getTime() - offsetMs);
+      const rps = 120 + Math.sin(i) * 15;
+      const p50 = 24 + Math.cos(i) * 4;
+      const p90 = 70 + Math.sin(i * 1.5) * 8;
+      const p95 = 115 + Math.cos(i * 1.2) * 12;
+      const p99 = 150 + Math.sin(i * 0.8) * 20;
 
-    // 10. Create Evaluated Release Gate
+      metricRows.push(
+        { testRunId: testRun.id, executionId: execution.id, name: 'http.request.throughput', value: Number(rps.toFixed(1)), unit: 'rps', tags: { profile: 'load-test', step: `${i}` }, createdAt: pointTime },
+        { testRunId: testRun.id, executionId: execution.id, name: 'http.response.p50_latency', value: Number(p50.toFixed(1)), unit: 'ms', tags: { profile: 'load-test', step: `${i}` }, createdAt: pointTime },
+        { testRunId: testRun.id, executionId: execution.id, name: 'http.response.p90_latency', value: Number(p90.toFixed(1)), unit: 'ms', tags: { profile: 'load-test', step: `${i}` }, createdAt: pointTime },
+        { testRunId: testRun.id, executionId: execution.id, name: 'http.response.p95_latency', value: Number(p95.toFixed(1)), unit: 'ms', tags: { profile: 'load-test', step: `${i}` }, createdAt: pointTime },
+        { testRunId: testRun.id, executionId: execution.id, name: 'http.response.p99_latency', value: Number(p99.toFixed(1)), unit: 'ms', tags: { profile: 'load-test', step: `${i}` }, createdAt: pointTime },
+      );
+    }
+    await chunkedInsert(metrics, metricRows);
+
+    // 11. Create Demo Agent Node
+    await db
+      .insert(agents)
+      .values({
+        tenantId,
+        name: 'worker-eu-west-01 (Demo)',
+        status: 'online',
+        authMode: 'token',
+        tokenHash: crypto.createHash('sha256').update('demo-agent-worker-token').digest('hex'),
+        fingerprint: 'sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069',
+        capabilities: ['class_a_native', 'class_b_container', 'active_scan', 'chaos_mitm', 'load_generator'],
+        tags: ['env:demo', 'region:eu-west', 'arch:x86_64'],
+        systemInfo: {
+          hostname: 'worker-node-demo-01',
+          os: 'linux',
+          arch: 'x64',
+          cpus: 8,
+          memoryMb: 16384,
+          version: '1.4.0',
+        },
+        lastHeartbeatAt: new Date(),
+      })
+      .onConflictDoNothing();
+
+    // 12. Create Demo Webhook & Deliveries
+    const [demoWebhook] = await db
+      .insert(webhooks)
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        url: 'https://security-alerts.demo.local/v1/webhook',
+        description: 'Security Alerts Dispatcher (Demo)',
+        secret: 'whsec_demo_secret_key_84920491823',
+        events: ['finding.created', 'release.blocked', 'chaos.aborted'],
+        isActive: true,
+      })
+      .returning();
+
+    if (demoWebhook) {
+      await db.insert(webhookDeliveries).values([
+        {
+          webhookId: demoWebhook.id,
+          workspaceId: DEFAULT_WORKSPACE_ID,
+          eventType: 'finding.created',
+          payload: {
+            findingId: `demo-bola-${testRun.id}`,
+            title: 'Broken Object Level Authorization (BOLA) in Account API',
+            severity: 'critical',
+          },
+          status: 'succeeded',
+          attempts: 1,
+          responseStatusCode: 200,
+          responseBody: '{"status":"delivered","event_id":"evt_demo_101"}',
+          lastAttemptAt: new Date(),
+        },
+        {
+          webhookId: demoWebhook.id,
+          workspaceId: DEFAULT_WORKSPACE_ID,
+          eventType: 'release.blocked',
+          payload: {
+            reason: 'Blocked by rule [rule-zero-critical]',
+          },
+          status: 'pending',
+          attempts: 0,
+          nextRetryAt: new Date(Date.now() + 60000),
+        },
+      ]);
+    }
+
+    // 13. Create Demo OpenAPI Spec in contractSpecs
+    await db
+      .insert(contractSpecs)
+      .values({
+        tenantId,
+        targetId: target1.id,
+        name: 'Core Banking API Gateway (Demo)',
+        type: 'openapi',
+        content: JSON.stringify({
+          openapi: '3.0.3',
+          info: {
+            title: 'Core Banking API Gateway (Demo)',
+            version: '2.4.0',
+            description: 'Production internet banking specification for customer accounts and transfers.',
+          },
+          servers: [{ url: 'https://demo.local:8443' }],
+          paths: {
+            '/api/v1/accounts/{id}': {
+              get: {
+                tags: ['Accounts'],
+                summary: 'Retrieve customer account details',
+                parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+                responses: { '200': { description: 'Account details' } },
+              },
+            },
+            '/api/v1/transactions': {
+              get: {
+                tags: ['Transactions'],
+                summary: 'Search transaction records',
+                parameters: [{ name: 'search', in: 'query', schema: { type: 'string' } }],
+                responses: { '200': { description: 'Transactions list' } },
+              },
+            },
+          },
+        }, null, 2),
+      })
+      .onConflictDoNothing();
+
+    // 14. Create Evaluated Release Gate
     const releaseHash = crypto
       .createHash('sha256')
       .update(JSON.stringify({ testRunId: testRun.id, policyId: policy.id, decision: 'failed' }))
@@ -888,7 +1139,10 @@ export class ManagementService {
       evidenceCreated: insertedEvidenceIds.length,
       policyId: policy.id,
       releaseId: releaseRecord?.id,
-      message: 'Successfully generated complete demonstration test suite with Nova Banking Core API, targets, test executions, findings, and release gate decision.',
+      agentsCreated: 1,
+      webhooksCreated: 1,
+      metricsCreated: metricRows.length,
+      message: 'Successfully generated complete demonstration test suite with Nova Banking Core API, targets, test executions, findings, agent nodes, and webhooks.',
       timestamp: new Date().toISOString(),
     };
   }

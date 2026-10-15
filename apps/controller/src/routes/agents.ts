@@ -372,6 +372,39 @@ export async function agentsRoutes(fastify: FastifyInstance) {
     });
   });
 
+  // 3b. GET /api/v1/agents/leases
+  fastify.get<{
+    Querystring: { agentId?: string };
+  }>('/leases', async (request: FastifyRequest<{ Querystring: { agentId?: string } }>, reply: FastifyReply) => {
+    let tenantId: string | undefined;
+
+    const authHeader = request.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.replace('Bearer ', '').trim();
+      if (token.startsWith('agt_sec_')) {
+        const authResult = await agentDispatcherService.authenticateAgent(token);
+        if (authResult.agent) {
+          tenantId = authResult.agent.tenantId;
+        }
+      } else if (token.startsWith('tek_')) {
+        const tekResult = await enrollmentKeysService.validateAndConsumeEnrollmentKey(token);
+        if (tekResult.valid && tekResult.tek) {
+          tenantId = tekResult.tek.tenantId;
+        }
+      }
+    }
+
+    if (!tenantId) {
+      tenantId = extractTenantId(request);
+    }
+
+    const leases = await agentDispatcherService.listJobLeases(tenantId, request.query?.agentId);
+    return reply.status(200).send({
+      success: true,
+      data: leases,
+    });
+  });
+
   // 4. POST /api/v1/agents/poll (max 60 req/min per agent)
   fastify.post(
     '/poll',
