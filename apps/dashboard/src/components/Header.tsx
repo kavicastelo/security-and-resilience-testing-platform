@@ -8,6 +8,7 @@ import {
   Key,
   Search,
   Zap,
+  Sparkles,
 } from 'lucide-react';
 import { HealthBadge } from './HealthBadge.js';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
@@ -22,6 +23,7 @@ export const Header: React.FC = () => {
     setIsCommandPaletteOpen,
     apiKey,
     setActiveTab,
+    currentWorkspaceId,
   } = useAppStore();
 
   // Query active running tests for the persistent telemetry strip
@@ -39,6 +41,23 @@ export const Header: React.FC = () => {
       }
     },
     refetchInterval: 5000,
+  });
+
+  // Query to detect if workspace contains demo data
+  const { data: hasDemoProjects = false } = useQuery<boolean>({
+    queryKey: ['has-demo-projects', currentWorkspaceId],
+    queryFn: async () => {
+      try {
+        const res = await authFetch('/api/v1/projects');
+        if (!res.ok) return false;
+        const json = await res.json();
+        const projects = Array.isArray(json.data) ? json.data : (Array.isArray(json) ? json : []);
+        return projects.some((p: { name?: string }) => typeof p?.name === 'string' && p.name.includes('(Demo'));
+      } catch {
+        return false;
+      }
+    },
+    refetchInterval: 10000,
   });
 
   return (
@@ -111,6 +130,19 @@ export const Header: React.FC = () => {
           >
             <Zap className="w-3 h-3 text-emerald-400 animate-spin" />
             <span className="hidden sm:inline">{activeRunsCount} Running</span>
+          </button>
+        )}
+
+        {/* Demo Mode Active Indicator Badge */}
+        {hasDemoProjects && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('management')}
+            className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold hover:bg-amber-500/25 transition-all shadow-sm"
+            title="This workspace contains synthetic demonstration records. You can purge them at any time in Management Settings."
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span className="font-mono text-[11px] tracking-wide uppercase">DEMO MODE ACTIVE</span>
           </button>
         )}
 

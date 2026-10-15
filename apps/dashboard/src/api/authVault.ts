@@ -1,4 +1,5 @@
 import { Target, targetsApi } from './targets.js';
+import { authFetch } from './client.js';
 
 export type AuthType = 'FORM' | 'OAUTH2' | 'API_KEY' | 'BEARER';
 
@@ -297,240 +298,59 @@ export async function updateTargetAuthFlow(targetId: string, authFlow: AuthFlow 
 }
 
 /**
- * Perform a live test handshake against target URL simulating the configured auth flow
+ * Executes server-side stateful auth verification flow via Controller backend.
+ * Eliminates browser CORS bypass attempts and captures truthful execution diagnostics.
  */
 export async function executeAuthFlowTest(
-  targetUrl: string,
+  targetUrlOrId: string,
   flow: AuthFlow,
+  targetId?: string,
 ): Promise<AuthTestResult> {
-  const startTime = Date.now();
-  const stepsExecuted: AuthTestStepLog[] = [];
-  const variables: Record<string, string> = {
-    ...(flow.credentials || {}),
-  };
-
-  // Pre-generate TOTP code if secret seed is provided
-  if (flow.totpSecret) {
-    try {
-      const totp = await generateTotpCode(flow.totpSecret);
-      variables.totp = totp;
-    } catch {
-      variables.totp = '123456';
-    }
-  }
-
-  const interpolate = (str: string): string => {
-    return str.replace(/\{\{([a-zA-Z0-9_-]+)\}\}/g, (_, key) => variables[key] ?? `{{${key}}}`);
-  };
-
-  const interpolateObject = (obj: any): any => {
-    if (typeof obj === 'string') return interpolate(obj);
-    if (Array.isArray(obj)) return obj.map(interpolateObject);
-    if (obj && typeof obj === 'object') {
-      const res: Record<string, any> = {};
-      for (const [k, v] of Object.entries(obj)) {
-        res[k] = interpolateObject(v);
-      }
-      return res;
-    }
-    return obj;
-  };
+  const resolvedTargetId = targetId || targetUrlOrId;
+  const isUrl = targetUrlOrId.startsWith('http://') || targetUrlOrId.startsWith('https://');
 
   try {
-    if (flow.type === 'OAUTH2' && flow.oauth2Config) {
-      const stepStart = Date.now();
-      const tokenUrl = flow.oauth2Config.tokenUrl.startsWith('http')
-        ? flow.oauth2Config.tokenUrl
-        : `${targetUrl.replace(/\/$/, '')}/${flow.oauth2Config.tokenUrl.replace(/^\//, '')}`;
+    const res = await authFetch('/api/v1/auth-vault/verify-flow', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        targetId: resolvedTargetId,
+        targetUrl: isUrl ? targetUrlOrId : undefined,
+        flow,
+      }),
+    });
 
-      try {
-        const res = await fetch(tokenUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            grant_type: flow.oauth2Config.grantType,
-            client_id: flow.oauth2Config.clientId,
-            client_secret: flow.oauth2Config.clientSecret,
-            scope: flow.oauth2Config.scope,
-          }),
-        });
+    const body = await res.json().catch(() => null);
 
-        const durationMs = Date.now() - stepStart;
-        const text = await res.text();
-        let json: any = {};
-        try {
-          json = JSON.parse(text);
-        } catch {
-          // Non-JSON
-        }
-
-        const token = json.access_token || json.token || 'mock_bearer_token_' + Date.now().toString(36);
-        variables.token = token;
-
-        stepsExecuted.push({
-          stepIndex: 1,
-          name: 'OAuth2 Token Grant Request',
-          url: tokenUrl,
-          method: 'POST',
-          statusCode: res.status,
-          durationMs,
-          extractedVariables: { token: `${token.slice(0, 12)}...` },
-        });
-
-        return {
-          success: res.ok,
-          totalDurationMs: Date.now() - startTime,
-          stepsExecuted,
-          finalToken: token,
-        };
-      } catch (err: any) {
-        // Fallback for simulated local demo
-        const simulatedToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.simulated_oauth2_token';
-        stepsExecuted.push({
-          stepIndex: 1,
-          name: 'OAuth2 Token Grant Request',
-          url: tokenUrl,
-          method: 'POST',
-          statusCode: 200,
-          durationMs: 45,
-          extractedVariables: { token: simulatedToken.slice(0, 16) + '...' },
-        });
-        return {
-          success: true,
-          totalDurationMs: 48,
-          stepsExecuted,
-          finalToken: simulatedToken,
-        };
-      }
-    }
-
-    if (flow.type === 'FORM' && flow.steps && flow.steps.length > 0) {
-      for (let idx = 0; idx < flow.steps.length; idx++) {
-        const step = flow.steps[idx];
-        const stepStart = Date.now();
-        const fullUrl = step.url.startsWith('http')
-          ? step.url
-          : `${targetUrl.replace(/\/$/, '')}/${step.url.replace(/^\//, '')}`;
-
-        const headers: Record<string, string> = {};
-        if (step.headers) {
-          for (const [k, v] of Object.entries(step.headers)) {
-            headers[k] = interpolate(v);
-          }
-        }
-
-        const bodyPayload = step.body ? JSON.stringify(interpolateObject(step.body)) : undefined;
-
-        try {
-          const res = await fetch(fullUrl, {
-            method: step.method,
-            headers,
-            body: bodyPayload,
-          });
-
-          const durationMs = Date.now() - stepStart;
-          const bodyText = await res.text();
-          let json: any = {};
-          try {
-            json = JSON.parse(bodyText);
-          } catch {
-            // Not JSON
-          }
-
-          const extracted: Record<string, string> = {};
-          if (step.extract) {
-            for (const ext of step.extract) {
-              if (ext.from === 'BODY_JSON' && json && json[ext.key]) {
-                const val = String(json[ext.key]);
-                variables[ext.saveAs] = val;
-                extracted[ext.saveAs] = val;
-              } else if (ext.from === 'HEADER') {
-                const val = res.headers.get(ext.key) || '';
-                if (val) {
-                  variables[ext.saveAs] = val;
-                  extracted[ext.saveAs] = val;
-                }
-              }
-            }
-          }
-
-          stepsExecuted.push({
-            stepIndex: idx + 1,
-            name: step.name || `Auth Step #${idx + 1}`,
-            url: fullUrl,
-            method: step.method,
-            statusCode: res.status,
-            durationMs,
-            extractedVariables: extracted,
-          });
-        } catch {
-          // If offline/sandbox fetch fails, provide realistic step simulation
-          const extracted: Record<string, string> = {};
-          if (step.extract && step.extract.length > 0) {
-            for (const ext of step.extract) {
-              const val = ext.saveAs === 'token'
-                ? 'mock_jwt_session_' + Math.random().toString(36).slice(2)
-                : 'mock_' + ext.saveAs + '_' + Math.random().toString(36).slice(2, 8);
-              variables[ext.saveAs] = val;
-              extracted[ext.saveAs] = val.slice(0, 16) + '...';
-            }
-          } else {
-            const simulatedToken = 'mock_jwt_session_' + Math.random().toString(36).slice(2);
-            variables.token = simulatedToken;
-            extracted.token = simulatedToken.slice(0, 16) + '...';
-          }
-
-          stepsExecuted.push({
-            stepIndex: idx + 1,
-            name: step.name || `Auth Step #${idx + 1}`,
-            url: fullUrl,
-            method: step.method,
-            statusCode: 200,
-            durationMs: 35,
-            extractedVariables: extracted,
-          });
-        }
-      }
-
+    if (!res.ok) {
+      const errorMessage =
+        body?.error?.message || `Authentication flow verification rejected with HTTP ${res.status}`;
       return {
-        success: true,
-        totalDurationMs: Date.now() - startTime,
-        stepsExecuted,
-        finalToken: variables.token || 'mock_jwt_session_' + Math.random().toString(36).slice(2),
+        success: false,
+        totalDurationMs: body?.totalDurationMs ?? 0,
+        stepsExecuted: Array.isArray(body?.stepsExecuted) ? body.stepsExecuted : [],
+        error: errorMessage,
       };
     }
 
-    if (flow.type === 'BEARER' || flow.type === 'API_KEY') {
-      const token = flow.credentials?.token || flow.credentials?.apiKey || 'sample_token_active';
-      stepsExecuted.push({
-        stepIndex: 1,
-        name: 'Header Token Injection Verification',
-        url: targetUrl,
-        method: 'GET',
-        statusCode: 200,
-        durationMs: 12,
-        extractedVariables: { token: `${token.slice(0, 8)}...` },
-      });
-
-      return {
-        success: true,
-        totalDurationMs: 15,
-        stepsExecuted,
-        finalToken: token,
-      };
-    }
-
+    const payload = body?.data ?? body;
     return {
-      success: true,
-      totalDurationMs: 10,
-      stepsExecuted: [],
+      success: Boolean(payload.success),
+      totalDurationMs: payload.totalDurationMs ?? 0,
+      stepsExecuted: Array.isArray(payload.stepsExecuted) ? payload.stepsExecuted : [],
+      finalToken: payload.finalToken,
+      finalCookies: payload.finalCookies,
+      error: payload.error,
     };
   } catch (err: any) {
     return {
       success: false,
-      totalDurationMs: Date.now() - startTime,
-      stepsExecuted,
-      error: err.message || 'Authentication flow handshake failed',
+      totalDurationMs: 0,
+      stepsExecuted: [],
+      error: err.message || 'Failed to dispatch authentication verification to controller backend',
     };
   }
 }
+

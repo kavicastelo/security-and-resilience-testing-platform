@@ -1541,6 +1541,54 @@ export class AgentDispatcherService {
 
     return updated.length;
   }
+
+  /**
+   * Retrieves active job leases joined with agent metadata.
+   */
+  async listJobLeases(tenantId?: string, agentId?: string): Promise<any[]> {
+    const { db } = getDatabase();
+    if (!db) return [];
+
+    const conditions = [inArray(agentJobs.status, ['leased', 'running'])];
+    if (tenantId) {
+      conditions.push(eq(agentJobs.tenantId, tenantId));
+    }
+    if (agentId) {
+      conditions.push(eq(agentJobs.agentId, agentId));
+    }
+
+    const rows = await db
+      .select({
+        job: agentJobs,
+        agent: agents,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agentJobs.agentId, agents.id))
+      .where(and(...conditions))
+      .orderBy(desc(agentJobs.dispatchedAt));
+
+    return rows.map(({ job, agent }) => {
+      const payload = (job.payload as Record<string, any>) || {};
+      const target = (payload.target as Record<string, any>) || {};
+      const engines = (payload.engineIds as string[]) || [];
+
+      return {
+        leaseId: job.leaseId || job.id,
+        jobId: job.id,
+        testRunId: job.testRunId,
+        targetName: target.name || 'Target API',
+        targetUrl: target.baseUrl || 'https://target.internal',
+        engines,
+        assignedAgentId: job.agentId || '',
+        assignedAgentName: agent?.name || 'Unassigned Worker',
+        status: job.status as 'pending' | 'running' | 'completed' | 'failed' | 'cancelled',
+        startedAt: job.dispatchedAt ? job.dispatchedAt.toISOString() : job.createdAt.toISOString(),
+        leaseExpiresAt: job.leaseExpiresAt ? job.leaseExpiresAt.toISOString() : new Date(Date.now() + 300000).toISOString(),
+        progressPercent: job.status === 'running' ? 50 : 10,
+        lastLogMessage: job.error || (job.status === 'running' ? 'Active scan in progress' : 'Lease granted to worker'),
+      };
+    });
+  }
 }
 
 export class AgentJobReaper {

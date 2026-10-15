@@ -1,16 +1,84 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   PRESET_CHAOS_PROFILES,
   SAMPLE_RECOVERY_TIMELINE,
   SAMPLE_STATE_MACHINE_MODEL,
   SAMPLE_RACE_CONDITION_MODEL,
+  EMPTY_STATE_MACHINE_MODEL,
+  EMPTY_RACE_CONDITION_MODEL,
+  EXAMPLE_STATE_MACHINE_MODEL,
+  EXAMPLE_RACE_CONDITION_MODEL,
   getChaosPresetConfig,
   getStateMachineModel,
   getRaceConditionBurstModel,
   executeChaosSimulation,
+  auditStateMachine,
+  executeRaceConditionBurst,
 } from '../src/api/resilience.js';
 
-describe('Phase UI-09: Business Logic State Machine, Race Conditions & Chaos Workbench', () => {
+describe('Phase UI-09 & PR-04: Business Logic State Machine, Race Conditions & Chaos Workbench', () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, options?: any) => {
+      const urlStr = String(url);
+
+      if (urlStr.includes('/api/v1/resilience/chaos/execute')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            stats: {
+              status: 'completed',
+              totalRequests: 100,
+              faultsInjected: 35,
+              unrecoveredErrors: 10,
+              rtoSeconds: 2.4,
+              circuitBreakerState: 'CLOSED',
+              resilienceScore: 82,
+            },
+            timeline: SAMPLE_RECOVERY_TIMELINE,
+            message: 'Chaos resilience simulation completed successfully across proxy pipeline.',
+          }),
+        };
+      }
+
+      if (urlStr.includes('/api/v1/resilience/business-logic/state-machine')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: SAMPLE_STATE_MACHINE_MODEL,
+          }),
+        };
+      }
+
+      if (urlStr.includes('/api/v1/resilience/business-logic/race-condition')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: SAMPLE_RACE_CONDITION_MODEL,
+          }),
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: {} }),
+      };
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
   describe('Chaos Injection Profiles & Parameter Constraints', () => {
     it('provides all 4 core resilience simulation presets with valid parameters', () => {
       const presets = Object.keys(PRESET_CHAOS_PROFILES);
@@ -70,6 +138,26 @@ describe('Phase UI-09: Business Logic State Machine, Race Conditions & Chaos Wor
   });
 
   describe('Business Logic State Machine & Step-Skipping Invariants', () => {
+    it('defines clean empty baseline when no workflow is audited', () => {
+      expect(EMPTY_STATE_MACHINE_MODEL.workflowId).toBe('');
+      expect(EMPTY_STATE_MACHINE_MODEL.states.length).toBe(0);
+      expect(EMPTY_STATE_MACHINE_MODEL.transitions.length).toBe(0);
+      expect(EMPTY_STATE_MACHINE_MODEL.bypassExploits.length).toBe(0);
+    });
+
+    it('returns empty model baseline when controller returns 404 or connection error', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({ success: false }),
+      });
+
+      const model = await getStateMachineModel('non-existent');
+      expect(model.workflowId).toBe('');
+      expect(model.states.length).toBe(0);
+      expect(model.transitions.length).toBe(0);
+    });
+
     it('models multi-step e-commerce checkout workflow with designated payment guard', async () => {
       const model = await getStateMachineModel();
       expect(model.states.length).toBe(5);
@@ -105,9 +193,48 @@ describe('Phase UI-09: Business Logic State Machine, Race Conditions & Chaos Wor
       expect(illegalTransition?.isBypass).toBe(true);
       expect(illegalTransition?.observedStatus).toBe(200);
     });
+
+    it('audits state machine via POST /api/v1/resilience/business-logic/state-machine', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: EXAMPLE_STATE_MACHINE_MODEL }),
+      });
+
+      const result = await auditStateMachine({
+        workflowName: 'Test Checkout Workflow',
+        states: EXAMPLE_STATE_MACHINE_MODEL.states,
+        transitions: EXAMPLE_STATE_MACHINE_MODEL.transitions,
+      });
+
+      expect(result.workflowId).toBe(EXAMPLE_STATE_MACHINE_MODEL.workflowId);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/resilience/business-logic/state-machine'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
   });
 
   describe('Synchronized Socket Burst & Race Condition Detection', () => {
+    it('defines clean empty baseline when no race condition burst has run', () => {
+      expect(EMPTY_RACE_CONDITION_MODEL.testId).toBe('');
+      expect(EMPTY_RACE_CONDITION_MODEL.concurrency).toBe(0);
+      expect(EMPTY_RACE_CONDITION_MODEL.requests.length).toBe(0);
+      expect(EMPTY_RACE_CONDITION_MODEL.isVulnerable).toBe(false);
+    });
+
+    it('returns empty burst model baseline when controller returns empty or connection error', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({ success: false }),
+      });
+
+      const model = await getRaceConditionBurstModel();
+      expect(model.testId).toBe('');
+      expect(model.concurrency).toBe(0);
+      expect(model.isVulnerable).toBe(false);
+    });
+
     it('models high-concurrency synchronized burst with sub-millisecond jitter', async () => {
       const model = await getRaceConditionBurstModel();
       expect(model.concurrency).toBe(20);
@@ -131,20 +258,58 @@ describe('Phase UI-09: Business Logic State Machine, Race Conditions & Chaos Wor
       expect(model.remediation).toBeDefined();
       expect(model.remediation.toLowerCase()).toContain('lock');
     });
+
+    it('executes race condition burst via POST /api/v1/resilience/business-logic/race-condition', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: EXAMPLE_RACE_CONDITION_MODEL }),
+      });
+
+      const result = await executeRaceConditionBurst({
+        endpoint: '/api/v1/coupons/redeem',
+        concurrency: 10,
+      });
+
+      expect(result.isVulnerable).toBe(true);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/resilience/business-logic/race-condition'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
   });
 
   describe('Chaos Simulation Execution Service', () => {
-    it('executes simulated fault injection and calculates resilience score and RTO', async () => {
+    it('executes simulated fault injection and receives live metrics from controller', async () => {
       const config = getChaosPresetConfig('db_brownout');
       const result = await executeChaosSimulation(config);
 
       expect(result.success).toBe(true);
       expect(result.stats).toBeDefined();
-      expect(result.stats.totalRequests).toBeGreaterThan(0);
-      expect(result.stats.faultsInjected).toBeGreaterThan(0);
+      expect(result.stats.totalRequests).toBe(100);
+      expect(result.stats.faultsInjected).toBe(35);
       expect(result.stats.rtoSeconds).toBeGreaterThan(0);
       expect(result.stats.resilienceScore).toBeGreaterThanOrEqual(0);
       expect(result.stats.resilienceScore).toBeLessThanOrEqual(100);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/resilience/chaos/execute'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('strictly throws error and never fabricates fake stats when controller execution fails', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({
+          success: false,
+          error: { message: 'Target unreachable during chaos injection' },
+        }),
+      });
+
+      const config = getChaosPresetConfig('slow_3g');
+      await expect(executeChaosSimulation(config)).rejects.toThrow(
+        'Target unreachable during chaos injection',
+      );
     });
   });
 });

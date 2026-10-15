@@ -20,6 +20,18 @@ export const StateMachineGraph: React.FC<StateMachineGraphProps> = ({ model }) =
     model.bypassExploits[0]?.id || null,
   );
 
+  if (model.states.length === 0) {
+    return (
+      <div className="p-8 rounded-xl bg-card border border-border/80 shadow-lg text-center space-y-3">
+        <GitCommit className="w-10 h-10 text-muted-foreground mx-auto opacity-50" />
+        <h4 className="text-base font-bold text-foreground">No Workflow State Machine Audited Yet</h4>
+        <p className="text-xs text-muted-foreground max-w-md mx-auto">
+          Audit an API checkout or multi-step business workflow to detect unauthorized state jumps, payment step skipping, and terminal invariant bypasses.
+        </p>
+      </div>
+    );
+  }
+
   const activeExploit =
     model.bypassExploits.find((e) => e.id === selectedExploitId) ||
     model.bypassExploits[0];

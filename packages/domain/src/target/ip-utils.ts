@@ -459,8 +459,8 @@ export function matchesAllowedHost(hostname: string, allowedHost: string): boole
   const cleanHost = hostname.replace(/^\[|\]$/g, '').toLowerCase().trim();
   const cleanAllowed = allowedHost.replace(/^\[|\]$/g, '').toLowerCase().trim();
 
-  // 1. Exact match
-  if (cleanHost === cleanAllowed) {
+  // 1. Exact match or global wildcard
+  if (cleanHost === cleanAllowed || cleanAllowed === '*') {
     return true;
   }
 

@@ -1,18 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   generateHmacSecret,
   generateGitHubActionYaml,
   createWebhook,
   deleteWebhook,
   testWebhookPing,
+  dispatchTestPing,
   fetchWebhooks,
   fetchWebhookDeliveries,
-  FALLBACK_WEBHOOKS,
-  FALLBACK_DELIVERIES,
   WorkflowGeneratorOptions,
+  WebhookRecord,
+  WebhookDeliveryRecord,
 } from '../src/api/webhooks.js';
 
-describe('Phase UI-16: CI/CD Integrations Hub, HMAC-SHA256 Webhook Manager & Issue Sync Console', () => {
+describe('Phase UI-16 / PR-01: CI/CD Integrations Hub, HMAC-SHA256 Webhook Manager & Issue Sync Console', () => {
   describe('Cryptographic HMAC Secret Generation', () => {
     it('generates a 64-character hexadecimal signing secret', () => {
       const secret = generateHmacSecret();
@@ -92,19 +93,66 @@ describe('Phase UI-16: CI/CD Integrations Hub, HMAC-SHA256 Webhook Manager & Iss
     });
   });
 
-  describe('Webhook Manager API Operations', () => {
-    it('lists registered webhooks with events and headers', async () => {
-      const list = await fetchWebhooks();
-      expect(Array.isArray(list)).toBe(true);
-      expect(list.length).toBeGreaterThan(0);
+  describe('Webhook Manager Controller API Operations (Zero In-Memory Mock)', () => {
+    let originalFetch: typeof globalThis.fetch;
 
-      const slackWh = list.find((w) => w.id === 'wh-slack-alerts');
-      expect(slackWh).toBeDefined();
-      expect(slackWh?.events).toContain('finding.critical');
-      expect(slackWh?.events).toContain('policy.failed');
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
     });
 
-    it('creates a new webhook endpoint and persists in list', async () => {
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      vi.restoreAllMocks();
+    });
+
+    it('lists registered webhooks from controller API and returns empty array on clean database', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] }),
+      });
+
+      const list = await fetchWebhooks();
+      expect(Array.isArray(list)).toBe(true);
+      expect(list).toHaveLength(0); // Clean empty state without ghost mock items
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/webhooks'),
+        expect.any(Object),
+      );
+    });
+
+    it('throws descriptive error on server failure without reverting to synthetic data', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({
+          success: false,
+          error: { message: 'Database connection failed' },
+        }),
+      });
+
+      await expect(fetchWebhooks()).rejects.toThrow('Database connection failed');
+    });
+
+    it('creates a new webhook endpoint via POST /api/v1/webhooks', async () => {
+      const mockCreated: WebhookRecord = {
+        id: 'wh-prod-001',
+        workspaceId: '00000000-0000-0000-0000-000000000000',
+        url: 'https://security.webhook.site/v1/test',
+        description: 'Automated Test Receiver',
+        events: ['run.completed', 'finding.critical'],
+        isActive: true,
+        headers: { 'X-Environment': 'IntegrationTest' },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({ success: true, data: mockCreated }),
+      });
+
       const secret = generateHmacSecret();
       const created = await createWebhook({
         url: 'https://security.webhook.site/v1/test',
@@ -114,71 +162,104 @@ describe('Phase UI-16: CI/CD Integrations Hub, HMAC-SHA256 Webhook Manager & Iss
         headers: { 'X-Environment': 'IntegrationTest' },
       });
 
-      expect(created.id).toBeDefined();
+      expect(created.id).toBe('wh-prod-001');
       expect(created.url).toBe('https://security.webhook.site/v1/test');
       expect(created.events).toEqual(['run.completed', 'finding.critical']);
-      expect(created.headers['X-Environment']).toBe('IntegrationTest');
-
-      const after = await fetchWebhooks();
-      expect(after.some((w) => w.id === created.id)).toBe(true);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/webhooks'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
     });
 
-    it('dispatches test ping and enqueues delivery record', async () => {
-      const result = await testWebhookPing('wh-slack-alerts');
-      expect(result.success).toBe(true);
-      expect(result.delivery).toBeDefined();
-      expect(result.delivery?.eventType).toBe('ping');
-      expect(result.delivery?.status).toBe('succeeded');
-      expect(result.delivery?.responseStatusCode).toBe(200);
+    it('dispatches test ping and parses server delivery record', async () => {
+      const mockDelivery: WebhookDeliveryRecord = {
+        id: 'del-test-001',
+        webhookId: 'wh-prod-001',
+        workspaceId: '00000000-0000-0000-0000-000000000000',
+        eventType: 'ping',
+        payload: { event: 'ping', message: 'Test Ping' },
+        status: 'succeeded',
+        attempts: 1,
+        maxAttempts: 5,
+        nextRetryAt: new Date().toISOString(),
+        lastAttemptAt: new Date().toISOString(),
+        responseStatusCode: 200,
+        responseBody: 'ok',
+        lastError: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
 
-      // Verify delivery record can be queried
-      const deliveries = await fetchWebhookDeliveries('wh-slack-alerts');
-      expect(deliveries.some((d) => d.eventType === 'ping')).toBe(true);
-    });
-
-    it('deletes an existing webhook endpoint', async () => {
-      const created = await createWebhook({
-        url: 'https://delete-me.internal/hook',
-        description: 'To be deleted',
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          message: 'Test ping enqueued for delivery',
+          data: mockDelivery,
+        }),
       });
 
-      const deleted = await deleteWebhook(created.id);
+      const result = await testWebhookPing('wh-prod-001');
+      expect(result.success).toBe(true);
+      expect(result.delivery?.id).toBe('del-test-001');
+      expect(result.delivery?.responseStatusCode).toBe(200);
+
+      // Verify dispatchTestPing alias functions identically
+      const aliasResult = await dispatchTestPing('wh-prod-001');
+      expect(aliasResult.success).toBe(true);
+    });
+
+    it('deletes an existing webhook endpoint via DELETE /api/v1/webhooks/:id', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, message: 'Webhook deleted successfully' }),
+      });
+
+      const deleted = await deleteWebhook('wh-prod-001');
       expect(deleted).toBe(true);
-
-      const after = await fetchWebhooks();
-      expect(after.some((w) => w.id === created.id)).toBe(false);
-    });
-  });
-
-  describe('Webhook Delivery History & Retry Invariants', () => {
-    it('inspects delivery payloads, status codes, and error traces', async () => {
-      const deliveries = await fetchWebhookDeliveries('wh-datadog-siem');
-      expect(deliveries.length).toBeGreaterThan(0);
-
-      const failedDelivery = deliveries.find((d) => d.status === 'failed');
-      expect(failedDelivery).toBeDefined();
-      expect(failedDelivery?.responseStatusCode).toBe(503);
-      expect(failedDelivery?.attempts).toBe(2);
-      expect(failedDelivery?.maxAttempts).toBe(5);
-      expect(failedDelivery?.lastError).toContain('503 Service Unavailable');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/webhooks/wh-prod-001'),
+        expect.objectContaining({
+          method: 'DELETE',
+        }),
+      );
     });
 
-    it('enforces maximum 5 attempts and exponential backoff retry schedules', () => {
-      for (const list of Object.values(FALLBACK_DELIVERIES)) {
-        for (const del of list) {
-          expect(del.maxAttempts).toBe(5);
-          expect(del.attempts).toBeLessThanOrEqual(5);
-          expect(del.payload).toBeDefined();
-        }
-      }
-    });
-  });
+    it('fetches real deliveries from controller API with limit parameter', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          data: [
+            {
+              id: 'del-01',
+              webhookId: 'wh-prod-001',
+              workspaceId: '00000000-0000-0000-0000-000000000000',
+              eventType: 'finding.critical',
+              payload: { findingId: 'f-1' },
+              status: 'succeeded',
+              attempts: 1,
+              maxAttempts: 5,
+              nextRetryAt: new Date().toISOString(),
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        }),
+      });
 
-  describe('Integration Secrets Masking Invariant (Mandatory Directive)', () => {
-    it('verifies webhook list and deliveries never return unencrypted raw secrets', () => {
-      for (const wh of FALLBACK_WEBHOOKS) {
-        expect((wh as any).secret).toBeUndefined();
-      }
+      const deliveries = await fetchWebhookDeliveries('wh-prod-001', 25);
+      expect(deliveries).toHaveLength(1);
+      expect(deliveries[0].eventType).toBe('finding.critical');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/webhooks/wh-prod-001/deliveries?limit=25'),
+        expect.any(Object),
+      );
     });
   });
 });

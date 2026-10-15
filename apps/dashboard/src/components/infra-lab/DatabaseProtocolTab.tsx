@@ -23,8 +23,20 @@ export const DatabaseProtocolTab: React.FC<DatabaseProtocolTabProps> = ({
 }) => {
   const [selectedDbId, setSelectedDbId] = useState<string>('db-postgres-prod');
 
-  const selectedDb: DatabaseProbeResult =
+  const selectedDb: DatabaseProbeResult | undefined =
     databaseData.probes.find((p) => p.id === selectedDbId) ?? databaseData.probes[0];
+
+  if (!selectedDb) {
+    return (
+      <div className={`p-8 rounded-2xl bg-card/60 border border-border/60 text-center space-y-3 ${className}`}>
+        <Database className="w-10 h-10 text-muted-foreground mx-auto opacity-50" />
+        <h4 className="text-base font-semibold text-foreground">No Database Wire Probes Executed</h4>
+        <p className="text-xs text-muted-foreground max-w-md mx-auto">
+          Configure a database target to audit in-transit TLS enforcement, unauthenticated access, and connection saturation ceilings.
+        </p>
+      </div>
+    );
+  }
 
   const getEngineBadge = (type: DatabaseProbeResult['databaseType']) => {
     switch (type) {

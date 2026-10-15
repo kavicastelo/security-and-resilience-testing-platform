@@ -444,3 +444,5 @@ export class StatefulAuthenticator {
     return result;
   }
 }
+
+export { StatefulAuthenticator as StatefulAuthService };

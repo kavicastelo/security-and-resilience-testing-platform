@@ -450,3 +450,82 @@ export function extractFieldSuggestions(errorMessages: string[]): string[] {
 
   return leaked;
 }
+
+export interface ContractSpecRecord {
+  id: string;
+  tenantId?: string | null;
+  targetId: string;
+  name: string;
+  type: 'openapi' | 'graphql';
+  content: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveTargetSpecInput {
+  targetId: string;
+  name: string;
+  type: 'openapi' | 'graphql';
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface GraphQLIntrospectInput {
+  targetId: string;
+  endpointUrl: string;
+  headers?: Record<string, string>;
+}
+
+export interface GraphQLIntrospectResult {
+  schema: any;
+  specRecord: ContractSpecRecord;
+}
+
+/**
+ * Fetches all saved OpenAPI and GraphQL specifications for a target
+ */
+export async function fetchTargetSpecs(targetId: string): Promise<ContractSpecRecord[]> {
+  if (!targetId) return [];
+  const res = await authFetch(`/api/v1/contracts/specs?targetId=${encodeURIComponent(targetId)}`);
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to fetch target specs: HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  return json.data || [];
+}
+
+/**
+ * Persists an OpenAPI or GraphQL specification linked to a target
+ */
+export async function saveTargetSpec(payload: SaveTargetSpecInput): Promise<ContractSpecRecord> {
+  const res = await authFetch('/api/v1/contracts/specs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(json?.error?.message || `Failed to save contract specification: HTTP ${res.status}`);
+  }
+  return json.data || json;
+}
+
+/**
+ * Executes server-side GraphQL schema introspection with SSRF boundary checks
+ */
+export async function executeGraphQLIntrospection(
+  payload: GraphQLIntrospectInput,
+): Promise<GraphQLIntrospectResult> {
+  const res = await authFetch('/api/v1/contracts/graphql/introspect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(json?.error?.message || `GraphQL introspection failed: HTTP ${res.status}`);
+  }
+  return json.data || json;
+}

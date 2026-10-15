@@ -160,11 +160,12 @@ export const ApiSecurityView: React.FC = () => {
       {/* Active Tab View Rendering */}
       <div>
         {activeSubTab === 'openapi' && (
-          <OpenApiCatalog targetUrl={targetUrl} targetName={targetName} />
+          <OpenApiCatalog targetId={activeTarget?.id} targetUrl={targetUrl} targetName={targetName} />
         )}
 
         {activeSubTab === 'graphql' && (
           <GraphQLIntrospectionViewer
+            targetId={activeTarget?.id}
             targetUrl={targetUrl}
             targetName={targetName}
             onSelectQueryForDepth={handleSelectQueryForDepth}

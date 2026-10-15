@@ -144,18 +144,104 @@ describe('Phase UI-08: Automated BOLA / BFLA Matrix & Privilege Escalation Visua
     });
   });
 
-  describe('Targeted Retest Service Integration', () => {
-    it('executes targeted retest for BOLA finding and returns verification timestamp', async () => {
-      const result = await retestAuthzFinding('fnd-bola-inv-001');
-      expect(result.success).toBe(true);
-      expect(result.message).toBeDefined();
-      expect(result.retestedAt).toBeDefined();
+  describe('PR-05: Dynamic Matrix Aggregation & Truthful Retest Integration', () => {
+    it('returns demo preset when no targetId is provided', async () => {
+      const dataset = await getAuthzMatrixDataset('financialSaaS');
+      expect(dataset).not.toBeNull();
+      expect(dataset?.id).toBe('matrix-fin-saas');
+      expect(dataset?.cells.length).toBeGreaterThan(0);
     });
 
-    it('fetches dataset snapshot via getAuthzMatrixDataset', async () => {
-      const dataset = await getAuthzMatrixDataset('financialSaaS');
-      expect(dataset.id).toBe('matrix-fin-saas');
-      expect(dataset.cells.length).toBeGreaterThan(0);
+    it('returns null (clean empty state) when target has zero BOLA tests or findings', async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: null }),
+      });
+
+      try {
+        const dataset = await getAuthzMatrixDataset(undefined, 'clean-target-123');
+        expect(dataset).toBeNull();
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          expect.stringContaining('/api/v1/authz/matrix?targetId=clean-target-123'),
+          expect.any(Object),
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('fetches dynamically assembled matrix when target has findings and evidence', async () => {
+      const mockDynamicDataset = {
+        ...PRESET_MATRICES.financialSaaS,
+        id: 'matrix-target-real-456',
+        targetId: 'target-real-456',
+        targetName: 'Dynamic Live Target',
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: mockDynamicDataset }),
+      });
+
+      try {
+        const dataset = await getAuthzMatrixDataset(undefined, 'target-real-456');
+        expect(dataset).not.toBeNull();
+        expect(dataset?.targetName).toBe('Dynamic Live Target');
+        expect(dataset?.id).toBe('matrix-target-real-456');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('executes targeted retest for BOLA finding and returns verification timestamp', async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            stillDetected: false,
+            status: 'resolved',
+            message: 'Retest verified: Vulnerability resolved. Target endpoint enforced proper authorization checks.',
+            retestedAt: new Date().toISOString(),
+          },
+        }),
+      });
+
+      try {
+        const result = await retestAuthzFinding('fnd-bola-inv-001');
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Vulnerability resolved');
+        expect(result.retestedAt).toBeDefined();
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          expect.stringContaining('/api/v1/findings/fnd-bola-inv-001/retest'),
+          expect.objectContaining({ method: 'POST' }),
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('strictly throws error and never fabricates fake 403 on server retest failure', async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({
+          success: false,
+          error: { code: 'RETEST_FAILED', message: 'Target server timed out during retest' },
+        }),
+      });
+
+      try {
+        await expect(retestAuthzFinding('fnd-timeout-001')).rejects.toThrow(
+          'Target server timed out during retest',
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });

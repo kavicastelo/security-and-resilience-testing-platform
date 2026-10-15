@@ -16,6 +16,18 @@ export const RaceConditionInspector: React.FC<RaceConditionInspectorProps> = ({ 
   const [filterMode, setFilterMode] = useState<'all' | 'anomalies' | 'success'>('all');
   const [copiedCode, setCopiedCode] = useState(false);
 
+  if (model.requests.length === 0) {
+    return (
+      <div className="p-8 rounded-xl bg-card border border-border/80 shadow-lg text-center space-y-3">
+        <AlertOctagon className="w-10 h-10 text-muted-foreground mx-auto opacity-50" />
+        <h4 className="text-base font-bold text-foreground">No Race Condition Burst Executed Yet</h4>
+        <p className="text-xs text-muted-foreground max-w-md mx-auto">
+          Dispatch synchronized socket bursts across concurrent TCP sockets to evaluate atomic transactions, row-level locking, and TOCTOU vulnerabilities.
+        </p>
+      </div>
+    );
+  }
+
   const filteredRequests = model.requests.filter((r) => {
     if (filterMode === 'anomalies') return r.isAnomaly;
     if (filterMode === 'success') return r.statusCode === 200;

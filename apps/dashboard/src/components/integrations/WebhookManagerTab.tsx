@@ -10,6 +10,7 @@ import {
 } from '../../api/webhooks.js';
 import { WebhookDeliveryLogsModal } from './WebhookDeliveryLogsModal.js';
 import {
+  Webhook,
   Plus,
   Send,
   Trash2,
@@ -64,8 +65,8 @@ export const WebhookManagerTab: React.FC = () => {
     try {
       const data = await fetchWebhooks();
       setWebhooks(data);
-    } catch {
-      showToast('Failed to load webhook configurations', 'error');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to load webhook configurations', 'error');
     } finally {
       setLoading(false);
     }
@@ -123,8 +124,8 @@ export const WebhookManagerTab: React.FC = () => {
       setNewDescription('');
       setNewSecret(generateHmacSecret());
       setHeadersMap({});
-    } catch {
-      showToast('Failed to create webhook endpoint', 'error');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to create webhook endpoint', 'error');
     }
   };
 
@@ -136,8 +137,8 @@ export const WebhookManagerTab: React.FC = () => {
         setWebhooks(webhooks.filter((w) => w.id !== id));
         showToast('Webhook endpoint deleted', 'info');
       }
-    } catch {
-      showToast('Failed to delete webhook', 'error');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete webhook', 'error');
     }
   };
 
@@ -150,8 +151,8 @@ export const WebhookManagerTab: React.FC = () => {
       } else {
         showToast('Test ping failed', 'error');
       }
-    } catch {
-      showToast('Test ping request failed', 'error');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Test ping request failed', 'error');
     } finally {
       setTestingWebhookId(null);
     }
@@ -200,12 +201,26 @@ export const WebhookManagerTab: React.FC = () => {
       {/* Webhook Endpoints List */}
       <div className="space-y-3">
         {webhooks.length === 0 ? (
-          <div className="p-12 text-center rounded-xl bg-card border border-border text-muted-foreground space-y-2">
-            <Radio className="w-8 h-8 mx-auto opacity-40 text-slate-500" />
-            <p className="text-sm font-semibold text-slate-200">No webhooks registered</p>
-            <p className="text-xs">
-              Click &ldquo;Register Webhook&rdquo; to send real-time security events to your Slack, PagerDuty, or SIEM pipelines.
-            </p>
+          <div className="p-12 text-center rounded-xl bg-card border border-border text-muted-foreground space-y-4">
+            <div className="w-12 h-12 mx-auto rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+              <Webhook className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-bold text-foreground">No Webhook Endpoints Configured</p>
+              <p className="text-xs max-w-md mx-auto text-muted-foreground">
+                Register HTTPS endpoints with HMAC-SHA256 signatures to receive real-time security alerts and test completion webhooks.
+              </p>
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold shadow-md transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                Add Webhook Endpoint
+              </button>
+            </div>
           </div>
         ) : (
           webhooks.map((wh) => (

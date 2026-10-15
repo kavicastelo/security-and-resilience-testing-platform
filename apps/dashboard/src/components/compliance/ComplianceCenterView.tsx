@@ -7,6 +7,7 @@ import {
 } from '../../api/reports.js';
 import { ComplianceRadarChart } from './ComplianceRadarChart.js';
 import { FrameworkMappingTable } from './FrameworkMappingTable.js';
+import { StandardsCoverageMatrix } from './StandardsCoverageMatrix.js';
 import { ReportGeneratorModal } from './ReportGeneratorModal.js';
 import {
   ShieldCheck,
@@ -20,6 +21,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Info,
+  TableProperties,
 } from 'lucide-react';
 
 export const ComplianceCenterView: React.FC = () => {
@@ -29,6 +31,7 @@ export const ComplianceCenterView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string>('run-live-01');
+  const [viewMode, setViewMode] = useState<'drilldown' | 'matrix'>('drilldown');
 
   // Load compliance assessment on mount
   const loadData = async (runId?: string) => {
@@ -37,7 +40,7 @@ export const ComplianceCenterView: React.FC = () => {
       const data = await fetchComplianceAssessment(runId);
       setReportData(data);
     } catch {
-      // Fallback handled in API client
+      // Clean fallback handled in API client
     } finally {
       setLoading(false);
     }
@@ -136,6 +139,44 @@ export const ComplianceCenterView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Enthusiastic Zero-Defect 100% Compliance Banner */}
+      {reportData && reportData.totalFindings === 0 && (
+        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-4 shadow-[0_0_15px_rgba(16,185,129,0.1)]">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                  <ShieldCheck className="w-3.5 h-3.5" /> 100% COMPLIANT
+                </span>
+                <span className="text-xs font-semibold text-emerald-300">Clean Test Verification Gate</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Zero vulnerabilities detected against evaluated standards (OWASP Top 10, ASVS 4.0, PCI-DSS 4.0).
+              </p>
+            </div>
+          </div>
+          <div className="hidden sm:block text-right">
+            <span className="px-2.5 py-1 rounded text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-400">
+              0 Violations
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Empty State when no assessment data exists */}
+      {!loading && !reportData && (
+        <div className="p-12 text-center rounded-2xl bg-card border border-border space-y-3">
+          <Layers className="w-10 h-10 mx-auto text-muted-foreground opacity-40" />
+          <p className="text-sm font-bold text-foreground">No compliance assessments generated yet</p>
+          <p className="text-xs text-muted-foreground max-w-md mx-auto">
+            No compliance assessments generated yet. Run a security test suite to generate an audit report.
+          </p>
+        </div>
+      )}
 
       {/* KPI Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -367,25 +408,66 @@ export const ComplianceCenterView: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom Section: Framework Mapping Drill-down Table */}
+      {/* Bottom Section: Framework Mapping Drill-down Table or Cross-Standard Matrix */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-bold text-foreground">
-              {activeAssessment?.frameworkName} Control Matrix Drilldown
+              {viewMode === 'drilldown'
+                ? `${activeAssessment?.frameworkName || 'Standards'} Control Matrix Drilldown`
+                : 'Unified Cross-Framework Compliance Coverage Matrix'}
             </h2>
             <p className="text-xs text-muted-foreground">
-              Granular mapping between platform rules, verified CWEs, and standards requirements
+              {viewMode === 'drilldown'
+                ? 'Granular mapping between platform rules, verified CWEs, and standards requirements'
+                : 'Consolidated mapping across OWASP Top 10, OWASP API, ASVS 4.0, and PCI-DSS 4.0'}
             </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-card border border-border p-1 rounded-lg text-xs self-start sm:self-center">
+            <button
+              type="button"
+              onClick={() => setViewMode('drilldown')}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                viewMode === 'drilldown'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Framework Drilldown
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('matrix')}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                viewMode === 'matrix'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <TableProperties className="w-3.5 h-3.5" />
+              Unified Matrix
+            </button>
           </div>
         </div>
 
-        {activeAssessment && (
-          <FrameworkMappingTable
-            categories={activeAssessment.categories}
-            selectedCategoryId={selectedCategoryId}
-            onSelectCategory={(id) => setSelectedCategoryId(id)}
-            frameworkTitle={activeAssessment.frameworkName}
+        {viewMode === 'drilldown' ? (
+          activeAssessment && (
+            <FrameworkMappingTable
+              categories={activeAssessment.categories}
+              selectedCategoryId={selectedCategoryId}
+              onSelectCategory={(id) => setSelectedCategoryId(id)}
+              frameworkTitle={activeAssessment.frameworkName}
+            />
+          )
+        ) : (
+          <StandardsCoverageMatrix
+            report={reportData}
+            onSelectCategory={(fw, catId) => {
+              setSelectedFramework(fw);
+              setSelectedCategoryId(catId);
+              setViewMode('drilldown');
+            }}
           />
         )}
       </div>

@@ -207,7 +207,14 @@ export const KubernetesAuditTab: React.FC<KubernetesAuditTabProps> = ({
 
       {/* Workload Hierarchy Cards */}
       <div className="space-y-3">
-        {filteredWorkloads.map((workload) => {
+        {filteredWorkloads.length === 0 ? (
+          <div className="p-8 rounded-2xl bg-card/40 border border-border/50 text-center space-y-2">
+            <Server className="w-8 h-8 text-muted-foreground mx-auto opacity-50" />
+            <p className="text-sm font-medium text-foreground">No Kubernetes Workloads Audited</p>
+            <p className="text-xs text-muted-foreground">Upload a manifest YAML or run an in-cluster scan to evaluate Pod Security Standards.</p>
+          </div>
+        ) : (
+          filteredWorkloads.map((workload) => {
           const isExpanded = expandedWorkloadId === workload.id;
           const hasCritical = workload.findings.some((f) => f.severity === 'critical');
           const hasHigh = workload.findings.some((f) => f.severity === 'high');
@@ -369,7 +376,7 @@ export const KubernetesAuditTab: React.FC<KubernetesAuditTabProps> = ({
               )}
             </div>
           );
-        })}
+        }))}
       </div>
     </div>
   );

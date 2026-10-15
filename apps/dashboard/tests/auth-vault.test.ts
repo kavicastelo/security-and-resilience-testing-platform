@@ -90,29 +90,27 @@ describe('Phase UI-07: Stateful Auth Flow Builder, TOTP Simulator & Encrypted Se
     });
   });
 
-  describe('Auth Flow Live Test Handshake Simulation', () => {
-    it('executes simulated auth handshake and extracts session tokens', async () => {
-      const flow = AUTH_FLOW_TEMPLATES.formTotpMfa.flow;
-      const targetUrl = 'http://127.0.0.1:8080';
-
-      const result = await executeAuthFlowTest(targetUrl, flow);
-      expect(result.success).toBe(true);
-      expect(result.stepsExecuted.length).toBeGreaterThan(0);
-      expect(result.finalToken).toBeDefined();
-      expect(typeof result.finalToken).toBe('string');
-      expect(result.totalDurationMs).toBeGreaterThan(0);
-    });
-
-    it('verifies OAuth2 client credentials flow extraction', async () => {
+  describe('Auth Flow Live Test Server Delegation & Diagnostics', () => {
+    it('delegates flow verification to controller /api/v1/auth-vault/verify-flow endpoint', async () => {
       const oauthFlow = AUTH_FLOW_TEMPLATES.oauth2ClientCredentials.flow;
       const targetUrl = 'http://127.0.0.1:8080';
 
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            access_token: 'mock-oauth2-jwt-token-999',
-            token_type: 'Bearer',
-            expires_in: 3600,
+            success: true,
+            totalDurationMs: 42,
+            stepsExecuted: [
+              {
+                stepIndex: 1,
+                name: 'OAuth2 Token Grant Request',
+                url: 'http://127.0.0.1:8080/oauth/v2/token',
+                method: 'POST',
+                statusCode: 200,
+                durationMs: 42,
+              },
+            ],
+            finalToken: 'real-verified-oauth2-token-xyz',
           }),
           {
             status: 200,
@@ -121,12 +119,80 @@ describe('Phase UI-07: Stateful Auth Flow Builder, TOTP Simulator & Encrypted Se
         ),
       );
 
-      const result = await executeAuthFlowTest(targetUrl, oauthFlow);
+      const result = await executeAuthFlowTest(targetUrl, oauthFlow, 'target-test-123');
+
+      expect(fetchSpy).toHaveBeenCalled();
+      const calledUrl = fetchSpy.mock.calls[0][0].toString();
+      expect(calledUrl).toContain('/api/v1/auth-vault/verify-flow');
+
       expect(result.success).toBe(true);
+      expect(result.stepsExecuted).toHaveLength(1);
       expect(result.stepsExecuted[0].method).toBe('POST');
-      expect(result.finalToken).toBe('mock-oauth2-jwt-token-999');
+      expect(result.stepsExecuted[0].statusCode).toBe(200);
+      expect(result.finalToken).toBe('real-verified-oauth2-token-xyz');
+      expect(result.totalDurationMs).toBe(42);
+
+      fetchSpy.mockRestore();
+    });
+
+    it('truthfully propagates target failure and HTTP error codes with ZERO fake tokens', async () => {
+      const flow = AUTH_FLOW_TEMPLATES.formCsrf.flow;
+      const targetUrl = 'http://127.0.0.1:8080';
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: false,
+            totalDurationMs: 38,
+            stepsExecuted: [
+              {
+                stepIndex: 1,
+                name: 'Fetch CSRF Token',
+                url: 'http://127.0.0.1:8080/auth/login',
+                method: 'GET',
+                statusCode: 401,
+                durationMs: 38,
+                error: 'HTTP 401 Unauthorized',
+              },
+            ],
+            error: 'Authentication step failed with HTTP 401',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+
+      const result = await executeAuthFlowTest(targetUrl, flow, 'target-test-123');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('401');
+      expect(result.stepsExecuted[0].statusCode).toBe(401);
+      // Absolute guarantee: Never return simulated tokens on failure
+      expect(result.finalToken).toBeUndefined();
+      expect(result.finalToken).not.toBe('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.simulated_oauth2_token');
+
+      fetchSpy.mockRestore();
+    });
+
+    it('gracefully handles controller network failure without falling back to mock tokens', async () => {
+      const flow = AUTH_FLOW_TEMPLATES.bearerToken.flow;
+      const targetUrl = 'http://127.0.0.1:8080';
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+        new Error('Failed to connect to controller: ECONNREFUSED'),
+      );
+
+      const result = await executeAuthFlowTest(targetUrl, flow, 'target-test-123');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed to connect to controller');
+      expect(result.finalToken).toBeUndefined();
+      expect(result.stepsExecuted).toEqual([]);
 
       fetchSpy.mockRestore();
     });
   });
 });
+

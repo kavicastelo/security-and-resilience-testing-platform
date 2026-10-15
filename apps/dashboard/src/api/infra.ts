@@ -640,41 +640,196 @@ export const SAMPLE_DATABASE_SECURITY: DatabaseSecuritySnapshot = {
 };
 
 // ============================================================================
-// API Fetch Handlers
+// Example Templates & Clean Baseline Empty States
+// ============================================================================
+
+export const EXAMPLE_K8S_AUDIT = SAMPLE_K8S_AUDIT;
+export const EXAMPLE_SBOM_GRAPH = SAMPLE_SBOM_GRAPH;
+export const EXAMPLE_SMUGGLING_SNAPSHOT = SAMPLE_SMUGGLING_SNAPSHOT;
+export const EXAMPLE_DATABASE_SECURITY = SAMPLE_DATABASE_SECURITY;
+
+export const EMPTY_K8S_AUDIT: K8sAuditSnapshot = {
+  clusterName: 'No Cluster Audited',
+  kubernetesVersion: 'Unknown',
+  totalWorkloads: 0,
+  overallComplianceScore: 100,
+  pssDistribution: {
+    restricted: 0,
+    baseline: 0,
+    privileged: 0,
+  },
+  criticalFindingsCount: 0,
+  highFindingsCount: 0,
+  mediumFindingsCount: 0,
+  namespaces: [],
+  workloads: [],
+};
+
+export const EMPTY_SBOM_GRAPH: SbomGraphSnapshot = {
+  sbomId: '',
+  format: 'cyclonedx_json',
+  specVersion: '1.5',
+  applicationName: 'No SBOM Audited',
+  version: '0.0.0',
+  author: '',
+  generatedAt: new Date().toISOString(),
+  totalComponents: 0,
+  directDependenciesCount: 0,
+  transitiveDependenciesCount: 0,
+  vulnerableComponentsCount: 0,
+  criticalCveCount: 0,
+  highCveCount: 0,
+  licenseViolationsCount: 0,
+  components: [],
+};
+
+export const EMPTY_SMUGGLING_SNAPSHOT: SmugglingWireSnapshot = {
+  targetHost: '',
+  targetPort: 80,
+  useTls: false,
+  reverseProxyType: 'None',
+  backendServerType: 'None',
+  testedVariantsCount: 0,
+  vulnerableCount: 0,
+  variants: [],
+};
+
+export const EMPTY_DATABASE_SECURITY: DatabaseSecuritySnapshot = {
+  probes: [],
+  totalDatabasesChecked: 0,
+  unencryptedCount: 0,
+  unauthenticatedCount: 0,
+  defaultCredentialVulnerableCount: 0,
+};
+
+export const EMPTY_INFRA_OVERVIEW: InfraStudioOverviewSnapshot = {
+  k8s: EMPTY_K8S_AUDIT,
+  sbom: EMPTY_SBOM_GRAPH,
+  smuggling: EMPTY_SMUGGLING_SNAPSHOT,
+  database: EMPTY_DATABASE_SECURITY,
+};
+
+// ============================================================================
+// API Fetch & Engine Execution Handlers
 // ============================================================================
 
 export async function fetchInfraStudioOverview(): Promise<InfraStudioOverviewSnapshot> {
-  const apiUrl = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
 
   try {
-    const res = await authFetch(`${apiUrl}/api/v1/findings?category=infrastructure`);
+    const res = await authFetch(`${apiUrl}/api/v1/infra/overview`);
     if (res.ok) {
-      // If controller provides real findings, we can merge or use live snapshot
+      const json = await res.json();
+      if (json.data) {
+        return json.data as InfraStudioOverviewSnapshot;
+      }
     }
   } catch {
-    // Graceful fallback to rich studio mock datasets
+    // If backend is unreachable, return truthful empty baseline
   }
 
-  return {
-    k8s: SAMPLE_K8S_AUDIT,
-    sbom: SAMPLE_SBOM_GRAPH,
-    smuggling: SAMPLE_SMUGGLING_SNAPSHOT,
-    database: SAMPLE_DATABASE_SECURITY,
-  };
+  return EMPTY_INFRA_OVERVIEW;
+}
+
+export async function auditKubernetesManifest(
+  manifestYaml?: string,
+  dockerfileContent?: string,
+  targetId?: string
+): Promise<K8sAuditSnapshot> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/infra/k8s/audit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ manifestYaml, dockerfileContent, targetId }),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to audit Kubernetes manifest (HTTP ${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data as K8sAuditSnapshot;
+}
+
+export async function auditSbomDocument(
+  sbomJson: string,
+  format: 'cyclonedx' | 'spdx' | 'npm_lockfile' = 'cyclonedx',
+  targetId?: string
+): Promise<SbomGraphSnapshot> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/infra/sbom/audit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sbomJson, format, targetId }),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to audit SBOM document (HTTP ${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data as SbomGraphSnapshot;
+}
+
+export async function probeHttpSmuggling(
+  targetUrl: string,
+  variants?: ('CL_TE' | 'TE_CL' | 'TE_TE')[]
+): Promise<SmugglingWireSnapshot> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/infra/smuggling/probe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetUrl, variants }),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to probe HTTP smuggling (HTTP ${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data as SmugglingWireSnapshot;
+}
+
+export async function auditDatabaseSecurity(connectionConfig: {
+  targetId?: string;
+  connectionString?: string;
+  engine?: 'postgres' | 'mysql' | 'redis';
+}): Promise<DatabaseSecuritySnapshot> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/infra/database/audit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(connectionConfig),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to audit database security (HTTP ${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data as DatabaseSecuritySnapshot;
 }
 
 export async function fetchK8sAuditData(): Promise<K8sAuditSnapshot> {
-  return SAMPLE_K8S_AUDIT;
+  const overview = await fetchInfraStudioOverview();
+  return overview.k8s;
 }
 
 export async function fetchSbomGraphData(): Promise<SbomGraphSnapshot> {
-  return SAMPLE_SBOM_GRAPH;
+  const overview = await fetchInfraStudioOverview();
+  return overview.sbom;
 }
 
 export async function fetchSmugglingWireData(): Promise<SmugglingWireSnapshot> {
-  return SAMPLE_SMUGGLING_SNAPSHOT;
+  const overview = await fetchInfraStudioOverview();
+  return overview.smuggling;
 }
 
 export async function fetchDatabaseSecurityData(): Promise<DatabaseSecuritySnapshot> {
-  return SAMPLE_DATABASE_SECURITY;
+  const overview = await fetchInfraStudioOverview();
+  return overview.database;
 }

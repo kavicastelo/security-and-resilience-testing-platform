@@ -71,144 +71,6 @@ export interface WorkflowGeneratorOptions {
   scanTimeoutMinutes: number;
 }
 
-// Fallback in-memory state for offline and local testing
-export const FALLBACK_WEBHOOKS: WebhookRecord[] = [
-  {
-    id: 'wh-slack-alerts',
-    workspaceId: '00000000-0000-0000-0000-000000000000',
-    url: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX',
-    description: 'SecOps Slack Channel Alerts (#security-incidents)',
-    events: ['finding.critical', 'policy.failed', 'release.evaluated'],
-    isActive: true,
-    headers: { 'X-Custom-Source': 'SecurityLab-Production' },
-    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    updatedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-  },
-  {
-    id: 'wh-datadog-siem',
-    workspaceId: '00000000-0000-0000-0000-000000000000',
-    url: 'https://http-intake.logs.datadoghq.com/api/v2/logs',
-    description: 'Datadog Cloud SIEM Security Event Ingestion',
-    events: ['*'],
-    isActive: true,
-    headers: { 'DD-SOURCE': 'security-lab', 'DD-SERVICE': 'api-testing' },
-    createdAt: new Date(Date.now() - 86400000 * 12).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-  },
-  {
-    id: 'wh-pagerduty-critical',
-    workspaceId: '00000000-0000-0000-0000-000000000000',
-    url: 'https://events.pagerduty.com/v2/enqueue',
-    description: 'PagerDuty High Urgency Incident Trigger',
-    events: ['finding.critical'],
-    isActive: false,
-    headers: {},
-    createdAt: new Date(Date.now() - 86400000 * 20).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-];
-
-export const FALLBACK_DELIVERIES: Record<string, WebhookDeliveryRecord[]> = {
-  'wh-slack-alerts': [
-    {
-      id: 'del-slack-01',
-      webhookId: 'wh-slack-alerts',
-      workspaceId: '00000000-0000-0000-0000-000000000000',
-      eventType: 'finding.critical',
-      payload: {
-        event: 'finding.critical',
-        findingId: 'f-authz-01',
-        title: 'BOLA / IDOR in User Profile Endpoint (/api/v1/users/:id/billing)',
-        severity: 'critical',
-        timestamp: new Date(Date.now() - 1800000).toISOString(),
-      },
-      status: 'succeeded',
-      attempts: 1,
-      maxAttempts: 5,
-      nextRetryAt: new Date(Date.now() - 1800000).toISOString(),
-      lastAttemptAt: new Date(Date.now() - 1800000).toISOString(),
-      responseStatusCode: 200,
-      responseBody: 'ok',
-      lastError: null,
-      createdAt: new Date(Date.now() - 1800000).toISOString(),
-      updatedAt: new Date(Date.now() - 1800000).toISOString(),
-    },
-    {
-      id: 'del-slack-02',
-      webhookId: 'wh-slack-alerts',
-      workspaceId: '00000000-0000-0000-0000-000000000000',
-      eventType: 'policy.failed',
-      payload: {
-        event: 'policy.failed',
-        policyId: 'strict-zero-tolerance',
-        releaseGate: 'REJECTED',
-        unresolvedCriticals: 1,
-        timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
-      },
-      status: 'succeeded',
-      attempts: 1,
-      maxAttempts: 5,
-      nextRetryAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-      lastAttemptAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-      responseStatusCode: 200,
-      responseBody: 'ok',
-      lastError: null,
-      createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-      updatedAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-    },
-  ],
-  'wh-datadog-siem': [
-    {
-      id: 'del-dd-01',
-      webhookId: 'wh-datadog-siem',
-      workspaceId: '00000000-0000-0000-0000-000000000000',
-      eventType: 'run.completed',
-      payload: {
-        event: 'run.completed',
-        testRunId: 'run-live-01',
-        totalFindings: 6,
-        durationMs: 4230,
-        timestamp: new Date(Date.now() - 1200000).toISOString(),
-      },
-      status: 'succeeded',
-      attempts: 1,
-      maxAttempts: 5,
-      nextRetryAt: new Date(Date.now() - 1200000).toISOString(),
-      lastAttemptAt: new Date(Date.now() - 1200000).toISOString(),
-      responseStatusCode: 202,
-      responseBody: '{"status":"accepted"}',
-      lastError: null,
-      createdAt: new Date(Date.now() - 1200000).toISOString(),
-      updatedAt: new Date(Date.now() - 1200000).toISOString(),
-    },
-    {
-      id: 'del-dd-02',
-      webhookId: 'wh-datadog-siem',
-      workspaceId: '00000000-0000-0000-0000-000000000000',
-      eventType: 'release.evaluated',
-      payload: {
-        event: 'release.evaluated',
-        policyId: 'pci-dss-baseline',
-        score: 85,
-        timestamp: new Date(Date.now() - 7200000).toISOString(),
-      },
-      status: 'failed',
-      attempts: 2,
-      maxAttempts: 5,
-      nextRetryAt: new Date(Date.now() + 40000).toISOString(),
-      lastAttemptAt: new Date(Date.now() - 60000).toISOString(),
-      responseStatusCode: 503,
-      responseBody: 'Service Unavailable - Rate Limited',
-      lastError: 'HTTP 503 Service Unavailable',
-      createdAt: new Date(Date.now() - 7200000).toISOString(),
-      updatedAt: new Date(Date.now() - 60000).toISOString(),
-    },
-  ],
-};
-
-let localWebhooks = [...FALLBACK_WEBHOOKS];
-let localDeliveries = { ...FALLBACK_DELIVERIES };
-
 // Helper to generate cryptographic random 64-char hex key for HMAC signing
 export function generateHmacSecret(): string {
   const arr = new Uint8Array(32);
@@ -223,155 +85,134 @@ export function generateHmacSecret(): string {
 }
 
 // ==========================================
-// API Operations
+// API Operations (Strict Controller Persistence)
 // ==========================================
 
 export async function fetchWebhooks(): Promise<WebhookRecord[]> {
   const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
-
-  try {
-    const res = await authFetch(`${apiUrl}/api/v1/webhooks`);
-    if (res.ok) {
-      const data = await res.json();
-      const serverList = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
-      if (serverList.length > 0) {
-        return serverList;
-      }
-    }
-  } catch {
-    // Controller offline, use fallback state
+  const res = await authFetch(`${apiUrl}/api/v1/webhooks`);
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to fetch webhooks (HTTP ${res.status})`);
   }
-
-  return localWebhooks;
+  const json = await res.json();
+  const list = Array.isArray(json) ? json : json?.data;
+  return Array.isArray(list) ? list : [];
 }
 
 export async function createWebhook(payload: CreateWebhookPayload): Promise<WebhookRecord> {
   const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
-
-  try {
-    const res = await authFetch(`${apiUrl}/api/v1/webhooks`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      const created = json.data || json;
-      localWebhooks = [created, ...localWebhooks];
-      return created;
-    }
-  } catch {
-    // Controller offline, fall through to local update
+  const res = await authFetch(`${apiUrl}/api/v1/webhooks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to create webhook (HTTP ${res.status})`);
   }
-
-  const newWebhook: WebhookRecord = {
-    id: `wh-${Date.now()}`,
-    workspaceId: '00000000-0000-0000-0000-000000000000',
-    url: payload.url,
-    description: payload.description || 'Custom Webhook Endpoint',
-    events: payload.events && payload.events.length > 0 ? payload.events : ['*'],
-    isActive: true,
-    headers: payload.headers || {},
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  localWebhooks = [newWebhook, ...localWebhooks];
-  localDeliveries[newWebhook.id] = [];
-  return newWebhook;
+  const json = await res.json();
+  return json.data || json;
 }
 
 export async function deleteWebhook(id: string): Promise<boolean> {
   const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
-
-  try {
-    const res = await authFetch(`${apiUrl}/api/v1/webhooks/${id}`, {
-      method: 'DELETE',
-    });
-    if (res.ok) return true;
-  } catch {
-    // Offline fallback
+  const res = await authFetch(`${apiUrl}/api/v1/webhooks/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to delete webhook (HTTP ${res.status})`);
   }
-
-  localWebhooks = localWebhooks.filter((w) => w.id !== id);
-  delete localDeliveries[id];
   return true;
 }
 
-export async function testWebhookPing(
+export async function dispatchTestPing(
   id: string
 ): Promise<{ success: boolean; delivery: WebhookDeliveryRecord | null; message: string }> {
   const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
-
-  try {
-    const res = await authFetch(`${apiUrl}/api/v1/webhooks/${id}/test`, {
-      method: 'POST',
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      return {
-        success: true,
-        delivery: json.data || null,
-        message: json.message || 'Test ping enqueued for delivery',
-      };
-    }
-  } catch {
-    // Offline fallback
+  const res = await authFetch(`${apiUrl}/api/v1/webhooks/${id}/test`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to dispatch test ping (HTTP ${res.status})`);
   }
-
-  // Generate synthetic test delivery item
-  const mockDelivery: WebhookDeliveryRecord = {
-    id: `del-test-${Date.now()}`,
-    webhookId: id,
-    workspaceId: '00000000-0000-0000-0000-000000000000',
-    eventType: 'ping',
-    payload: {
-      event: 'ping',
-      message: 'Security Lab Webhook Connectivity Verification',
-      timestamp: new Date().toISOString(),
-      nonce: generateHmacSecret().slice(0, 16),
-    },
-    status: 'succeeded',
-    attempts: 1,
-    maxAttempts: 5,
-    nextRetryAt: new Date().toISOString(),
-    lastAttemptAt: new Date().toISOString(),
-    responseStatusCode: 200,
-    responseBody: '{"ok":true,"received":true,"latencyMs":42}',
-    lastError: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  if (!localDeliveries[id]) localDeliveries[id] = [];
-  localDeliveries[id].unshift(mockDelivery);
-
+  const json = await res.json();
   return {
     success: true,
-    delivery: mockDelivery,
-    message: 'Test ping delivered successfully (HTTP 200 OK)',
+    delivery: json.data || null,
+    message: json.message || 'Test ping enqueued for delivery',
   };
 }
+
+export const testWebhookPing = dispatchTestPing;
 
 export async function fetchWebhookDeliveries(
   id: string,
   limit = 50
 ): Promise<WebhookDeliveryRecord[]> {
   const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  const res = await authFetch(`${apiUrl}/api/v1/webhooks/${id}/deliveries?limit=${limit}`);
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(errorBody?.error?.message || `Failed to fetch deliveries (HTTP ${res.status})`);
+  }
+  const json = await res.json();
+  return Array.isArray(json.data) ? json.data : [];
+}
 
+export async function fetchGitHubSyncConfig(): Promise<GitHubSyncConfig> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
   try {
-    const res = await authFetch(`${apiUrl}/api/v1/webhooks/${id}/deliveries?limit=${limit}`);
+    const res = await authFetch(`${apiUrl}/api/v1/workspaces/settings/github-sync`);
     if (res.ok) {
       const json = await res.json();
-      if (Array.isArray(json.data)) return json.data;
+      if (json.data) return json.data;
     }
   } catch {
-    // Offline fallback
+    // Check localStorage fallback
   }
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const stored = window.localStorage.getItem('security_lab_gh_sync');
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch {
+        // invalid JSON
+      }
+    }
+  }
+  return {
+    enabled: false,
+    repoOwner: '',
+    repoName: '',
+    personalAccessToken: '',
+    autoCreateOnSeverity: ['critical', 'high'],
+    autoCloseOnRetestResolved: true,
+    addLabels: ['security-lab'],
+  };
+}
 
-  return localDeliveries[id] || [];
+export async function updateGitHubSyncConfig(config: GitHubSyncConfig): Promise<GitHubSyncConfig> {
+  const apiUrl = (import.meta.env?.VITE_API_URL as string) || '';
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.setItem('security_lab_gh_sync', JSON.stringify(config));
+  }
+  try {
+    const res = await authFetch(`${apiUrl}/api/v1/workspaces/settings/github-sync`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return json.data || config;
+    }
+  } catch {
+    // Persisted to storage
+  }
+  return config;
 }
 
 // ==========================================

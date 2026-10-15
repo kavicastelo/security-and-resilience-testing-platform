@@ -161,13 +161,21 @@ describe('Phase UI-17: Developer CLI Modernization, Interactive Wizards & Rich T
   });
 
   describe('2. CLI Command Registrations & Subprocess Invocations', () => {
-    it('registers init, plan, compose, verify, and install-hooks commands', async () => {
+    it('registers init, plan, compose, verify, install-hooks, and seed commands', async () => {
       const { stdout } = await execPromise(`node "${cliBinPath}" --help`);
       expect(stdout).toContain('init');
       expect(stdout).toContain('plan');
       expect(stdout).toContain('compose');
       expect(stdout).toContain('verify');
       expect(stdout).toContain('install-hooks');
+      expect(stdout).toContain('seed');
+    });
+
+    it('registers seed command and displays options', async () => {
+      const { stdout } = await execPromise(`node "${cliBinPath}" seed --help`);
+      expect(stdout).toContain('security-lab seed');
+      expect(stdout).toContain('--force');
+      expect(stdout).toContain('--tenant');
     });
 
     it('registers verify subcommand under target command', async () => {

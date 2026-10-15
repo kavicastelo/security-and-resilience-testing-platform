@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   matchFindingToCategories,
   computeFrameworkAssessment,
   assembleComplianceReport,
+  fetchComplianceAssessment,
+  downloadReport,
   generateClientSyntheticHtml,
   generateClientSyntheticSarif,
   OWASP_TOP_10_CATALOG,
@@ -10,10 +12,45 @@ import {
   ASVS_CATALOG,
   PCI_DSS_CATALOG,
   COMPLIANCE_DISCLAIMER,
-  FALLBACK_COMPLIANCE_FINDINGS,
 } from '../src/api/reports.js';
 
-describe('Phase UI-15: Enterprise Compliance Center, Standards Mapping & Multi-Format Report Hub', () => {
+const TEST_VULNERABILITY_FINDINGS = [
+  {
+    id: 'f-authz-01',
+    title: 'BOLA / IDOR in User Profile Endpoint (/api/v1/users/:id/billing)',
+    category: 'Broken Access Control',
+    severity: 'critical' as const,
+    metadata: {
+      ruleId: 'AUTHZ_BOLA_IDOR',
+      cwe: 'CWE-639',
+      endpoint: '/api/v1/users/:id/billing',
+    },
+  },
+  {
+    id: 'f-auth-02',
+    title: 'Weak JWT Secret Key / Symmetric Algorithm Confusion',
+    category: 'Identification and Authentication',
+    severity: 'high' as const,
+    metadata: {
+      ruleId: 'AUTH_JWT_CONFUSION',
+      cwe: 'CWE-327',
+      endpoint: '/api/v1/auth/tokens',
+    },
+  },
+  {
+    id: 'f-sqli-03',
+    title: 'SQL Injection in Search Query Parameter ($search)',
+    category: 'Injection',
+    severity: 'critical' as const,
+    metadata: {
+      ruleId: 'INJECT_SQLI_BLIND',
+      cwe: 'CWE-89',
+      endpoint: '/api/v1/catalog/search',
+    },
+  },
+];
+
+describe('Phase UI-15 / PR-02: Enterprise Compliance Center, Standards Mapping & Truthful Reports', () => {
   describe('Rule to Framework Mapping Engine', () => {
     it('correctly maps authorization flaws (BOLA/IDOR) to OWASP A01, API1, ASVS V4, and PCI-DSS 6.5.8', () => {
       const finding = {
@@ -89,9 +126,9 @@ describe('Phase UI-15: Enterprise Compliance Center, Standards Mapping & Multi-F
     });
   });
 
-  describe('Framework Compliance Scorecard Assessment', () => {
-    it('computes 100% compliance when no critical or high findings are present', () => {
-      const emptyFindings: typeof FALLBACK_COMPLIANCE_FINDINGS = [];
+  describe('Framework Compliance Scorecard Assessment & Zero-Defect Posture', () => {
+    it('truthfully computes 100% compliance with 0 violations when clean test run has zero findings', () => {
+      const emptyFindings: any[] = [];
       const assessment = computeFrameworkAssessment(
         'OWASP_TOP_10_2021',
         OWASP_TOP_10_CATALOG,
@@ -104,6 +141,8 @@ describe('Phase UI-15: Enterprise Compliance Center, Standards Mapping & Multi-F
       expect(assessment.compliantControlsCount).toBe(OWASP_TOP_10_CATALOG.length);
       expect(assessment.nonCompliantControlsCount).toBe(0);
       expect(assessment.overallStatus).toBe('PASS');
+      expect(assessment.categories.every((c) => c.status === 'COMPLIANT')).toBe(true);
+      expect(assessment.categories.every((c) => c.findingsCount === 0)).toBe(true);
     });
 
     it('marks category as NON_COMPLIANT when critical or high findings are mapped', () => {
@@ -137,19 +176,34 @@ describe('Phase UI-15: Enterprise Compliance Center, Standards Mapping & Multi-F
     });
 
     it('assembles multi-framework report covering OWASP Top 10, OWASP API, ASVS, and PCI-DSS', () => {
-      const report = assembleComplianceReport(FALLBACK_COMPLIANCE_FINDINGS, 'run-test-123', 'https://api.test.local');
+      const report = assembleComplianceReport(TEST_VULNERABILITY_FINDINGS, 'run-test-123', 'https://api.test.local');
 
       expect(report.testRunId).toBe('run-test-123');
       expect(report.targetUrl).toBe('https://api.test.local');
-      expect(report.totalFindings).toBe(FALLBACK_COMPLIANCE_FINDINGS.length);
+      expect(report.totalFindings).toBe(TEST_VULNERABILITY_FINDINGS.length);
       expect(report.frameworks.OWASP_TOP_10_2021).toBeDefined();
       expect(report.frameworks.OWASP_API_2023).toBeDefined();
       expect(report.frameworks.OWASP_ASVS_4_0).toBeDefined();
       expect(report.frameworks.PCI_DSS_4_0).toBeDefined();
 
-      // Check counts by severity
-      expect(report.countsBySeverity.critical).toBeGreaterThan(0);
-      expect(report.countsBySeverity.high).toBeGreaterThan(0);
+      expect(report.countsBySeverity.critical).toBe(2);
+      expect(report.countsBySeverity.high).toBe(1);
+    });
+
+    it('truthfully reports 100% compliance across all 4 frameworks when findings array is empty', () => {
+      const cleanReport = assembleComplianceReport([], 'run-clean-01');
+
+      expect(cleanReport.totalFindings).toBe(0);
+      expect(cleanReport.countsBySeverity.critical).toBe(0);
+      expect(cleanReport.countsBySeverity.high).toBe(0);
+
+      expect(cleanReport.frameworks.OWASP_TOP_10_2021.compliancePercentage).toBe(100);
+      expect(cleanReport.frameworks.OWASP_TOP_10_2021.nonCompliantControlsCount).toBe(0);
+      expect(cleanReport.frameworks.OWASP_TOP_10_2021.overallStatus).toBe('PASS');
+
+      expect(cleanReport.frameworks.OWASP_API_2023.compliancePercentage).toBe(100);
+      expect(cleanReport.frameworks.OWASP_ASVS_4_0.compliancePercentage).toBe(100);
+      expect(cleanReport.frameworks.PCI_DSS_4_0.compliancePercentage).toBe(100);
     });
   });
 
@@ -159,7 +213,7 @@ describe('Phase UI-15: Enterprise Compliance Center, Standards Mapping & Multi-F
       expect(COMPLIANCE_DISCLAIMER).toContain('do not constitute formal legal certification');
       expect(COMPLIANCE_DISCLAIMER).toContain('Product Requirement 24.4');
 
-      const report = assembleComplianceReport(FALLBACK_COMPLIANCE_FINDINGS);
+      const report = assembleComplianceReport([]);
       expect(report.disclaimer).toBe(COMPLIANCE_DISCLAIMER);
     });
 
@@ -179,21 +233,60 @@ describe('Phase UI-15: Enterprise Compliance Center, Standards Mapping & Multi-F
     });
   });
 
+  describe('Client-Server Controller Integration (PR-02)', () => {
+    let originalFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      vi.restoreAllMocks();
+    });
+
+    it('fetchComplianceAssessment queries /api/v1/findings and returns 100% compliant report for 0 findings', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [] }),
+      });
+
+      const report = await fetchComplianceAssessment('run-clean-test');
+      expect(report.totalFindings).toBe(0);
+      expect(report.frameworks.OWASP_TOP_10_2021.compliancePercentage).toBe(100);
+      expect(report.frameworks.OWASP_TOP_10_2021.nonCompliantControlsCount).toBe(0);
+      expect(report.frameworks.OWASP_TOP_10_2021.overallStatus).toBe('PASS');
+    });
+
+    it('fetchComplianceAssessment maps real findings when returned by database', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: TEST_VULNERABILITY_FINDINGS }),
+      });
+
+      const report = await fetchComplianceAssessment('run-vuln-test');
+      expect(report.totalFindings).toBe(3);
+      expect(report.countsBySeverity.critical).toBe(2);
+      expect(report.frameworks.OWASP_TOP_10_2021.nonCompliantControlsCount).toBeGreaterThan(0);
+    });
+  });
+
   describe('Report Generation & Live Previewers', () => {
-    it('generates self-contained offline HTML audit report with embedded styles and disclaimer', () => {
-      const html = generateClientSyntheticHtml('run-preview-456', {
+    it('generates self-contained offline HTML audit report with clean status when findings is empty', () => {
+      const html = generateClientSyntheticHtml('run-clean-456', {
         organizationName: 'Acme Global Defense',
         confidentialityNotice: 'RESTRICTED / STRICTLY CONFIDENTIAL',
-      });
+      }, []);
 
       expect(html).toContain('<!DOCTYPE html>');
       expect(html).toContain('Acme Global Defense');
       expect(html).toContain('RESTRICTED / STRICTLY CONFIDENTIAL');
-      expect(html).toContain('run-preview-456');
+      expect(html).toContain('run-clean-456');
       expect(html).toContain(COMPLIANCE_DISCLAIMER);
-      expect(html).toContain('OWASP Top 10 (2021)');
-      expect(html).toContain('Evidence Level');
-      // Must not link to external CDNs
+      expect(html).toContain('100%');
+      expect(html).toContain('badge-green');
       expect(html).not.toContain('http://cdn');
       expect(html).not.toContain('https://cdn');
     });
@@ -202,7 +295,7 @@ describe('Phase UI-15: Enterprise Compliance Center, Standards Mapping & Multi-F
       const sarifString = generateClientSyntheticSarif('run-sarif-789', {
         organizationName: 'CyberCorp Labs',
         confidentialityNotice: 'INTERNAL USE ONLY',
-      });
+      }, TEST_VULNERABILITY_FINDINGS);
 
       const sarif = JSON.parse(sarifString);
       expect(sarif.version).toBe('2.1.0');
@@ -215,11 +308,11 @@ describe('Phase UI-15: Enterprise Compliance Center, Standards Mapping & Multi-F
       expect(run.invocations[0].properties.organization).toBe('CyberCorp Labs');
 
       // Rules must carry compliance disclaimer
-      expect(run.tool.driver.rules.length).toBeGreaterThan(0);
+      expect(run.tool.driver.rules.length).toBe(TEST_VULNERABILITY_FINDINGS.length);
       expect(run.tool.driver.rules[0].properties.complianceDisclaimer).toBe(COMPLIANCE_DISCLAIMER);
 
       // Results must contain rule IDs and locations
-      expect(run.results.length).toBeGreaterThan(0);
+      expect(run.results.length).toBe(TEST_VULNERABILITY_FINDINGS.length);
       expect(run.results[0].ruleId).toBeDefined();
       expect(run.results[0].locations[0].physicalLocation.artifactLocation.uri).toBeDefined();
     });

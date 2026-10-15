@@ -118,7 +118,7 @@ export const AuthFlowBuilderModal: React.FC<AuthFlowBuilderModalProps> = ({
     setIsTesting(true);
     setTestResult(null);
     try {
-      const result = await executeAuthFlowTest(targetUrl, flow);
+      const result = await executeAuthFlowTest(targetUrl, flow, targetId);
       setTestResult(result);
       if (result.success) {
         showToast('Authentication handshake succeeded!', 'success');

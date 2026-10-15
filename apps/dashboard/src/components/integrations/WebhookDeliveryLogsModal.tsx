@@ -46,8 +46,8 @@ export const WebhookDeliveryLogsModal: React.FC<WebhookDeliveryLogsModalProps> =
       if (logs.length > 0 && !expandedId) {
         setExpandedId(logs[0]!.id);
       }
-    } catch {
-      showToast('Failed to load webhook delivery history', 'error');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to load webhook delivery history', 'error');
     } finally {
       setLoading(false);
     }
@@ -157,9 +157,9 @@ export const WebhookDeliveryLogsModal: React.FC<WebhookDeliveryLogsModalProps> =
           {deliveries.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground space-y-2">
               <FileCode className="w-8 h-8 mx-auto opacity-40 text-slate-500" />
-              <p className="text-sm font-semibold text-slate-300">No delivery logs recorded yet</p>
+              <p className="text-sm font-semibold text-slate-300">No delivery attempts recorded yet.</p>
               <p className="text-xs">
-                Send a test ping or trigger a test execution to inspect HTTP wire payloads and HMAC signatures.
+                Click &ldquo;Test Ping&rdquo; to dispatch a test event or trigger a test execution to inspect HTTP wire payloads and HMAC signatures.
               </p>
             </div>
           ) : (

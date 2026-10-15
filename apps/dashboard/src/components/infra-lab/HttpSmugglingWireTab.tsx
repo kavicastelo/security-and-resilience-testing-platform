@@ -23,9 +23,20 @@ export const HttpSmugglingWireTab: React.FC<HttpSmugglingWireTabProps> = ({
 }) => {
   const [selectedVariantId, setSelectedVariantId] = useState<string>('var-cl-te-timing');
   const [viewMode, setViewMode] = useState<'text' | 'hexdump'>('text');
-
-  const selectedVariant: SmugglingWireVariant =
+  const selectedVariant: SmugglingWireVariant | undefined =
     smugglingData.variants.find((v) => v.id === selectedVariantId) ?? smugglingData.variants[0];
+
+  if (!selectedVariant) {
+    return (
+      <div className={`p-8 rounded-2xl bg-card/60 border border-border/60 text-center space-y-3 ${className}`}>
+        <Zap className="w-10 h-10 text-muted-foreground mx-auto opacity-50" />
+        <h4 className="text-base font-semibold text-foreground">No HTTP Smuggling Probes Executed</h4>
+        <p className="text-xs text-muted-foreground max-w-md mx-auto">
+          Specify a target URL and probe for RFC-7230/9112 Content-Length and Transfer-Encoding desync vectors (CL.TE, TE.CL, TE.TE).
+        </p>
+      </div>
+    );
+  }
 
   const isConfirmed = selectedVariant.vulnerabilityStatus === 'CONFIRMED';
   const isSafe = selectedVariant.vulnerabilityStatus === 'SAFE';

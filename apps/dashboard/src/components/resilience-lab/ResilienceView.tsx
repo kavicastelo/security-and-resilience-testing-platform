@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Zap,
   GitCommit,
   AlertOctagon,
   ShieldCheck,
   PlayCircle,
+  FileCode,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore.js';
 import {
@@ -18,6 +19,8 @@ import {
   SAMPLE_STATE_MACHINE_MODEL,
   SAMPLE_RACE_CONDITION_MODEL,
   executeChaosSimulation,
+  getStateMachineModel,
+  getRaceConditionBurstModel,
 } from '../../api/resilience.js';
 import { ChaosControlPanel } from './ChaosControlPanel.js';
 import { RecoveryTimelineChart } from './RecoveryTimelineChart.js';
@@ -35,20 +38,39 @@ export const ResilienceView: React.FC = () => {
     PRESET_CHAOS_PROFILES.db_brownout,
   );
   const [isInjecting, setIsInjecting] = useState<boolean>(false);
-  const [timelineData] = useState<RecoveryTimelinePoint[]>(SAMPLE_RECOVERY_TIMELINE);
+  const [timelineData, setTimelineData] = useState<RecoveryTimelinePoint[]>(SAMPLE_RECOVERY_TIMELINE);
   const [executionStats, setExecutionStats] = useState<ChaosExecutionStats>({
     status: 'idle',
-    totalRequests: 240,
-    faultsInjected: 96,
-    unrecoveredErrors: 36,
-    rtoSeconds: 4.8,
+    totalRequests: 100,
+    faultsInjected: 40,
+    unrecoveredErrors: 15,
+    rtoSeconds: 2.8,
     circuitBreakerState: 'CLOSED',
-    resilienceScore: 68,
+    resilienceScore: 78,
   });
 
   // State machine & race condition states
-  const [stateMachineModel] = useState<StateMachineModel>(SAMPLE_STATE_MACHINE_MODEL);
-  const [raceConditionModel] = useState<RaceConditionBurstModel>(SAMPLE_RACE_CONDITION_MODEL);
+  const [stateMachineModel, setStateMachineModel] = useState<StateMachineModel>(SAMPLE_STATE_MACHINE_MODEL);
+  const [raceConditionModel, setRaceConditionModel] = useState<RaceConditionBurstModel>(SAMPLE_RACE_CONDITION_MODEL);
+
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        const sm = await getStateMachineModel();
+        if (sm && sm.states.length > 0) {
+          setStateMachineModel(sm);
+        }
+        const rc = await getRaceConditionBurstModel();
+        if (rc && rc.requests.length > 0) {
+          setRaceConditionModel(rc);
+        }
+      } catch {
+        // preserve initial states
+      }
+    };
+
+    loadModels();
+  }, []);
 
   const handleStartChaos = async () => {
     setIsInjecting(true);
@@ -57,6 +79,9 @@ export const ResilienceView: React.FC = () => {
     try {
       const result = await executeChaosSimulation(chaosConfig);
       setExecutionStats(result.stats);
+      if (result.timeline && result.timeline.length > 0) {
+        setTimelineData(result.timeline);
+      }
       showToast(result.message, result.success ? 'success' : 'error');
     } catch (err: any) {
       showToast(err.message || 'Simulation error', 'error');
@@ -68,6 +93,13 @@ export const ResilienceView: React.FC = () => {
   const handleStopChaos = () => {
     setIsInjecting(false);
     showToast('Chaos injection halted. Proxy returned to pass-through mode.', 'info');
+  };
+
+  const handleLoadExamplePresets = () => {
+    setStateMachineModel(SAMPLE_STATE_MACHINE_MODEL);
+    setRaceConditionModel(SAMPLE_RACE_CONDITION_MODEL);
+    setTimelineData(SAMPLE_RECOVERY_TIMELINE);
+    showToast('Loaded example resilience models & state machine presets', 'info');
   };
 
   return (
@@ -99,8 +131,16 @@ export const ResilienceView: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={handleLoadExamplePresets}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-card border border-border/80 text-foreground hover:bg-accent transition-colors"
+          >
+            <FileCode className="w-3.5 h-3.5 text-purple-400" />
+            <span>Load Example Presets</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('runs')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-card border border-border/80 text-foreground hover:bg-accent transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors"
           >
             <PlayCircle className="w-3.5 h-3.5" />
             <span>Launch Engine in Test Plan</span>
@@ -152,9 +192,11 @@ export const ResilienceView: React.FC = () => {
         >
           <GitCommit className="w-4 h-4" />
           <span>Business Logic State Machine</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-red-500 text-white font-mono">
-            {stateMachineModel.bypassExploits.length}
-          </span>
+          {stateMachineModel.bypassExploits.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-red-500 text-white font-mono">
+              {stateMachineModel.bypassExploits.length}
+            </span>
+          )}
         </button>
 
         <button

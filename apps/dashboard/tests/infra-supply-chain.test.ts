@@ -1,14 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   SAMPLE_K8S_AUDIT,
   SAMPLE_SBOM_GRAPH,
   SAMPLE_SMUGGLING_SNAPSHOT,
   SAMPLE_DATABASE_SECURITY,
+  EMPTY_K8S_AUDIT,
+  EMPTY_SBOM_GRAPH,
+  EMPTY_SMUGGLING_SNAPSHOT,
+  EMPTY_DATABASE_SECURITY,
+  EMPTY_INFRA_OVERVIEW,
   fetchInfraStudioOverview,
   fetchK8sAuditData,
   fetchSbomGraphData,
   fetchSmugglingWireData,
   fetchDatabaseSecurityData,
+  auditKubernetesManifest,
+  auditSbomDocument,
+  probeHttpSmuggling,
+  auditDatabaseSecurity,
 } from '../src/api/infra.js';
 
 describe('Phase UI-11: Infrastructure K8s, SBOM Supply Chain & Wire Protocol Console', () => {
@@ -164,13 +173,52 @@ describe('Phase UI-11: Infrastructure K8s, SBOM Supply Chain & Wire Protocol Con
     });
   });
 
-  describe('Asynchronous Data Fetchers', () => {
+  describe('Asynchronous Data Fetchers & Real Engine Invocation', () => {
+    const originalFetch = globalThis.fetch;
+
+    beforeEach(() => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            k8s: SAMPLE_K8S_AUDIT,
+            sbom: SAMPLE_SBOM_GRAPH,
+            smuggling: SAMPLE_SMUGGLING_SNAPSHOT,
+            database: SAMPLE_DATABASE_SECURITY,
+          },
+        }),
+      });
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it('returns clean empty baseline when no audits have been conducted', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: EMPTY_INFRA_OVERVIEW }),
+      });
+
+      const overview = await fetchInfraStudioOverview();
+      expect(overview.k8s.totalWorkloads).toBe(0);
+      expect(overview.k8s.overallComplianceScore).toBe(100);
+      expect(overview.sbom.totalComponents).toBe(0);
+      expect(overview.smuggling.testedVariantsCount).toBe(0);
+      expect(overview.database.totalDatabasesChecked).toBe(0);
+    });
+
     it('fetches consolidated studio overview snapshot with all 4 subdomains', async () => {
       const overview = await fetchInfraStudioOverview();
       expect(overview.k8s).toBeDefined();
       expect(overview.sbom).toBeDefined();
       expect(overview.smuggling).toBeDefined();
       expect(overview.database).toBeDefined();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/infra/overview'),
+        expect.any(Object),
+      );
     });
 
     it('fetches domain snapshots individually', async () => {
@@ -183,6 +231,72 @@ describe('Phase UI-11: Infrastructure K8s, SBOM Supply Chain & Wire Protocol Con
       expect(sbom.components.length).toBeGreaterThan(0);
       expect(smuggling.variants.length).toBeGreaterThan(0);
       expect(db.probes.length).toBeGreaterThan(0);
+    });
+
+    it('executes Kubernetes manifest audit via POST /api/v1/infra/k8s/audit', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: SAMPLE_K8S_AUDIT }),
+      });
+
+      const result = await auditKubernetesManifest('apiVersion: v1\nkind: Pod');
+      expect(result.clusterName).toBeDefined();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/infra/k8s/audit'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('executes SBOM document audit via POST /api/v1/infra/sbom/audit', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: SAMPLE_SBOM_GRAPH }),
+      });
+
+      const result = await auditSbomDocument('{"bomFormat": "CycloneDX"}');
+      expect(result.sbomId).toBeDefined();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/infra/sbom/audit'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('executes HTTP smuggling probe via POST /api/v1/infra/smuggling/probe', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: SAMPLE_SMUGGLING_SNAPSHOT }),
+      });
+
+      const result = await probeHttpSmuggling('http://target.local');
+      expect(result.targetHost).toBeDefined();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/infra/smuggling/probe'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('executes database security audit via POST /api/v1/infra/database/audit', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: SAMPLE_DATABASE_SECURITY }),
+      });
+
+      const result = await auditDatabaseSecurity({ engine: 'postgres' });
+      expect(result.probes.length).toBeGreaterThan(0);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/infra/database/audit'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('throws error with message when server rejects audit', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ success: false, error: { message: 'Invalid manifest YAML' } }),
+      });
+
+      await expect(auditKubernetesManifest('invalid yaml')).rejects.toThrow('Invalid manifest YAML');
     });
   });
 });

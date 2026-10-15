@@ -25,6 +25,11 @@ import { ssoRoutes } from '../routes/sso.js';
 import { scimRoutes } from '../routes/scim.js';
 import { billingRoutes } from '../routes/billing.js';
 import { metricsRoutes } from '../routes/metrics.js';
+import { infraRoutes } from '../routes/infra.js';
+import { resilienceRoutes } from '../routes/resilience.js';
+import { authzRoutes } from '../routes/authz.js';
+import { performanceRoutes } from '../routes/performance.js';
+import { authVaultRoutes } from '../routes/auth-vault.js';
 import { agentJobReaper } from '../services/agent-dispatcher.service.js';
 import { webhookQueueService } from '../services/webhook-queue.js';
 import { registerAuthHooks, AuthPluginOptions } from '../plugins/auth.js';
@@ -186,6 +191,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(billingRoutes);
   app.register(agentsRoutes, { prefix: '/api/v1/agents' });
   app.register(managementRoutes, { prefix: '/api/v1/management' });
+  app.register(infraRoutes, { prefix: '/api/v1/infra' });
+  app.register(resilienceRoutes, { prefix: '/api/v1/resilience' });
+  app.register(authzRoutes, { prefix: '/api/v1/authz' });
+  app.register(performanceRoutes, { prefix: '/api/v1/performance' });
+  app.register(authVaultRoutes, { prefix: '/api/v1/auth-vault' });
 
   // Background Reaper & Webhook Queue Lifecycle
   app.addHook('onReady', async () => {
